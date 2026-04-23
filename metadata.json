@@ -1,0 +1,6 @@
+{
+  "name": "3D Boat Physics Simulator",
+  "description": "A 3D boat simulation with realistic physics including wind, current, and hydrodynamics, powered by React Three Fiber.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
