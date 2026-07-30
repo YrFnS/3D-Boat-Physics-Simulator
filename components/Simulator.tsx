@@ -20,6 +20,7 @@ import PerformanceTelemetry from './PerformanceTelemetry';
 import PerformanceHUD from './PerformanceHUD';
 import WakeField from './WakeField';
 import BenchmarkPanel from './BenchmarkPanel';
+import ShadowBudget from './ShadowBudget';
 
 const QUALITY_ORDER: RenderQuality[] = ['low', 'medium', 'high', 'ultra'];
 
@@ -149,6 +150,7 @@ export default function Simulator() {
           onFallback={useFallbackQuality}
         />
         <PerformanceTelemetry />
+        <ShadowBudget />
 
         <Suspense fallback={<LoadingFallback />}>
           <OrbitControls
