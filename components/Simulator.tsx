@@ -7,6 +7,7 @@ import {
   type RenderQuality,
   useSimStore,
 } from '@/store/useSimStore';
+import { useDebugMode } from '@/hooks/useDebugMode';
 import Boat from './Boat';
 import Ocean from './Ocean';
 import Islands from './Islands';
@@ -21,6 +22,7 @@ import PerformanceHUD from './PerformanceHUD';
 import WakeField from './WakeField';
 import BenchmarkPanel from './BenchmarkPanel';
 import ShadowBudget from './ShadowBudget';
+import QualityPersistence from './QualityPersistence';
 
 const QUALITY_ORDER: RenderQuality[] = ['low', 'medium', 'high', 'ultra'];
 
@@ -56,6 +58,7 @@ function LoadingFallback() {
 export default function Simulator() {
   const setKey = useSimStore((state) => state.setKey);
   const renderQuality = useSimStore((state) => state.renderQuality);
+  const debugEnabled = useDebugMode();
 
   const lowerAutomaticQuality = useCallback(() => {
     const state = useSimStore.getState();
@@ -128,6 +131,7 @@ export default function Simulator() {
 
   return (
     <div className="relative h-screen w-full select-none overflow-hidden bg-slate-900">
+      <QualityPersistence />
       <Canvas
         camera={{ position: [0, 15, -25], fov: 60, near: 0.1, far: 3000 }}
         dpr={DPR_BY_QUALITY[renderQuality]}
@@ -149,7 +153,7 @@ export default function Simulator() {
           onIncline={raiseAutomaticQuality}
           onFallback={useFallbackQuality}
         />
-        <PerformanceTelemetry />
+        {debugEnabled && <PerformanceTelemetry />}
         <ShadowBudget />
 
         <Suspense fallback={<LoadingFallback />}>
@@ -174,8 +178,8 @@ export default function Simulator() {
         </Suspense>
       </Canvas>
       <HUD />
-      <BenchmarkPanel />
-      <PerformanceHUD />
+      {debugEnabled && <BenchmarkPanel />}
+      <PerformanceHUD showMetrics={debugEnabled} />
     </div>
   );
 }
