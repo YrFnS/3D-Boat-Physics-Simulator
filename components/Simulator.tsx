@@ -18,6 +18,8 @@ import Tornado from './Tornado';
 import HurricaneClouds from './HurricaneClouds';
 import PerformanceTelemetry from './PerformanceTelemetry';
 import PerformanceHUD from './PerformanceHUD';
+import WakeField from './WakeField';
+import BenchmarkPanel from './BenchmarkPanel';
 
 const QUALITY_ORDER: RenderQuality[] = ['low', 'medium', 'high', 'ultra'];
 
@@ -164,11 +166,13 @@ export default function Simulator() {
           <Tornado />
           <Islands />
           <Buoys />
+          <WakeField />
           <Ocean />
           <WeatherEffects />
         </Suspense>
       </Canvas>
       <HUD />
+      <BenchmarkPanel />
       <PerformanceHUD />
     </div>
   );
