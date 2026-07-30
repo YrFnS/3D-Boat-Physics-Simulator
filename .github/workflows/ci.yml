@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - 'agent/**'
   pull_request:
 
 permissions:
@@ -25,6 +24,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -33,7 +33,7 @@ jobs:
           cache: npm
 
       - name: Apply guarded Phase 1 boat pass
-        if: github.event_name == 'push' && github.ref == 'refs/heads/agent/phase-1-performance-foundation'
+        if: github.event_name == 'pull_request' && github.head_ref == 'agent/phase-1-performance-foundation'
         run: node scripts/apply-phase1-boat-pass.mjs
 
       - name: Install dependencies
@@ -43,7 +43,7 @@ jobs:
         run: npm run build
 
       - name: Commit validated generated changes
-        if: github.event_name == 'push' && github.ref == 'refs/heads/agent/phase-1-performance-foundation'
+        if: github.event_name == 'pull_request' && github.head_ref == 'agent/phase-1-performance-foundation'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
@@ -54,4 +54,4 @@ jobs:
             exit 0
           fi
           git commit -m "perf: optimize boat frame loop"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "HEAD:${{ github.head_ref }}"
