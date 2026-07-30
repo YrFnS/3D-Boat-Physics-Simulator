@@ -10,7 +10,6 @@ import { getTerrainHeight } from '@/lib/terrain';
 import { useBoatAudio } from './boat/useBoatAudio';
 import { useBoatVisualDamage } from './boat/useBoatVisualDamage';
 
-
 export default function Boat() {
   const boatRef = useRef<Group>(null);
   const velocity = useRef(new Vector3(0, 0, 0));
@@ -284,7 +283,10 @@ export default function Boat() {
     const dynamicDragCoeff = dragCoeff * planingDragReduction;
 
     // --- ENGINE STRESS & RPM MODULATION ---
-    let targetRPM = 1000 + (Math.abs(thrustRaw) * (isSpeedboat ? 6000 : 3500));
+    let targetRPM =
+      engineHealth.current <= 0
+        ? 0
+        : 1000 + Math.abs(thrustRaw) * (isSpeedboat ? 6000 : 3500);
     
     // Determine engine load. 
     // High load = moving slow but demanding full thrust (takes longer to spool up).
@@ -307,7 +309,10 @@ export default function Boat() {
     engineRPM.current = MathUtils.lerp(engineRPM.current, targetRPM, rpmLerpRate * dt);
     
     // Calculate final effective thrust from physical RPM, not just throttle position
-    const effectiveThrustRatio = (engineRPM.current - 1000) / (isSpeedboat ? 6000 : 3500); 
+    const effectiveThrustRatio =
+      engineHealth.current <= 0
+        ? 0
+        : (engineRPM.current - 1000) / (isSpeedboat ? 6000 : 3500); 
     
     // --- PHASE 2: Engine Efficiency & Misfires ---
     const engineHealthEfficiency = MathUtils.clamp(engineHealth.current / 100, 0, 1);
@@ -420,7 +425,7 @@ export default function Boat() {
     targetRudder *= rudderAuth;
 
     // At extreme damage, rudder wiggles and jitters from broken linkages
-    if (rudderHealth.current < 40) {
+    if (rudderHealth.current > 0 && rudderHealth.current < 40) {
       targetRudder += (Math.random() - 0.5) * 0.15;
     }
     
@@ -598,7 +603,9 @@ export default function Boat() {
              velocity.current.z += normalVector.z * speedIntoWall * 0.8;
              
              // Add chaotic spin
-             angularVelocity.current += (Math.random() - 0.5) * speedIntoWall * 1.0;              audio.playImpact(severity, 'terrain');
+              angularVelocity.current +=
+                (Math.random() - 0.5) * speedIntoWall;
+              audio.playImpact(severity, 'terrain');
         }
     }
 
