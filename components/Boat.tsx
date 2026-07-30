@@ -14,7 +14,6 @@ export default function Boat() {
   const boatRef = useRef<Group>(null);
   const velocity = useRef(new Vector3(0, 0, 0));
   const angularVelocity = useRef(0);
-  const lastWakeDropOdo = useRef(0);
   const engineRPM = useRef(1000); // Base idle RPM
   const rudderAngle = useRef(0);
   const trawlerEngineRef = useRef<Group>(null);
@@ -704,39 +703,6 @@ export default function Boat() {
                  }
             }
         }
-    }
-
-    // Dynamic Wake Line tracking
-    sharedPhysics.absoluteOdometer += speed2D * dt;
-    if (sharedPhysics.absoluteOdometer - lastWakeDropOdo.current > 2.0) {
-        lastWakeDropOdo.current = sharedPhysics.absoluteOdometer;
-        const wn = sharedPhysics.wakeNodes;
-        const wd = sharedPhysics.wakeDirs;
-        const MAX = wn.length / 4;
-        
-        // Shift trail history back
-        for(let i = MAX - 1; i > 0; i--) {
-            wn[i*4 + 0] = wn[(i-1)*4 + 0];
-            wn[i*4 + 1] = wn[(i-1)*4 + 1];
-            wn[i*4 + 2] = wn[(i-1)*4 + 2];
-            wn[i*4 + 3] = wn[(i-1)*4 + 3];
-
-            wd[i*4 + 0] = wd[(i-1)*4 + 0];
-            wd[i*4 + 1] = wd[(i-1)*4 + 1];
-            wd[i*4 + 2] = wd[(i-1)*4 + 2];
-            wd[i*4 + 3] = wd[(i-1)*4 + 3];
-        }
-
-        // Insert new current boat node
-        wn[0] = boatRef.current.position.x;
-        wn[1] = boatRef.current.position.y;
-        wn[2] = boatRef.current.position.z;
-        wn[3] = sharedPhysics.absoluteOdometer;
-        
-        wd[0] = forwardDir.x;
-        wd[1] = forwardDir.z;
-        wd[2] = sharedPhysics.boatSpeed;
-        wd[3] = 0;
     }
 
     // 2. PITCH (Rotation around X)
