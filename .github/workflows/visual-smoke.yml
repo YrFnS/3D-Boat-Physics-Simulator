@@ -1,13 +1,19 @@
 name: Visual smoke
 
 on:
-  push:
-    branches:
-      - agent/phase-1-performance-foundation
-    paths:
-      - scripts/visual-smoke.mjs
-      - .github/workflows/visual-smoke.yml
   pull_request:
+    paths:
+      - 'app/**'
+      - 'components/**'
+      - 'hooks/**'
+      - 'lib/**'
+      - 'store/**'
+      - 'public/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'next.config.*'
+      - 'scripts/visual-smoke.mjs'
+      - '.github/workflows/visual-smoke.yml'
   workflow_dispatch:
 
 permissions:
@@ -44,9 +50,15 @@ jobs:
       - name: Build application
         run: npm run build
 
+      - name: Prepare standalone server
+        run: |
+          cp -R public .next/standalone/public
+          mkdir -p .next/standalone/.next
+          cp -R .next/static .next/standalone/.next/static
+
       - name: Start production server
         run: |
-          npm run start -- --hostname 127.0.0.1 --port 3000 > /tmp/boat-server.log 2>&1 &
+          HOSTNAME=127.0.0.1 PORT=3000 node .next/standalone/server.js > /tmp/boat-server.log 2>&1 &
           echo $! > /tmp/boat-server.pid
           for attempt in {1..60}; do
             if curl --fail --silent http://127.0.0.1:3000/ > /dev/null; then
