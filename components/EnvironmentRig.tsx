@@ -2,7 +2,7 @@
 
 import { useFrame, useThree } from '@react-three/fiber';
 import { Sky, Stars } from '@react-three/drei';
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import {
   AmbientLight,
   Color,
@@ -19,11 +19,38 @@ import {
   useSimStore,
 } from '@/store/useSimStore';
 
-const SHADOW_SIZE: Record<RenderQuality, number> = {
-  low: 512,
-  medium: 1024,
-  high: 1536,
-  ultra: 2048,
+interface ShadowQualityConfig {
+  mapSize: number;
+  radius: number;
+  far: number;
+  updateHz: number;
+}
+
+const SHADOW_CONFIG: Record<RenderQuality, ShadowQualityConfig> = {
+  low: {
+    mapSize: 256,
+    radius: 22,
+    far: 90,
+    updateHz: 0,
+  },
+  medium: {
+    mapSize: 768,
+    radius: 30,
+    far: 140,
+    updateHz: 12,
+  },
+  high: {
+    mapSize: 1280,
+    radius: 45,
+    far: 200,
+    updateHz: 20,
+  },
+  ultra: {
+    mapSize: 2048,
+    radius: 60,
+    far: 280,
+    updateHz: 30,
+  },
 };
 
 const STAR_COUNT: Record<RenderQuality, number> = {
@@ -38,6 +65,11 @@ type TransparentMaterial = Material & {
   transparent: boolean;
 };
 
+type ManagedShadow = DirectionalLight['shadow'] & {
+  autoUpdate: boolean;
+  needsUpdate: boolean;
+};
+
 export default function EnvironmentRig() {
   const skyRef = useRef<Group>(null);
   const starsRef = useRef<Group>(null);
@@ -45,8 +77,18 @@ export default function EnvironmentRig() {
   const ambientLightRef = useRef<AmbientLight>(null);
   const skyMaterialRef = useRef<ShaderMaterial | null>(null);
   const starsMaterialRef = useRef<TransparentMaterial | null>(null);
+  const shadowAccumulatorRef = useRef(1);
+  const shadowWasEnabledRef = useRef(false);
+  const configuredShadowRef = useRef<DirectionalLight | null>(null);
   const renderQuality = useSimStore((state) => state.renderQuality);
+  const shadowConfig = SHADOW_CONFIG[renderQuality];
   const { scene } = useThree();
+
+  useEffect(() => {
+    starsMaterialRef.current = null;
+    configuredShadowRef.current = null;
+    shadowAccumulatorRef.current = 1;
+  }, [renderQuality]);
 
   const palette = useMemo(
     () => ({
@@ -71,7 +113,6 @@ export default function EnvironmentRig() {
     const { camera } = state;
     const store = useSimStore.getState();
 
-    // Smooth time progression around the 24-hour wrap point.
     let timeDifference = store.targetTime - sharedPhysics.worldTime;
     if (timeDifference > 12) timeDifference -= 24;
     if (timeDifference < -12) timeDifference += 24;
@@ -87,7 +128,6 @@ export default function EnvironmentRig() {
     if (sharedPhysics.worldTime < 0) sharedPhysics.worldTime += 24;
     if (sharedPhysics.worldTime >= 24) sharedPhysics.worldTime -= 24;
 
-    // Smooth seasonal transitions around the circular 0..1 range.
     let seasonDifference = store.targetSeason - sharedPhysics.season;
     if (seasonDifference > 0.5) seasonDifference -= 1;
     if (seasonDifference < -0.5) seasonDifference += 1;
@@ -104,12 +144,18 @@ export default function EnvironmentRig() {
     if (sharedPhysics.season >= 1) sharedPhysics.season -= 1;
 
     const elapsed = state.clock.elapsedTime;
+    const tornadoStrength = clamp((store.windSpeed - 24) / 18, 0, 1);
 
-    sharedPhysics.tornadoPos.set(
-      Math.sin(elapsed * 0.04) * 250,
-      0,
-      Math.cos(elapsed * 0.04) * 250,
-    );
+    if (tornadoStrength > 0.001) {
+      sharedPhysics.tornadoPos.set(
+        Math.sin(elapsed * 0.04) * 250,
+        0,
+        Math.cos(elapsed * 0.04) * 250,
+      );
+    } else {
+      sharedPhysics.tornadoPos.set(1_000_000, 0, 1_000_000);
+    }
+
     sharedPhysics.whirlpoolPos.set(
       -400 + Math.sin(elapsed * 0.01) * 20,
       0,
@@ -237,10 +283,17 @@ export default function EnvironmentRig() {
 
     const directionalLight = directionalLightRef.current;
     if (directionalLight?.target) {
+      const centerX = Number.isFinite(sharedPhysics.boatPos.x)
+        ? sharedPhysics.boatPos.x
+        : camera.position.x;
+      const centerZ = Number.isFinite(sharedPhysics.boatPos.z)
+        ? sharedPhysics.boatPos.z
+        : camera.position.z;
+
       directionalLight.position.set(
-        camera.position.x + sunX * 0.1,
-        camera.position.y + sunY * 0.1,
-        camera.position.z + sunZ * 0.1,
+        centerX + sunX * 0.1,
+        Math.max(20, camera.position.y + sunY * 0.1),
+        centerZ + sunZ * 0.1,
       );
 
       const lightColor = palette.workingLight
@@ -250,9 +303,9 @@ export default function EnvironmentRig() {
       let lightIntensity: number;
       if (day <= 0) {
         directionalLight.position.set(
-          camera.position.x - sunX * 0.1,
-          camera.position.y - sunY * 0.1,
-          camera.position.z - sunZ * 0.1,
+          centerX - sunX * 0.1,
+          Math.max(30, camera.position.y - sunY * 0.1),
+          centerZ - sunZ * 0.1,
         );
         lightColor.copy(palette.nightLight);
         lightIntensity = 0.15;
@@ -266,15 +319,45 @@ export default function EnvironmentRig() {
         lightIntensity = day * seasonalIntensity;
       }
 
-      // Storm darkness and lightning are resolved here so lighting has one owner.
       lightIntensity *= MathUtils.lerp(1, 0.22, Math.pow(storm, 0.8));
       lightIntensity += lightning * 3;
       lightColor.lerp(palette.lightning, lightning);
 
       directionalLight.intensity = lightIntensity;
       directionalLight.color.copy(lightColor);
-      directionalLight.target.position.set(camera.position.x, 0, camera.position.z);
+      directionalLight.target.position.set(centerX, 0, centerZ);
       directionalLight.target.updateMatrixWorld();
+
+      const shadow = directionalLight.shadow as ManagedShadow;
+      if (configuredShadowRef.current !== directionalLight) {
+        configuredShadowRef.current = directionalLight;
+        shadow.autoUpdate = false;
+        shadow.needsUpdate = true;
+      }
+
+      const shadowEnabled =
+        renderQuality !== 'low' &&
+        day > 0.08 &&
+        storm < 0.88 &&
+        lightning < 0.2 &&
+        lightIntensity > 0.12;
+      directionalLight.castShadow = shadowEnabled;
+
+      if (shadowEnabled) {
+        shadowAccumulatorRef.current += safeDelta;
+        const updateInterval = 1 / shadowConfig.updateHz;
+        const shouldUpdate =
+          !shadowWasEnabledRef.current ||
+          shadowAccumulatorRef.current >= updateInterval;
+        shadow.needsUpdate = shouldUpdate;
+        if (shouldUpdate) {
+          shadowAccumulatorRef.current %= updateInterval;
+        }
+      } else {
+        shadowAccumulatorRef.current = 0;
+        shadow.needsUpdate = false;
+      }
+      shadowWasEnabledRef.current = shadowEnabled;
     }
 
     if (ambientLightRef.current) {
@@ -286,14 +369,12 @@ export default function EnvironmentRig() {
     }
   });
 
-  const shadowSize = SHADOW_SIZE[renderQuality];
-
   return (
     <group>
       <group ref={skyRef}>
         <Sky sunPosition={[100, 20, 100]} turbidity={0.1} distance={450000} />
       </group>
-      <group ref={starsRef}>
+      <group ref={starsRef} key={`stars-${renderQuality}`}>
         <Stars
           radius={300}
           depth={50}
@@ -306,17 +387,22 @@ export default function EnvironmentRig() {
       </group>
       <ambientLight ref={ambientLightRef} intensity={0.3} />
       <directionalLight
+        key={`directional-light-${renderQuality}`}
         ref={directionalLightRef}
         intensity={1.5}
         castShadow={renderQuality !== 'low'}
-        shadow-mapSize={[shadowSize, shadowSize]}
+        shadow-mapSize={[
+          shadowConfig.mapSize,
+          shadowConfig.mapSize,
+        ]}
         shadow-camera-near={0.5}
-        shadow-camera-far={renderQuality === 'ultra' ? 260 : 180}
-        shadow-camera-left={-50}
-        shadow-camera-right={50}
-        shadow-camera-top={50}
-        shadow-camera-bottom={-50}
+        shadow-camera-far={shadowConfig.far}
+        shadow-camera-left={-shadowConfig.radius}
+        shadow-camera-right={shadowConfig.radius}
+        shadow-camera-top={shadowConfig.radius}
+        shadow-camera-bottom={-shadowConfig.radius}
         shadow-bias={-0.0002}
+        shadow-normalBias={0.035}
       />
     </group>
   );
