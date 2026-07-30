@@ -53,3 +53,5 @@ jobs:
           fi
           git commit -m "perf: optimize boat frame loop"
           git push origin "HEAD:${GITHUB_REF_NAME}"
+
+# This revision intentionally triggers the one-time guarded pass after the workflow exists.
