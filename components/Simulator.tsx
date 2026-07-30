@@ -178,7 +178,11 @@ export default function Simulator() {
         </Suspense>
       </Canvas>
       <HUD />
-      {debugEnabled && <BenchmarkPanel />}
+      {debugEnabled && (
+        <div className="hidden sm:block">
+          <BenchmarkPanel />
+        </div>
+      )}
       <PerformanceHUD showMetrics={debugEnabled} />
     </div>
   );
