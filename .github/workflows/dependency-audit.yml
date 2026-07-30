@@ -1,0 +1,65 @@
+name: Dependency audit
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/dependency-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Dependency and lint audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Inspect unused direct dependencies
+        run: |
+          mkdir -p artifacts/dependency-audit
+          npx --yes depcheck@1.4.7 --json > artifacts/dependency-audit/depcheck.json || true
+
+      - name: Capture npm audit reports
+        run: |
+          npm audit --json > artifacts/dependency-audit/npm-audit-all.json || true
+          npm audit --omit=dev --json > artifacts/dependency-audit/npm-audit-runtime.json || true
+
+      - name: Capture lint result
+        run: npm run lint > artifacts/dependency-audit/lint.log 2>&1 || true
+
+      - name: Print concise audit summary
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const depcheck = JSON.parse(fs.readFileSync('artifacts/dependency-audit/depcheck.json', 'utf8'));
+          const all = JSON.parse(fs.readFileSync('artifacts/dependency-audit/npm-audit-all.json', 'utf8'));
+          const runtime = JSON.parse(fs.readFileSync('artifacts/dependency-audit/npm-audit-runtime.json', 'utf8'));
+          const lint = fs.readFileSync('artifacts/dependency-audit/lint.log', 'utf8');
+          console.log('Unused dependencies:', depcheck.dependencies ?? []);
+          console.log('Unused devDependencies:', depcheck.devDependencies ?? []);
+          console.log('All dependency vulnerabilities:', all.metadata?.vulnerabilities ?? {});
+          console.log('Runtime dependency vulnerabilities:', runtime.metadata?.vulnerabilities ?? {});
+          console.log('Lint passed:', !/\berror\b/i.test(lint));
+          console.log(lint.slice(0, 12000));
+          NODE
+
+      - name: Upload dependency audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit
+          path: artifacts/dependency-audit
+          retention-days: 3
