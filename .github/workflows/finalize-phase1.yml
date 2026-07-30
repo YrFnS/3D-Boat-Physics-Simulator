@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - scripts/finalize-phase1-repo.mjs
+      - scripts/fix-final-lint.mjs
       - .github/workflows/finalize-phase1.yml
   workflow_dispatch:
 
@@ -35,7 +36,9 @@ jobs:
           cache: npm
 
       - name: Apply repository cleanup
-        run: node scripts/finalize-phase1-repo.mjs
+        run: |
+          node scripts/finalize-phase1-repo.mjs
+          node scripts/fix-final-lint.mjs
 
       - name: Regenerate dependency lockfile
         run: npm install --package-lock-only --ignore-scripts
@@ -58,6 +61,7 @@ jobs:
       - name: Remove one-time finalization tooling
         run: |
           rm -f scripts/finalize-phase1-repo.mjs
+          rm -f scripts/fix-final-lint.mjs
           rm -f .github/workflows/finalize-phase1.yml
 
       - name: Commit validated cleanup
