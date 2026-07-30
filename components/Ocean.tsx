@@ -504,7 +504,18 @@ export const getWaveData = () => {
   return CACHED_WAVES;
 };
 
-export const getWaveHeight = (x: number, z: number, time: number) => {
+export interface WaveHeightSample {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export const getWaveHeight = (
+  x: number,
+  z: number,
+  time: number,
+  target?: WaveHeightSample,
+): WaveHeightSample => {
   const waves = getWaveData();
   let restingX = x;
   let restingZ = z;
@@ -573,7 +584,11 @@ export const getWaveHeight = (x: number, z: number, time: number) => {
   finalHeight *= 1 - Math.pow(vortex, 1.5);
   finalHeight -= Math.pow(vortex, 3) * 80 * dampening;
 
-  return { x, y: finalHeight + OCEAN_HEIGHT, z };
+  const sample = target ?? { x: 0, y: 0, z: 0 };
+  sample.x = x;
+  sample.y = finalHeight + OCEAN_HEIGHT;
+  sample.z = z;
+  return sample;
 };
 
 export default function Ocean() {

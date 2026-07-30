@@ -2,14 +2,14 @@
 
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Vector3, Vector2, Group, MathUtils, InstancedMesh, Object3D, Color } from 'three';
+import { Vector3, Group, MathUtils } from 'three';
 import { MeshDistortMaterial } from '@react-three/drei';
 import { useSimStore, sharedPhysics } from '@/store/useSimStore';
 import { getWaveHeight } from './Ocean';
 import { getTerrainHeight } from '@/lib/terrain';
+import { useBoatAudio } from './boat/useBoatAudio';
+import { useBoatVisualDamage } from './boat/useBoatVisualDamage';
 
-const MAX_WAKE_PARTICLES = 600;
-const _color = new Color();
 
 export default function Boat() {
   const boatRef = useRef<Group>(null);
@@ -21,6 +21,44 @@ export default function Boat() {
   const trawlerEngineRef = useRef<Group>(null);
   const speedboatEngineLRef = useRef<Group>(null);
   const speedboatEngineRRef = useRef<Group>(null);
+  const telemetryAccumulator = useRef(0);
+
+  const scratch = useMemo(
+    () => ({
+      forwardDir: new Vector3(),
+      rightDir: new Vector3(),
+      fwdVec: new Vector3(),
+      rgtVec: new Vector3(),
+      cornerFR: new Vector3(),
+      cornerFL: new Vector3(),
+      cornerBR: new Vector3(),
+      cornerBL: new Vector3(),
+      windVelocity: new Vector3(),
+      waterVelocity: new Vector3(),
+      waterRelativeVelocity: new Vector3(),
+      thrustForce: new Vector3(),
+      dragForceForward: new Vector3(),
+      dragForceRight: new Vector3(),
+      apparentWind: new Vector3(),
+      apparentWindDir: new Vector3(),
+      windForce: new Vector3(),
+      totalForce: new Vector3(),
+      terrainNormal: new Vector3(),
+      boatForward: new Vector3(),
+      boatRight: new Vector3(),
+      boatPosition: new Vector3(),
+      cameraTarget: new Vector3(),
+      cameraDelta: new Vector3(),
+      cameraOffset: new Vector3(),
+      cameraDesired: new Vector3(),
+      cameraLookAt: new Vector3(),
+      pFR: { x: 0, y: 0, z: 0 },
+      pFL: { x: 0, y: 0, z: 0 },
+      pBR: { x: 0, y: 0, z: 0 },
+      pBL: { x: 0, y: 0, z: 0 },
+    }),
+    [],
+  );
   
   // Phase 1: Health tracking refs
   const hullHealth = useRef(100);
@@ -35,6 +73,8 @@ export default function Boat() {
   // Read active boat reactively to trigger re-renders
   const activeBoat = useSimStore((state) => state.activeBoat);
   const instantRepairTrigger = useSimStore((state) => state.instantRepairTrigger);
+  const audio = useBoatAudio();
+  const updateVisualDamage = useBoatVisualDamage(boatRef, activeBoat);
 
   // Instant Repair Reset Catch
   useEffect(() => {
@@ -49,110 +89,6 @@ export default function Boat() {
   // Apparent wind flag rotation
   const flagRef = useRef<Group>(null);
 
-  // --- AUDIO SYSTEM REFS ---
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const pannerRef = useRef<PannerNode | null>(null);
-  const engineOscRef = useRef<OscillatorNode | null>(null);
-  const filterRef = useRef<BiquadFilterNode | null>(null);
-  const waveGainRef = useRef<GainNode | null>(null);
-
-  useEffect(() => {
-    const initAudio = () => {
-      if (audioCtxRef.current) {
-        if (audioCtxRef.current.state === 'suspended') {
-          audioCtxRef.current.resume();
-        }
-        return;
-      }
-      
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      const ctx = new AudioCtx();
-      audioCtxRef.current = ctx;
-
-      // Master Panner to create Spatial 3D effect relative to Camera Listener
-      const panner = ctx.createPanner();
-      panner.panningModel = 'HRTF';
-      panner.distanceModel = 'inverse';
-      panner.refDistance = 2;
-      panner.maxDistance = 1000;
-      panner.rolloffFactor = 1;
-      pannerRef.current = panner;
-
-      const masterGain = ctx.createGain();
-      masterGain.gain.value = 0.6;
-      
-      panner.connect(masterGain);
-      masterGain.connect(ctx.destination);
-
-      // --- ENGINE SYNTHESIS ---
-      const engineOsc = ctx.createOscillator();
-      engineOsc.type = 'sawtooth';
-      engineOsc.frequency.value = 40; // Low rumble idle
-      
-      // Engine LFO for a pulsating "chugging" effect
-      const lfo = ctx.createOscillator();
-      lfo.type = 'sine';
-      lfo.frequency.value = 15;
-      const lfoGain = ctx.createGain();
-      lfoGain.gain.value = 12;
-      lfo.connect(lfoGain);
-      lfoGain.connect(engineOsc.frequency);
-      lfo.start();
-
-      const engineFilter = ctx.createBiquadFilter();
-      engineFilter.type = 'lowpass';
-      engineFilter.frequency.value = 150;
-
-      const engineGain = ctx.createGain();
-      engineGain.gain.value = 0.4;
-
-      engineOsc.connect(engineFilter);
-      engineFilter.connect(engineGain);
-      engineGain.connect(panner);
-      engineOsc.start();
-      
-      engineOscRef.current = engineOsc;
-      filterRef.current = engineFilter;
-
-      // --- WAVE/WHITE NOISE SYNTHESIS ---
-      const bufferSize = ctx.sampleRate * 2;
-      const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-      const output = noiseBuffer.getChannelData(0);
-      // Generate White Noise
-      for (let i = 0; i < bufferSize; i++) {
-          output[i] = Math.random() * 2 - 1;
-      }
-      const noiseSrc = ctx.createBufferSource();
-      noiseSrc.buffer = noiseBuffer;
-      noiseSrc.loop = true;
-
-      const waveFilter = ctx.createBiquadFilter();
-      waveFilter.type = 'bandpass';
-      waveFilter.frequency.value = 450; // Swooshing water frequency band
-      waveFilter.Q.value = 0.6;
-
-      const waveGain = ctx.createGain();
-      waveGain.gain.value = 0; // Silent at 0 speed
-
-      noiseSrc.connect(waveFilter);
-      waveFilter.connect(waveGain);
-      waveGain.connect(panner);
-      noiseSrc.start();
-
-      waveGainRef.current = waveGain;
-    };
-
-    // Auto-init on first user click/touch/keyboard interaction (browser auto-play policy)
-    window.addEventListener('pointerdown', initAudio);
-    window.addEventListener('keydown', initAudio);
-    return () => {
-      window.removeEventListener('pointerdown', initAudio);
-      window.removeEventListener('keydown', initAudio);
-      if (audioCtxRef.current) {
-        audioCtxRef.current.close().catch(() => {});
-      }
-    };
-  }, []);
 
   useFrame((state, delta) => {
     // Clamp delta to prevent physics explosion after tab inactivity
@@ -172,7 +108,13 @@ export default function Boat() {
 
     const isSpeedboat = activeBoat === 'speedboat';
 
-    const thrustRaw = Math.max(0, engineThrust) + (keys.w || keys.arrowup ? 1 : 0) - (keys.s || keys.arrowdown ? 1 : 0);
+    const keyboardThrottle =
+      (keys.w || keys.arrowup ? 1 : 0) -
+      (keys.s || keys.arrowdown ? 1 : 0);
+    const thrustRaw =
+      keyboardThrottle !== 0
+        ? keyboardThrottle
+        : MathUtils.clamp(engineThrust, -1, 1);
     const steerRaw = (keys.a || keys.arrowleft ? 1 : 0) - (keys.d || keys.arrowright ? 1 : 0);
 
     // --- Physical Constants ---
@@ -186,8 +128,16 @@ export default function Boat() {
 
     // --- Heading & Forward Vectors ---
     const heading = boatRef.current.rotation.y;
-    const forwardDir = new Vector3(-Math.sin(heading), 0, -Math.cos(heading)).normalize();
-    const rightDir = new Vector3(forwardDir.z, 0, -forwardDir.x).normalize();
+    const forwardDir = scratch.forwardDir.set(
+      -Math.sin(heading),
+      0,
+      -Math.cos(heading),
+    );
+    const rightDir = scratch.rightDir.set(
+      forwardDir.z,
+      0,
+      -forwardDir.x,
+    );
 
     // --- Sample Gerstner Wave for Multi-Point Buoyancy & Physics ---
     const time = state.clock.elapsedTime;
@@ -198,19 +148,39 @@ export default function Boat() {
     const halfW = isSpeedboat ? 0.6 : 1.0; // Distance to port/starboard
 
     // Calculate vectors identifying the 4 corners of the boat based on its heading
-    const fwdVec = forwardDir.clone().multiplyScalar(halfL);
-    const rgtVec = rightDir.clone().multiplyScalar(halfW);
+    const fwdVec = scratch.fwdVec.copy(forwardDir).multiplyScalar(halfL);
+    const rgtVec = scratch.rgtVec.copy(rightDir).multiplyScalar(halfW);
 
-    const cornerFR = fwdVec.clone().add(rgtVec);
-    const cornerFL = fwdVec.clone().sub(rgtVec);
-    const cornerBR = fwdVec.clone().negate().add(rgtVec);
-    const cornerBL = fwdVec.clone().negate().sub(rgtVec);
+    const cornerFR = scratch.cornerFR.copy(fwdVec).add(rgtVec);
+    const cornerFL = scratch.cornerFL.copy(fwdVec).sub(rgtVec);
+    const cornerBR = scratch.cornerBR.copy(fwdVec).multiplyScalar(-1).add(rgtVec);
+    const cornerBL = scratch.cornerBL.copy(fwdVec).multiplyScalar(-1).sub(rgtVec);
 
     // Sample the ocean shader's wave height at these 4 distinct world positions
-    const pFR = getWaveHeight(pos.x + cornerFR.x, pos.z + cornerFR.z, time);
-    const pFL = getWaveHeight(pos.x + cornerFL.x, pos.z + cornerFL.z, time);
-    const pBR = getWaveHeight(pos.x + cornerBR.x, pos.z + cornerBR.z, time);
-    const pBL = getWaveHeight(pos.x + cornerBL.x, pos.z + cornerBL.z, time);
+    const pFR = getWaveHeight(
+      pos.x + cornerFR.x,
+      pos.z + cornerFR.z,
+      time,
+      scratch.pFR,
+    );
+    const pFL = getWaveHeight(
+      pos.x + cornerFL.x,
+      pos.z + cornerFL.z,
+      time,
+      scratch.pFL,
+    );
+    const pBR = getWaveHeight(
+      pos.x + cornerBR.x,
+      pos.z + cornerBR.z,
+      time,
+      scratch.pBR,
+    );
+    const pBL = getWaveHeight(
+      pos.x + cornerBL.x,
+      pos.z + cornerBL.z,
+      time,
+      scratch.pBL,
+    );
 
     // Calculate Average Surface Y under the boat
     const avgY = (pFR.y + pFL.y + pBR.y + pBL.y) / 4.0;
@@ -276,11 +246,7 @@ export default function Boat() {
            }
         }
 
-        if (waveGainRef.current && audioCtxRef.current) {
-          // Temporarily peak the wave crashing noise to simulate a hull slam
-          waveGainRef.current.gain.setTargetAtTime(Math.min(3.0, 1.0 + slamSeverity * 0.4), audioCtxRef.current.currentTime, 0.02);
-          waveGainRef.current.gain.setTargetAtTime(0.0, audioCtxRef.current.currentTime + 0.6, 0.5);
-        }
+        audio.playSlam(slamSeverity);
     }
     
     // Store for next frame
@@ -289,13 +255,19 @@ export default function Boat() {
 
     // --- Environmental Velocities ---
     const windRad = MathUtils.degToRad(windDir);
-    const windVelocity = new Vector3(Math.sin(windRad), 0, Math.cos(windRad)).multiplyScalar(windSpeed);
+    const windVelocity = scratch.windVelocity
+      .set(Math.sin(windRad), 0, Math.cos(windRad))
+      .multiplyScalar(windSpeed);
     
     const currentRad = MathUtils.degToRad(currentDir);
-    const waterVelocity = new Vector3(Math.sin(currentRad), 0, Math.cos(currentRad)).multiplyScalar(currentSpeed);
+    const waterVelocity = scratch.waterVelocity
+      .set(Math.sin(currentRad), 0, Math.cos(currentRad))
+      .multiplyScalar(currentSpeed);
 
     // --- True Velocity Relative to Water ---
-    const waterRelativeVelocity = velocity.current.clone().sub(waterVelocity);
+    const waterRelativeVelocity = scratch.waterRelativeVelocity
+      .copy(velocity.current)
+      .sub(waterVelocity);
     const vRelForward = waterRelativeVelocity.dot(forwardDir);
     const vRelRight = waterRelativeVelocity.dot(rightDir);
 
@@ -304,7 +276,7 @@ export default function Boat() {
     // PLANING HYDRODYNAMICS
     // Calculate how 'on plane' the hull is based on forward speed. 
     // Speedboats ride up on top of the water, massively reducing drag and lifting the bow.
-    const speedRatio = Math.min(new Vector2(velocity.current.x, velocity.current.z).length() / 15.0, 1.0); 
+    const speedRatio = Math.min(Math.hypot(velocity.current.x, velocity.current.z) / 15.0, 1.0); 
     const planingLift = speedRatio * 0.18 * submergedRatio; // Also used for pitch visual later
     
     // Decrease forward drag up to 65% for the speedboat when planing. Displacement hulls (Trawler) don't plane well.
@@ -338,56 +310,86 @@ export default function Boat() {
     const effectiveThrustRatio = (engineRPM.current - 1000) / (isSpeedboat ? 6000 : 3500); 
     
     // --- PHASE 2: Engine Efficiency & Misfires ---
-    let engineHealthEfficiency = Math.max(0.1, engineHealth.current / 100);
+    const engineHealthEfficiency = MathUtils.clamp(engineHealth.current / 100, 0, 1);
     // Overheat causes temporary massive efficiency drop. At 100C, efficiency drops sharply.
     const overheatPenalty = engineTemperature.current > 90 ? Math.max(0.2, 1.0 - ((engineTemperature.current - 90) / 20)) : 1.0;
     
     let thrustMultiplier = MathUtils.clamp(submergedRatio * 1.5, 0, 1) * engineHealthEfficiency * overheatPenalty;
     
-    // If engine is severely damaged, simulate sputtering/stalling
-    if (engineHealth.current < 40) {
-      if (Math.random() > engineHealth.current / 50) {
-        thrustMultiplier *= Math.random() * 0.2; // Sputter
-        engineRPM.current *= MathUtils.lerp(1.0, 0.4, dt * 10); // RPM drops during misfire
+    // If the engine is severely damaged, use a time-based failure rate so
+    // behavior is independent of render frame rate.
+    if (engineHealth.current > 0 && engineHealth.current < 40) {
+      const damageRatio = (40 - engineHealth.current) / 40;
+      const misfireProbability = 1 - Math.exp(-damageRatio * 8 * dt);
+      if (Math.random() < misfireProbability) {
+        thrustMultiplier *= Math.random() * 0.2;
+        engineRPM.current *= MathUtils.lerp(1, 0.4, dt * 10);
       }
     }
 
     const thrustDirection = thrustRaw < 0 ? -1 : 1;
-    const thrustForce = forwardDir.clone().multiplyScalar(Math.abs(effectiveThrustRatio) * thrustDirection * engineForceMax * thrustMultiplier);
+    const thrustForce = scratch.thrustForce.copy(forwardDir).multiplyScalar(
+      Math.abs(effectiveThrustRatio) *
+        thrustDirection *
+        engineForceMax *
+        thrustMultiplier,
+    );
     
     // 2. Hydrodynamic Drag (Water Resistance - Drops to zero if boat jumps)
     // --- PHASE 2: Hull Damage Penalty ---
     // A ruined hull creates tremendous parasitic drag, lowering top speed by up to 40%
     const hullDragPenalty = 1.0 + ((100 - hullHealth.current) / 100) * 0.8; 
     
-    const dragForceForward = forwardDir.clone().multiplyScalar(-vRelForward * Math.abs(vRelForward) * dynamicDragCoeff * hullDragPenalty * 0.2 - vRelForward * dynamicDragCoeff * hullDragPenalty).multiplyScalar(submergedRatio);
-    const dragForceRight = rightDir.clone().multiplyScalar(-vRelRight * Math.abs(vRelRight) * dragCoeff * keelDragMultiplier).multiplyScalar(submergedRatio);
+    const dragForceForward = scratch.dragForceForward
+      .copy(forwardDir)
+      .multiplyScalar(
+        -vRelForward *
+          Math.abs(vRelForward) *
+          dynamicDragCoeff *
+          hullDragPenalty *
+          0.2 -
+          vRelForward * dynamicDragCoeff * hullDragPenalty,
+      )
+      .multiplyScalar(submergedRatio);
+    const dragForceRight = scratch.dragForceRight
+      .copy(rightDir)
+      .multiplyScalar(
+        -vRelRight * Math.abs(vRelRight) * dragCoeff * keelDragMultiplier,
+      )
+      .multiplyScalar(submergedRatio);
 
     // DIRECTIONAL WIND CATCHING
-    // Wind force is proportional to the silhouette area exposed to the wind.
-    const apparentWind = windVelocity.clone().sub(velocity.current);
-    const apparentWindDir = apparentWind.lengthSq() > 0 ? apparentWind.clone().normalize() : new Vector3(1,0,0);
+    const apparentWind = scratch.apparentWind
+      .copy(windVelocity)
+      .sub(velocity.current);
+    const apparentWindLengthSq = apparentWind.lengthSq();
+    const apparentWindDir = scratch.apparentWindDir;
+    if (apparentWindLengthSq > 1e-8) {
+      apparentWindDir.copy(apparentWind).multiplyScalar(
+        1 / Math.sqrt(apparentWindLengthSq),
+      );
+    } else {
+      apparentWindDir.set(1, 0, 0);
+    }
     
-    // Dot products give us the alignment. 1 = parallel, 0 = perpendicular
     const windDotForward = apparentWindDir.dot(forwardDir);
     const windDotRight = apparentWindDir.dot(rightDir);
-    
-    // Broadside profile is much larger than nose-in profile. 
-    // Trawler has a massive sideways cabin profile (multiplier ~4.5x), Speedboat is sleeker (multiplier ~2.0x).
     const sideAreaMultiplier = isSpeedboat ? 2.0 : 4.5;
-    const exposedProfileArea = (Math.abs(windDotForward) * 1.0) + (Math.abs(windDotRight) * sideAreaMultiplier);
-
-    // 3. Aerodynamic Force (Wind always hits, even in mid-air!)
+    const exposedProfileArea =
+      Math.abs(windDotForward) +
+      Math.abs(windDotRight) * sideAreaMultiplier;
     const trueWindCoeff = windCoeff * exposedProfileArea;
-    const windForce = apparentWind.clone().multiplyScalar(apparentWind.length() * trueWindCoeff);
+    const windForce = scratch.windForce.copy(apparentWind).multiplyScalar(
+      Math.sqrt(apparentWindLengthSq) * trueWindCoeff,
+    );
 
-    // Sum Forces -> Acceleration -> Velocity
-    const totalForce = thrustForce.add(dragForceForward).add(dragForceRight).add(windForce);
-    
-    // We only apply this to the X/Z velocity horizontally
-    const acceleration = totalForce.divideScalar(mass);
-    velocity.current.x += acceleration.x * dt;
-    velocity.current.z += acceleration.z * dt;
+    const totalForce = scratch.totalForce
+      .copy(thrustForce)
+      .add(dragForceForward)
+      .add(dragForceRight)
+      .add(windForce);
+    velocity.current.x += (totalForce.x / mass) * dt;
+    velocity.current.z += (totalForce.z / mass) * dt;
     
     // --- PHASE 4.5: ICE FLOE FRICTION & DAMAGE ---
     // Instead of instantiating hundreds of meshes, we treat the procedural ice field as an actual physical entity
@@ -396,19 +398,15 @@ export default function Boat() {
         // Ice induces extreme drag, capping momentum
         velocity.current.multiplyScalar(1.0 - (currentIceFactor * 0.1 * dt * 60)); // Framerate independent drag
         
-        const currentSpeed = velocity.current.length();
-        if (currentSpeed > 2.0 && Math.abs(thrustRaw) > 0.1) {
+        const iceImpactSpeed = Math.hypot(velocity.current.x, velocity.current.z);
+        if (iceImpactSpeed > 2.0 && Math.abs(thrustRaw) > 0.1) {
             // Apply continuous grinding damage based on speed and ice density
-            hullHealth.current = Math.max(0, hullHealth.current - currentSpeed * currentIceFactor * 0.2 * dt);
+            hullHealth.current = Math.max(0, hullHealth.current - iceImpactSpeed * currentIceFactor * 0.2 * dt);
             
             // Random chaotic bumps representing ice chunk impacts
-            velocity.current.y += (Math.random() - 0.2) * currentIceFactor * currentSpeed * 0.1;
-            angularVelocity.current += (Math.random() - 0.5) * currentIceFactor * currentSpeed * 0.2;
+            velocity.current.y += (Math.random() - 0.2) * currentIceFactor * iceImpactSpeed * 0.1;
+            angularVelocity.current += (Math.random() - 0.5) * currentIceFactor * iceImpactSpeed * 0.2;
             
-            // Play grinding hit sound sparingly
-            if (audioCtxRef.current && pannerRef.current) {
-                // Ensure audio context is respected without massive spam
-            }
         }
     }
 
@@ -418,7 +416,7 @@ export default function Boat() {
     
     // --- PHASE 2: Rudder Damage Penalty ---
     // If rudder health is low, max turning angle drops significantly
-    const rudderAuth = Math.max(0.1, rudderHealth.current / 100);
+    const rudderAuth = MathUtils.clamp(rudderHealth.current / 100, 0, 1);
     targetRudder *= rudderAuth;
 
     // At extreme damage, rudder wiggles and jitters from broken linkages
@@ -461,7 +459,7 @@ export default function Boat() {
         
         if (distSq < totalRad * totalRad) {
             // COLLISION!
-            const dist = Math.sqrt(distSq);
+            const dist = Math.max(Math.sqrt(distSq), 1e-4);
             const nx = dx / (dist || 1);
             const nz = dz / (dist || 1);
             
@@ -484,23 +482,7 @@ export default function Boat() {
                 // Damage Hull! (Reduced damage from buoys)
                 hullHealth.current = Math.max(0, hullHealth.current - dotVelocity * 1.5);
 
-                // Play Hit Sound
-                if (audioCtxRef.current && pannerRef.current) {
-                    const ctx = audioCtxRef.current;
-                    const osc = ctx.createOscillator();
-                    osc.type = 'sawtooth';
-                    osc.frequency.setValueAtTime(80, ctx.currentTime);
-                    osc.frequency.exponentialRampToValueAtTime(10, ctx.currentTime + 0.3);
-                    
-                    const gain = ctx.createGain();
-                    gain.gain.setValueAtTime(Math.min(dotVelocity * 0.5, 2.0), ctx.currentTime);
-                    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-                    
-                    osc.connect(gain);
-                    gain.connect(pannerRef.current);
-                    osc.start();
-                    osc.stop(ctx.currentTime + 0.3);
-                }
+                audio.playImpact(dotVelocity, 'obstacle');
             }
         }
     }
@@ -511,13 +493,15 @@ export default function Boat() {
     velocity.current.z = MathUtils.clamp(velocity.current.z, -80, 80);
 
     // --- Apply Transforms ---
-    boatRef.current.position.add(velocity.current.clone().multiplyScalar(dt));
+    boatRef.current.position.x += velocity.current.x * dt;
+    boatRef.current.position.y += velocity.current.y * dt;
+    boatRef.current.position.z += velocity.current.z * dt;
     boatRef.current.rotation.y += angularVelocity.current * dt;
     
     // Update Shared Physics for Shaders (Ocean Wake)
     sharedPhysics.boatPos.copy(boatRef.current.position);
     sharedPhysics.boatDir.copy(forwardDir);
-    const speed2D = new Vector2(velocity.current.x, velocity.current.z).length();
+    const speed2D = Math.hypot(velocity.current.x, velocity.current.z);
     sharedPhysics.boatSpeed = Math.min(speed2D, 35.0);
 
     // --- PHASE 3: TERRAIN COLLISION & BEACHING ---
@@ -561,7 +545,7 @@ export default function Boat() {
         
         const normalX = ty2 - ty1;
         const normalZ = ty4 - ty3;
-        const normalVector = new Vector3(normalX, 2*d, normalZ).normalize();
+        const normalVector = scratch.terrainNormal.set(normalX, 2 * d, normalZ).normalize();
         
         // 3. Rigid Lateral Correction (Fixes clipping/sliding over steep cliffs)
         if (normalVector.y < 0.9) { 
@@ -614,25 +598,7 @@ export default function Boat() {
              velocity.current.z += normalVector.z * speedIntoWall * 0.8;
              
              // Add chaotic spin
-             angularVelocity.current += (Math.random() - 0.5) * speedIntoWall * 1.0;
-             
-             // Play crash sound
-             if (audioCtxRef.current && pannerRef.current) {
-                 const ctx = audioCtxRef.current;
-                 const osc = ctx.createOscillator();
-                 osc.type = 'square';
-                 osc.frequency.setValueAtTime(40, ctx.currentTime);
-                 osc.frequency.exponentialRampToValueAtTime(10, ctx.currentTime + 0.5);
-                 
-                 const gain = ctx.createGain();
-                 gain.gain.setValueAtTime(Math.min(severity * 0.6, 2.0), ctx.currentTime);
-                 gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-                 
-                 osc.connect(gain);
-                 gain.connect(pannerRef.current);
-                 osc.start();
-                 osc.stop(ctx.currentTime + 0.5);
-             }
+             angularVelocity.current += (Math.random() - 0.5) * speedIntoWall * 1.0;              audio.playImpact(severity, 'terrain');
         }
     }
 
@@ -648,7 +614,7 @@ export default function Boat() {
         const distSq = dx*dx + dz*dz;
         
         if (distSq < 14400) { // 120m range for Tornado
-            const dist = Math.sqrt(distSq);
+            const dist = Math.max(Math.sqrt(distSq), 1e-4);
             const pullFactor = Math.pow(1.0 - (dist / 120.0), 2.0) * 12.0; 
             const nx = dx / dist;
             const nz = dz / dist;
@@ -673,7 +639,7 @@ export default function Boat() {
         const distSq = dx*dx + dz*dz;
         
         if (distSq < 25600) { // 160m total influence range match visual shader
-            const dist = Math.sqrt(distSq);
+            const dist = Math.max(Math.sqrt(distSq), 1e-4);
             const radius = 160.0;
             const eyeWallRadius = 25.0; 
             
@@ -713,7 +679,7 @@ export default function Boat() {
             if (dist < 40) {
                  const damageFactor = Math.pow(1.0 - dist/40.0, 2.0);
                  hullHealth.current = Math.max(0, hullHealth.current - 15.0 * dt * damageFactor);
-                 engineHealth.current -= 5.0 * dt * damageFactor;
+                 engineHealth.current = Math.max(0, engineHealth.current - 5.0 * dt * damageFactor);
                  
                  // Structural shuddering near the terrifying eye
                  velocity.current.x += (Math.random() - 0.5) * 10.0 * damageFactor;
@@ -777,11 +743,11 @@ export default function Boat() {
     // --- Whirlpool Pitch Bias (Nose Dip) ---
     let whirlpoolPitchBias = 0;
     if (wDistSq < 25600) { // 160m
-        const wDist = Math.sqrt(wDistSq);
+        const wDist = Math.max(Math.sqrt(wDistSq), 1e-4);
         const toWhirlpoolX = (sharedPhysics.whirlpoolPos.x - currentBoatPos.x) / wDist;
         const toWhirlpoolZ = (sharedPhysics.whirlpoolPos.z - currentBoatPos.z) / wDist;
         
-        const boatForward = new Vector3(0, 0, -1).applyQuaternion(boatRef.current.quaternion);
+        const boatForward = scratch.boatForward.set(0, 0, -1).applyQuaternion(boatRef.current.quaternion);
         const alignment = boatForward.x * toWhirlpoolX + boatForward.z * toWhirlpoolZ; // 1 if facing the center
         
         // Massive steepness down the 110m drop
@@ -803,12 +769,12 @@ export default function Boat() {
     // Whirlpool Roll Bias: The water slope is steep. We calculate the tangent of the boat relative to the vortex center.
     let whirlpoolRollBias = 0;
     if (wDistSq < 25600) {
-        const wDist = Math.sqrt(wDistSq);
+        const wDist = Math.max(Math.sqrt(wDistSq), 1e-4);
         const toWhirlpoolX = (sharedPhysics.whirlpoolPos.x - currentBoatPos.x) / wDist;
         const toWhirlpoolZ = (sharedPhysics.whirlpoolPos.z - currentBoatPos.z) / wDist;
         
         // Find boat's right vector
-        const boatRight = new Vector3(1, 0, 0).applyQuaternion(boatRef.current.quaternion);
+        const boatRight = scratch.boatRight.set(1, 0, 0).applyQuaternion(boatRef.current.quaternion);
         const alignment = boatRight.x * toWhirlpoolX + boatRight.z * toWhirlpoolZ; // 1 if center is to the right
         
         // Tilt radically toward the eye wall as it gets steeper
@@ -827,7 +793,7 @@ export default function Boat() {
 
     // --- Update Telemetry UI & Health Degradation ---
     // 1 knot = 0.514444 m/s
-    const speedKnots = velocity.current.length() / 0.514444;
+    const speedKnots = speed2D / 0.514444;
     let headingDeg = MathUtils.radToDeg(boatRef.current.rotation.y) % 360;
     if (headingDeg < 0) headingDeg += 360;
     
@@ -893,15 +859,17 @@ export default function Boat() {
         engineTemperature.current = Math.max(20, engineTemperature.current - 5.0 * dt);
     }
 
-    // throttle updates to UI ~10 times a sec
-    if (Math.random() < 0.2) {
+    // Publish telemetry at a deterministic 10 Hz, independent of render FPS.
+    telemetryAccumulator.current += dt;
+    if (telemetryAccumulator.current >= 0.1) {
+      telemetryAccumulator.current %= 0.1;
       setTelemetry(
-        speedKnots, 
-        headingDeg, 
-        hullHealth.current, 
-        engineHealth.current, 
-        engineTemperature.current, 
-        rudderHealth.current
+        speedKnots,
+        headingDeg,
+        hullHealth.current,
+        engineHealth.current,
+        engineTemperature.current,
+        rudderHealth.current,
       );
     }
 
@@ -920,128 +888,48 @@ export default function Boat() {
     if (speedboatEngineLRef.current) speedboatEngineLRef.current.rotation.y = rudderAngle.current;
     if (speedboatEngineRRef.current) speedboatEngineRRef.current.rotation.y = rudderAngle.current;
 
-    // --- Update Dynamic Damage Visuals ---
-    if (boatRef.current) {
-        boatRef.current.traverse((child: any) => {
-           if (child.isMesh && child.name === 'engineSmoke') {
-               const health = engineHealth.current;
-               if (health <= 0) {
-                   // Engine Dead - Large black/orange smoke
-                   child.scale.setScalar(1.2 + Math.random() * 0.8);
-                   (child.material as any).color.set(Math.random() > 0.8 ? "#9a3412" : "#0f172a"); // Occasionally flashes orange like fire
-                   (child.material as any).opacity = 0.8;
-               } else if (health < 50) {
-                   // Engine Damaged - Grey sputtering smoke
-                   child.scale.setScalar(0.6 + Math.random() * 0.4);
-                   (child.material as any).color.set("#333333");
-                   (child.material as any).opacity = 0.4;
-               } else {
-                   // Healthy
-                   child.scale.setScalar(0.001);
-               }
-           }
-           if (child.isMaterial && child.name && child.name.endsWith('Mat')) {
-               if (child.name === 'trawlerHullLowerMat') {
-                   child.color.set(hullHealth.current < 40 ? "#064e3b" : "#0f766e");
-                   child.roughness = 0.8 + (100 - hullHealth.current) / 200.0;
-                   child.distort = hullHealth.current < 50 ? 0.3 : 0;
-               } else if (child.name === 'trawlerHullUpperMat') {
-                   child.color.set(hullHealth.current < 40 ? "#0a4a45" : "#0b5c56");
-                   child.distort = hullHealth.current < 50 ? 0.2 : 0;
-               } else if (child.name === 'speedboatHullLowerMat') {
-                   child.color.set(hullHealth.current < 40 ? "#4c0519" : "#881337");
-                   child.roughness = 0.3 + (100 - hullHealth.current) / 200.0;
-                   child.distort = hullHealth.current < 50 ? 0.3 : 0;
-               } else if (child.name.startsWith('speedboatHullUpperMat')) {
-                   const defaultColor = child.name.includes("Bow") ? "#be123c" : "#e11d48";
-                   child.color.set(hullHealth.current < 40 ? "#881337" : defaultColor);
-                   child.distort = hullHealth.current < 50 ? 0.2 : 0;
-               }
-           }
-        });
-    }
+    // Damage visuals are cached and updated at a controlled rate.
+    updateVisualDamage(hullHealth.current, engineHealth.current, dt);
 
     // Wake Particle system has been removed in favor of the shader-based Analytical Kelvin Wake
     
     // --- Camera Tracking (Orbit Controls) ---
-    const boatPos = boatRef.current.position.clone();
+    const boatPos = scratch.boatPosition.copy(boatRef.current.position);
     
     if (state.controls) {
       const controls = state.controls as any;
-      const targetPos = boatPos.clone().add(new Vector3(0, 2, 0));
-      
-      // Calculate how much the boat moved since last frame
-      const deltaPos = targetPos.clone().sub(controls.target);
-      
-      // Move both the controls target and the camera position by the same delta
-      // This pans the entire rig smoothly without breaking the user's orbit perspective
+      const targetPos = scratch.cameraTarget.copy(boatPos);
+      targetPos.y += 2;
+      const deltaPos = scratch.cameraDelta
+        .copy(targetPos)
+        .sub(controls.target);
       controls.target.copy(targetPos);
       state.camera.position.add(deltaPos);
       controls.update();
     } else {
-      // Fallback if controls aren't mounted yet
-      const cameraOffset = forwardDir.clone().multiplyScalar(-15).add(new Vector3(0, 8, 0));
-      const desiredCameraPos = boatPos.clone().add(cameraOffset);
-      
+      const cameraOffset = scratch.cameraOffset
+        .copy(forwardDir)
+        .multiplyScalar(-15);
+      cameraOffset.y += 8;
+      const desiredCameraPos = scratch.cameraDesired
+        .copy(boatPos)
+        .add(cameraOffset);
       state.camera.position.lerp(desiredCameraPos, 0.1);
-      state.camera.lookAt(boatPos.clone().add(new Vector3(0, 2, 0)));
+      const lookAt = scratch.cameraLookAt.copy(boatPos);
+      lookAt.y += 2;
+      state.camera.lookAt(lookAt);
     }
 
-    // --- 3D AUDIO POSITIONAL UPDATES ---
-    if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
-      const now = audioCtxRef.current.currentTime;
-      const panner = pannerRef.current!;
-      const listener = audioCtxRef.current.listener;
-
-      const cPos = state.camera.position;
-      
-      // Update Panner Position (Sound emanating from Boat Motor Location)
-      // We offset the sound slightly to the rear
-      const motorPos = pos.clone().add(forwardDir.clone().multiplyScalar(-2.0));
-      if (panner.positionX) {
-        panner.positionX.setTargetAtTime(motorPos.x, now, 0.1);
-        panner.positionY.setTargetAtTime(motorPos.y, now, 0.1);
-        panner.positionZ.setTargetAtTime(motorPos.z, now, 0.1);
-      }
-
-      // Update Listener Position & Orientation (Camera POV)
-      if (listener.positionX) {
-        listener.positionX.setTargetAtTime(cPos.x, now, 0.1);
-        listener.positionY.setTargetAtTime(cPos.y, now, 0.1);
-        listener.positionZ.setTargetAtTime(cPos.z, now, 0.1);
-        
-        const camDir = new Vector3(0, 0, -1).applyQuaternion(state.camera.quaternion);
-        const camUp = new Vector3(0, 1, 0).applyQuaternion(state.camera.quaternion);
-        listener.forwardX.setTargetAtTime(camDir.x, now, 0.1);
-        listener.forwardY.setTargetAtTime(camDir.y, now, 0.1);
-        listener.forwardZ.setTargetAtTime(camDir.z, now, 0.1);
-        listener.upX.setTargetAtTime(camUp.x, now, 0.1);
-        listener.upY.setTargetAtTime(camUp.y, now, 0.1);
-        listener.upZ.setTargetAtTime(camUp.z, now, 0.1);
-      }
-
-      // Audio Logic Modulation based on physical speed
-      const currentSpd = velocity.current.length();
-      
-      // Dynamic Engine Audio (Linked to Physical Engine RPM)
-      if (engineOscRef.current && filterRef.current) {
-        // Now using actual physics RPM instead of faking it from velocity!
-        const targetFreq = Math.max(35, engineRPM.current * (isSpeedboat ? 0.05 : 0.04));
-
-        engineOscRef.current.frequency.setTargetAtTime(targetFreq, now, 0.1);
-
-        // Filter follows pitch to brighten the sound when revving high
-        filterRef.current.frequency.setTargetAtTime(targetFreq * 3.5, now, 0.2);
-      }
-      
-      // Dynamic Wave Wash & Splash Audio
-      if (waveGainRef.current) {
-         // The faster you go, the louder the water slashing against the hull is.
-         // Slower decay (0.8) so it doesn't instantly snap down if we were mid "slam" audio override from earlier
-         const baseWaveVolume = MathUtils.clamp(currentSpd / 30.0, 0, 0.6) * submergedRatio;
-         waveGainRef.current.gain.setTargetAtTime(baseWaveVolume, now, 0.8);
-      }
-    }
+    audio.updateFrame(
+      pos,
+      forwardDir,
+      state.camera.position,
+      state.camera.quaternion,
+      engineRPM.current,
+      isSpeedboat,
+      speed2D,
+      submergedRatio,
+    );
   });
 
   return (
