@@ -11,6 +11,16 @@ function replaceOnce(needle, replacement, label) {
   source = source.replace(needle, replacement);
 }
 
+function replaceRegexOnce(expression, replacement, label) {
+  const matches = source.match(new RegExp(expression.source, `${expression.flags}g`));
+  if (matches?.length !== 1) {
+    throw new Error(
+      `${label}: expected exactly one match, found ${matches?.length ?? 0}`,
+    );
+  }
+  source = source.replace(expression, replacement);
+}
+
 replaceOnce(
   "import { useBoatVisualDamage } from './boat/useBoatVisualDamage';\n\n\nexport default function Boat()",
   "import { useBoatVisualDamage } from './boat/useBoatVisualDamage';\n\nexport default function Boat()",
@@ -35,9 +45,9 @@ replaceOnce(
   'disable destroyed rudder jitter',
 );
 
-replaceOnce(
-  "              angularVelocity.current += (Math.random() - 0.5) * speedIntoWall * 1.0;              audio.playImpact(severity, 'terrain');",
-  `              angularVelocity.current +=\n                (Math.random() - 0.5) * speedIntoWall;\n              audio.playImpact(severity, 'terrain');`,
+replaceRegexOnce(
+  /\s*angularVelocity\.current \+= \(Math\.random\(\) - 0\.5\) \* speedIntoWall \* 1\.0;\s*audio\.playImpact\(severity, 'terrain'\);/,
+  `\n              angularVelocity.current +=\n                (Math.random() - 0.5) * speedIntoWall;\n              audio.playImpact(severity, 'terrain');`,
   'separate terrain impact statements',
 );
 
