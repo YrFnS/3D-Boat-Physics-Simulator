@@ -7,6 +7,8 @@ on:
     paths:
       - scripts/visual-smoke.mjs
       - .github/workflows/visual-smoke.yml
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
