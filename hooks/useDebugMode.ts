@@ -1,14 +1,47 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 
 const DEBUG_STORAGE_KEY = 'boat-simulator-debug';
+const DEBUG_CHANGE_EVENT = 'boat-simulator-debug-change';
 
-function isEnabledByQuery() {
+function queryPreference() {
+  if (typeof window === 'undefined') return null;
   const value = new URLSearchParams(window.location.search).get('debug');
   if (value === '1' || value === 'true') return true;
   if (value === '0' || value === 'false') return false;
   return null;
+}
+
+function getClientSnapshot() {
+  if (process.env.NODE_ENV !== 'production') return true;
+
+  const preference = queryPreference();
+  if (preference !== null) return preference;
+
+  try {
+    return window.localStorage.getItem(DEBUG_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function getServerSnapshot() {
+  return process.env.NODE_ENV !== 'production';
+}
+
+function subscribe(onStoreChange: () => void) {
+  if (typeof window === 'undefined') return () => undefined;
+
+  window.addEventListener('popstate', onStoreChange);
+  window.addEventListener('storage', onStoreChange);
+  window.addEventListener(DEBUG_CHANGE_EVENT, onStoreChange);
+
+  return () => {
+    window.removeEventListener('popstate', onStoreChange);
+    window.removeEventListener('storage', onStoreChange);
+    window.removeEventListener(DEBUG_CHANGE_EVENT, onStoreChange);
+  };
 }
 
 /**
@@ -18,30 +51,25 @@ function isEnabledByQuery() {
  * remembered until a visit with `?debug=0` clears it.
  */
 export function useDebugMode() {
-  const [enabled, setEnabled] = useState(
-    process.env.NODE_ENV !== 'production',
+  const enabled = useSyncExternalStore(
+    subscribe,
+    getClientSnapshot,
+    getServerSnapshot,
   );
 
   useEffect(() => {
-    const queryPreference = isEnabledByQuery();
+    const preference = queryPreference();
+    if (preference === null) return;
 
     try {
-      if (queryPreference === true) {
+      if (preference) {
         window.localStorage.setItem(DEBUG_STORAGE_KEY, '1');
-      } else if (queryPreference === false) {
+      } else {
         window.localStorage.removeItem(DEBUG_STORAGE_KEY);
       }
-
-      setEnabled(
-        process.env.NODE_ENV !== 'production' ||
-          queryPreference === true ||
-          (queryPreference === null &&
-            window.localStorage.getItem(DEBUG_STORAGE_KEY) === '1'),
-      );
+      window.dispatchEvent(new Event(DEBUG_CHANGE_EVENT));
     } catch {
-      setEnabled(
-        process.env.NODE_ENV !== 'production' || queryPreference === true,
-      );
+      // Query-string debug mode still works when storage is unavailable.
     }
   }, []);
 
