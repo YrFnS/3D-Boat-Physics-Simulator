@@ -1,182 +1,380 @@
-import { useMemo, useRef } from 'react';
-import { PlaneGeometry, BufferAttribute, Color, Mesh, Vector3 } from 'three';
+'use client';
+
 import { useFrame } from '@react-three/fiber';
+import { type MutableRefObject, useEffect, useMemo, useRef } from 'react';
+import {
+  BufferAttribute,
+  Color,
+  Mesh,
+  MeshStandardMaterial,
+  PlaneGeometry,
+  Vector3,
+} from 'three';
 import { getTerrainHeight } from '@/lib/terrain';
-import { sharedPhysics, useSimStore } from '@/store/useSimStore';
+import {
+  type RenderQuality,
+  sharedPhysics,
+  useSimStore,
+} from '@/store/useSimStore';
+
+interface IslandQualityConfig {
+  segments: number;
+  snowDisplacement: number;
+  snowDetail: number;
+  receiveShadow: boolean;
+  castTerrainShadows: boolean;
+  shadowSearchRadius: number;
+  shaderUpdateHz: number;
+}
+
+const QUALITY_CONFIG: Record<RenderQuality, IslandQualityConfig> = {
+  low: {
+    segments: 80,
+    snowDisplacement: 0,
+    snowDetail: 0.2,
+    receiveShadow: false,
+    castTerrainShadows: false,
+    shadowSearchRadius: 0,
+    shaderUpdateHz: 12,
+  },
+  medium: {
+    segments: 128,
+    snowDisplacement: 1.25,
+    snowDetail: 0.45,
+    receiveShadow: true,
+    castTerrainShadows: false,
+    shadowSearchRadius: 0,
+    shaderUpdateHz: 20,
+  },
+  high: {
+    segments: 192,
+    snowDisplacement: 2.75,
+    snowDetail: 0.75,
+    receiveShadow: true,
+    castTerrainShadows: true,
+    shadowSearchRadius: 170,
+    shaderUpdateHz: 30,
+  },
+  ultra: {
+    segments: 256,
+    snowDisplacement: 4,
+    snowDetail: 1,
+    receiveShadow: true,
+    castTerrainShadows: true,
+    shadowSearchRadius: 240,
+    shaderUpdateHz: 45,
+  },
+};
+
+interface IslandShaderRuntime {
+  uniforms: Record<string, { value: unknown }>;
+  vertexShader: string;
+  fragmentShader: string;
+}
+
+const COLOR_SAND = new Color('#e1c699');
+const COLOR_GRASS = new Color('#4a7023');
+const COLOR_ROCK = new Color('#5a5a5a');
+const COLOR_SNOW = new Color('#ffffff');
+const TERRAIN_SIZE = 3000;
+
+function createTerrainGeometry(segments: number) {
+  const geometry = new PlaneGeometry(
+    TERRAIN_SIZE,
+    TERRAIN_SIZE,
+    segments,
+    segments,
+  );
+  geometry.rotateX(-Math.PI / 2);
+
+  const positions = geometry.attributes.position;
+  const colors = new Float32Array(positions.count * 3);
+  const workingColor = new Color();
+
+  for (let index = 0; index < positions.count; index += 1) {
+    const x = positions.getX(index);
+    const z = positions.getZ(index);
+    const height = getTerrainHeight(x, z);
+    positions.setY(index, height);
+
+    if (height < 2) {
+      workingColor.copy(COLOR_SAND);
+    } else if (height < 20) {
+      const factor = Math.min(1, ((height - 2) / 18) * 2);
+      workingColor.lerpColors(COLOR_SAND, COLOR_GRASS, factor);
+    } else if (height < 45) {
+      workingColor.lerpColors(
+        COLOR_GRASS,
+        COLOR_ROCK,
+        (height - 20) / 25,
+      );
+    } else {
+      workingColor.lerpColors(
+        COLOR_ROCK,
+        COLOR_SNOW,
+        Math.min(1, (height - 45) / 15),
+      );
+    }
+
+    const colorOffset = index * 3;
+    colors[colorOffset] = workingColor.r;
+    colors[colorOffset + 1] = workingColor.g;
+    colors[colorOffset + 2] = workingColor.b;
+  }
+
+  geometry.setAttribute('color', new BufferAttribute(colors, 3));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function configureIslandShader(
+  material: MeshStandardMaterial,
+  shaderRef: MutableRefObject<IslandShaderRuntime | null>,
+  quality: RenderQuality,
+) {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uSeason = { value: 0 };
+    shader.uniforms.uWindDir = { value: new Vector3(1, 0, 0) };
+    shader.uniforms.uSnowDisplacement = {
+      value: QUALITY_CONFIG[quality].snowDisplacement,
+    };
+    shader.uniforms.uSnowDetail = {
+      value: QUALITY_CONFIG[quality].snowDetail,
+    };
+
+    shader.vertexShader = `
+      uniform float uSeason;
+      uniform vec3 uWindDir;
+      uniform float uSnowDisplacement;
+      uniform float uSnowDetail;
+      varying vec3 vIslandWorldPosition;
+      varying float vSnowAccumulation;
+    ` + shader.vertexShader;
+
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+      vec3 islandWorldNormal = normalize(
+        (modelMatrix * vec4(objectNormal, 0.0)).xyz
+      );
+      vec3 islandBaseWorldPosition =
+        (modelMatrix * vec4(position, 1.0)).xyz;
+      float islandWinter = clamp(
+        1.0 - abs(uSeason - 0.75) * 4.0,
+        0.0,
+        1.0
+      );
+      vec2 islandLargePosition = islandBaseWorldPosition.xz * 0.02;
+      float islandSnowNoise =
+        sin(islandLargePosition.x) *
+        cos(islandLargePosition.y) *
+        0.5 + 0.5;
+      vec2 islandMicroPosition = islandBaseWorldPosition.xz * 0.15;
+      float islandMicroNoise = mix(
+        0.5,
+        sin(islandMicroPosition.x + islandMicroPosition.y) * 0.5 + 0.5,
+        uSnowDetail
+      );
+      float islandSlope = dot(
+        islandWorldNormal,
+        vec3(0.0, 1.0, 0.0)
+      );
+      float islandSlopeMask = smoothstep(0.65, 0.95, islandSlope);
+      float islandWindDrift = dot(
+        islandWorldNormal,
+        normalize(uWindDir)
+      );
+      float islandWindMask = smoothstep(0.0, 1.0, islandWindDrift);
+      vSnowAccumulation =
+        islandWinter *
+        clamp(
+          islandSlopeMask + islandWindMask * 0.6 * islandSlopeMask,
+          0.0,
+          1.0
+        ) *
+        (islandSnowNoise * 0.6 + islandMicroNoise * 0.4);
+      transformed +=
+        objectNormal *
+        (vSnowAccumulation * uSnowDisplacement);`,
+    );
+
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <worldpos_vertex>',
+      `#include <worldpos_vertex>
+      vIslandWorldPosition =
+        (modelMatrix * vec4(transformed, 1.0)).xyz;`,
+    );
+
+    shader.fragmentShader = `
+      uniform float uSeason;
+      varying vec3 vIslandWorldPosition;
+      varying float vSnowAccumulation;
+    ` + shader.fragmentShader;
+
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <color_fragment>',
+      `#include <color_fragment>
+      float islandSpring = clamp(
+        1.0 - min(abs(uSeason), abs(uSeason - 1.0)) * 4.0,
+        0.0,
+        1.0
+      );
+      float islandSummer = clamp(
+        1.0 - abs(uSeason - 0.25) * 4.0,
+        0.0,
+        1.0
+      );
+      float islandFall = clamp(
+        1.0 - abs(uSeason - 0.5) * 4.0,
+        0.0,
+        1.0
+      );
+      float islandWinter = clamp(
+        1.0 - abs(uSeason - 0.75) * 4.0,
+        0.0,
+        1.0
+      );
+      vec3 islandSpringFoliage = vec3(0.6, 1.2, 0.5);
+      vec3 islandSummerFoliage = vec3(1.4, 1.3, 0.8);
+      vec3 islandFallFoliage = vec3(1.0, 1.1, 0.5);
+      vec3 islandWinterFoliage = vec3(0.5, 0.9, 0.4);
+      vec3 islandFoliageColor =
+        islandSpringFoliage * islandSpring +
+        islandSummerFoliage * islandSummer +
+        islandFallFoliage * islandFall +
+        islandWinterFoliage * islandWinter;
+      float islandSandScorch =
+        islandSummer *
+        smoothstep(0.0, 5.0, vIslandWorldPosition.y);
+      float islandFoliageMask =
+        smoothstep(2.0, 8.0, vIslandWorldPosition.y) *
+        (1.0 - smoothstep(15.0, 24.0, vIslandWorldPosition.y));
+      diffuseColor.rgb *= mix(
+        vec3(1.0),
+        islandFoliageColor,
+        max(islandFoliageMask, islandSandScorch * 0.5)
+      );
+      vec3 islandWinterColor = vec3(0.92, 0.96, 1.0);
+      diffuseColor.rgb = mix(
+        diffuseColor.rgb,
+        islandWinterColor,
+        clamp(vSnowAccumulation * 1.5, 0.0, 1.0)
+      );`,
+    );
+
+    shaderRef.current = shader as IslandShaderRuntime;
+  };
+
+  material.customProgramCacheKey = () => `island-material-${quality}`;
+  material.needsUpdate = true;
+}
+
+function hasNearbyLand(centerX: number, centerZ: number, radius: number) {
+  if (getTerrainHeight(centerX, centerZ) > -10) return true;
+
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index / 8) * Math.PI * 2;
+    const x = centerX + Math.cos(angle) * radius;
+    const z = centerZ + Math.sin(angle) * radius;
+    if (getTerrainHeight(x, z) > -10) return true;
+  }
+
+  return false;
+}
 
 export default function Islands() {
   const meshRef = useRef<Mesh>(null);
-  
-  const geometry = useMemo(() => {
-    const size = 3000;
-    const segments = 256;
-    const geo = new PlaneGeometry(size, size, segments, segments);
-    
-    // Rotate so it's flat on XZ plane
-    geo.rotateX(-Math.PI / 2);
-    
-    const positions = geo.attributes.position;
-    const colors = new Float32Array(positions.count * 3);
-    const color = new Color();
-    
-    const colorSand = new Color('#E1C699');
-    const colorGrass = new Color('#4A7023');
-    const colorRock = new Color('#5A5A5A');
-    const colorSnow = new Color('#FFFFFF');
-    
-    for (let i = 0; i < positions.count; i++) {
-      const x = positions.getX(i);
-      const z = positions.getZ(i);
-      
-      const y = getTerrainHeight(x, z);
-      positions.setY(i, y);
-      
-      // Color based on height
-      if (y < 2) {
-        color.copy(colorSand);
-      } else if (y < 20) {
-        const factor = (y - 2) / 18;
-        color.lerpColors(colorSand, colorGrass, Math.min(1, factor * 2)); // transitions quickly to grass
-      } else if (y < 45) {
-        const factor = (y - 20) / 25;
-        color.lerpColors(colorGrass, colorRock, factor);
-      } else {
-        const factor = (y - 45) / 15;
-        color.lerpColors(colorRock, colorSnow, Math.min(1, factor));
-      }
-      
-      colors[i * 3] = color.r;
-      colors[i * 3 + 1] = color.g;
-      colors[i * 3 + 2] = color.b;
-    }
-    
-    geo.setAttribute('color', new BufferAttribute(colors, 3));
-    geo.computeVertexNormals();
-    
-    return geo;
-  }, []);
+  const shaderRef = useRef<IslandShaderRuntime | null>(null);
+  const shaderAccumulatorRef = useRef(0);
+  const shadowAccumulatorRef = useRef(1);
+  const renderQuality = useSimStore((state) => state.renderQuality);
+  const config = QUALITY_CONFIG[renderQuality];
 
-  useFrame(() => {
-    if (meshRef.current) {
-      const mat = meshRef.current.material as any;
-      if (mat && mat.userData && mat.userData.shader) {
-        mat.userData.shader.uniforms.uSeason.value = sharedPhysics.season;
-        
-        // Feed wind direction down to the fragment shader for snow-drift logic
-        const windDirDeg = useSimStore.getState().windDir;
-        const windDirRad = windDirDeg * (Math.PI / 180);
-        mat.userData.shader.uniforms.uWindDir.value.set(Math.cos(windDirRad), 0, Math.sin(windDirRad)).normalize();
+  const geometry = useMemo(
+    () => createTerrainGeometry(config.segments),
+    [config.segments],
+  );
+  const material = useMemo(() => {
+    const nextMaterial = new MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.8,
+      metalness: 0.1,
+    });
+    configureIslandShader(nextMaterial, shaderRef, renderQuality);
+    return nextMaterial;
+  }, [renderQuality]);
+
+  useEffect(
+    () => () => {
+      geometry.dispose();
+    },
+    [geometry],
+  );
+
+  useEffect(
+    () => () => {
+      if (shaderRef.current) shaderRef.current = null;
+      material.dispose();
+    },
+    [material],
+  );
+
+  useFrame((_, delta) => {
+    const safeDelta = Math.min(delta, 0.1);
+    shaderAccumulatorRef.current += safeDelta;
+    shadowAccumulatorRef.current += safeDelta;
+
+    const shaderInterval = 1 / config.shaderUpdateHz;
+    if (shaderAccumulatorRef.current >= shaderInterval) {
+      shaderAccumulatorRef.current %= shaderInterval;
+      const shader = shaderRef.current;
+      if (shader) {
+        shader.uniforms.uSeason.value = sharedPhysics.season;
+        shader.uniforms.uSnowDisplacement.value = config.snowDisplacement;
+        shader.uniforms.uSnowDetail.value = config.snowDetail;
+
+        const windDirection = useSimStore.getState().windDir * (Math.PI / 180);
+        const uniform = shader.uniforms.uWindDir.value as Vector3;
+        uniform.set(
+          Math.cos(windDirection),
+          0,
+          Math.sin(windDirection),
+        );
       }
     }
+
+    if (shadowAccumulatorRef.current < 0.5) return;
+    shadowAccumulatorRef.current %= 0.5;
+
+    const mesh = meshRef.current;
+    if (!mesh) return;
+
+    const store = useSimStore.getState();
+    const daylight =
+      sharedPhysics.worldTime > 5.5 && sharedPhysics.worldTime < 18.5;
+    const shadowsUseful = daylight && store.windSpeed < 46;
+    const nearbyLand =
+      config.castTerrainShadows &&
+      hasNearbyLand(
+        sharedPhysics.boatPos.x,
+        sharedPhysics.boatPos.z,
+        config.shadowSearchRadius,
+      );
+
+    mesh.castShadow =
+      config.castTerrainShadows && shadowsUseful && nearbyLand;
+    mesh.receiveShadow = config.receiveShadow;
   });
 
   return (
-    <mesh ref={meshRef} geometry={geometry} receiveShadow castShadow>
-      <meshStandardMaterial 
-        vertexColors 
-        roughness={0.8} 
-        metalness={0.1} 
-        onBeforeCompile={(shader) => {
-          shader.uniforms.uSeason = { value: 0 };
-          shader.uniforms.uWindDir = { value: new Vector3(1, 0, 0) };
-          
-          // Inject custom varyings
-          shader.vertexShader = `
-            uniform float uSeason;
-            uniform vec3 uWindDir;
-            varying vec3 vIslandWorldPos;
-            varying vec3 vIslandWorldNormal;
-            varying float vSnowAccumulation;
-          ` + shader.vertexShader;
-          
-          shader.vertexShader = shader.vertexShader.replace(
-            `#include <begin_vertex>`,
-            `#include <begin_vertex>
-            
-            vec3 worldSpaceNormal = normalize((modelMatrix * vec4(objectNormal, 0.0)).xyz);
-            vec3 worldSpacePos = (modelMatrix * vec4(position, 1.0)).xyz; // original vertex pos
-            
-            float isWinter = clamp(1.0 - abs(uSeason - 0.75) * 4.0, 0.0, 1.0);
-            
-            // Large scale noise
-            vec2 posXZ = worldSpacePos.xz * 0.02; 
-            float snowNoise = sin(posXZ.x) * cos(posXZ.y) * 0.5 + 0.5;
-            
-            // Fine scale noise
-            vec2 microPosXZ = worldSpacePos.xz * 0.15;
-            float microSnowNoise = sin(microPosXZ.x + microPosXZ.y) * 0.5 + 0.5;
-            
-            // Slope steepness mask (Snow collects on flat ground, falls off steep cliffs)
-            float slope = dot(worldSpaceNormal, vec3(0.0, 1.0, 0.0));
-            float slopeMask = smoothstep(0.65, 0.95, slope); 
-            
-            // Wind drift mask (Snow collects heavily on leeward/windward edges)
-            float windDrift = dot(worldSpaceNormal, normalize(uWindDir));
-            float windMask = smoothstep(0.0, 1.0, windDrift); 
-            
-            vSnowAccumulation = isWinter * clamp(slopeMask + (windMask * 0.6 * slopeMask), 0.0, 1.0) * (snowNoise * 0.6 + microSnowNoise * 0.4);
-            
-            // Physically Displace the geometry to simulate deep snow piles
-            transformed += objectNormal * (vSnowAccumulation * 4.0); // Up to 4 units of snow depth
-            `
-          );
-          
-          shader.vertexShader = shader.vertexShader.replace(
-            `#include <worldpos_vertex>`,
-            `#include <worldpos_vertex>
-            vIslandWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-            vIslandWorldNormal = normalize((modelMatrix * vec4(objectNormal, 0.0)).xyz);
-            `
-          );
-
-          shader.fragmentShader = `
-            uniform float uSeason;
-            uniform vec3 uWindDir;
-            varying vec3 vIslandWorldPos;
-            varying vec3 vIslandWorldNormal;
-            varying float vSnowAccumulation;
-          ` + shader.fragmentShader;
-          
-          shader.fragmentShader = shader.fragmentShader.replace(
-            `#include <color_fragment>`,
-            `#include <color_fragment>
-            
-            // --- Seasonal Foliage & Biome Tinting ---
-            // Calculate season masks (Wrap around for Spring 0.0 -> 1.0)
-            float sprMask = clamp(1.0 - min(abs(uSeason), abs(uSeason - 1.0)) * 4.0, 0.0, 1.0);
-            float sumMask = clamp(1.0 - abs(uSeason - 0.25) * 4.0, 0.0, 1.0);
-            float falMask = clamp(1.0 - abs(uSeason - 0.5) * 4.0, 0.0, 1.0);
-            float winMask = clamp(1.0 - abs(uSeason - 0.75) * 4.0, 0.0, 1.0);
-            
-            // Define visual colors for the grass in diff seasons (Ocean Island Ecosystem)
-            // Ocean islands typically have wet/dry seasons, not harsh temperate autumns.
-            vec3 springFoliage = vec3(0.6, 1.2, 0.5);  // Lush, wet season green
-            vec3 summerFoliage = vec3(1.4, 1.3, 0.8);  // High heat summer: scorched, sun-baked, dry yellow-brown
-            vec3 fallFoliage = vec3(1.0, 1.1, 0.5);    // Transition, starting to get some moisture back
-            vec3 winterFoliage = vec3(0.5, 0.9, 0.4);  // Cooler wet season recovery
-            
-            // Blend the target foliage color based on current season timeline
-            vec3 targetFoliageColor = springFoliage * sprMask + summerFoliage * sumMask + fallFoliage * falMask + winterFoliage * winMask;
-            
-            // We only want to apply this seasonal change to the GRASS band of the island (y between 2.0 and 20.0), avoiding sand and rock
-            // smoothstep creates a smooth gradient mask so it blends naturally into the beach and mountain cliffs
-            // In high heat Summer, the scorching effect extends further down into the sand
-            float sandScorch = sumMask * smoothstep(0.0, 5.0, vIslandWorldPos.y);
-            float foliageMask = smoothstep(2.0, 8.0, vIslandWorldPos.y) * (1.0 - smoothstep(15.0, 24.0, vIslandWorldPos.y));
-            
-            // Apply the seasonal foliage tint before snow
-            diffuseColor.rgb *= mix(vec3(1.0), targetFoliageColor, max(foliageMask, sandScorch * 0.5));
-            
-            // --- Winter Snow Blanket Override ---
-            // Total accumulation map (Computed in vertex shader for displacement consistency)
-            vec3 winterCol = vec3(0.92, 0.96, 1.0);
-            diffuseColor.rgb = mix(diffuseColor.rgb, winterCol, clamp(vSnowAccumulation * 1.5, 0.0, 1.0));
-            `
-          );
-          
-          (meshRef.current?.material as any).userData.shader = shader;
-        }}
-      />
-    </mesh>
+    <mesh
+      ref={meshRef}
+      geometry={geometry}
+      material={material}
+      castShadow={false}
+      receiveShadow={config.receiveShadow}
+      userData={{ shadowBudgetMode: 'terrain' }}
+    />
   );
 }
