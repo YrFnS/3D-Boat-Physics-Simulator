@@ -1,12 +1,11 @@
 name: Finalize Phase 1 repository
 
 on:
-  push:
-    branches:
-      - agent/phase-1-performance-foundation
+  pull_request:
     paths:
       - scripts/finalize-phase1-repo.mjs
       - .github/workflows/finalize-phase1.yml
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -20,12 +19,13 @@ jobs:
     name: Clean dependencies, lint, typecheck, and build
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Check out performance branch
         uses: actions/checkout@v4
         with:
+          ref: agent/phase-1-performance-foundation
           fetch-depth: 0
 
       - name: Set up Node.js
@@ -71,4 +71,4 @@ jobs:
             exit 0
           fi
           git commit -m "chore: finalize Phase 1 repository"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "HEAD:agent/phase-1-performance-foundation"
