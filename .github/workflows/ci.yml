@@ -45,5 +45,5 @@ jobs:
       - name: Build application
         run: npm run build
 
-      - name: Reject high-severity runtime vulnerabilities
-        run: npm audit --omit=dev --audit-level=high
+      - name: Reject runtime dependency advisories
+        run: npm audit --omit=dev --audit-level=low
