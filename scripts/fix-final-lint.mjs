@@ -21,7 +21,7 @@ if (!boat.includes('const controls = state.controls as any;')) {
 }
 boat = boat.replace(
   'const controls = state.controls as any;',
-  'const controls = state.controls as OrbitControlsLike;',
+  'const controls = state.controls as unknown as OrbitControlsLike;',
 );
 fs.writeFileSync(boatPath, boat);
 
