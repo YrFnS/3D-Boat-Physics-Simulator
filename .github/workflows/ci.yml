@@ -14,11 +14,14 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  NEXT_TELEMETRY_DISABLED: 1
+
 jobs:
-  build:
-    name: Type check and production build
+  validate:
+    name: Lint, typecheck, build, and runtime audit
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository
@@ -33,5 +36,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Build application
         run: npm run build
+
+      - name: Reject high-severity runtime vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
