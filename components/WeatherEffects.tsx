@@ -8,6 +8,8 @@ import {
   InstancedBufferGeometry,
   MathUtils,
   ShaderMaterial,
+  UniformsLib,
+  UniformsUtils,
   Vector2,
   Vector3,
 } from 'three';
@@ -193,14 +195,17 @@ export default function WeatherEffects() {
       new ShaderMaterial({
         vertexShader: rainVertexShader,
         fragmentShader: rainFragmentShader,
-        uniforms: {
-          uTime: { value: 0 },
-          uStormIntensity: { value: 0 },
-          uCameraPosition: { value: new Vector3() },
-          uWind: { value: new Vector2() },
-          uArea: { value: 90 },
-          uHeight: { value: 55 },
-        },
+        uniforms: UniformsUtils.merge([
+          UniformsLib.fog,
+          {
+            uTime: { value: 0 },
+            uStormIntensity: { value: 0 },
+            uCameraPosition: { value: new Vector3() },
+            uWind: { value: new Vector2() },
+            uArea: { value: 90 },
+            uHeight: { value: 55 },
+          },
+        ]),
         transparent: true,
         depthWrite: false,
         fog: true,
@@ -318,7 +323,6 @@ export default function WeatherEffects() {
     rainMaterial.uniforms.uCameraPosition.value.copy(state.camera.position);
     rainMaterial.uniforms.uWind.value.set(windX, windZ);
 
-    // A time-based probability keeps lightning frequency consistent at every FPS.
     const strikesPerSecond =
       MathUtils.lerp(0.02, 0.9, stormIntensity) * stormIntensity;
     const strikeProbability = 1 - Math.exp(-strikesPerSecond * safeDelta);
