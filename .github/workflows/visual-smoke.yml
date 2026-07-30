@@ -52,7 +52,9 @@ jobs:
 
       - name: Prepare standalone server
         run: |
-          cp -R public .next/standalone/public
+          if [ -d public ]; then
+            cp -R public .next/standalone/public
+          fi
           mkdir -p .next/standalone/.next
           cp -R .next/static .next/standalone/.next/static
 
