@@ -37,6 +37,28 @@ function seededRandom(seed = 91_273) {
   };
 }
 
+interface BuoyTelemetryProps {
+  id: number;
+  surfaceHeight: number;
+}
+
+function BuoyTelemetry({ id, surfaceHeight }: BuoyTelemetryProps) {
+  const windSpeed = useSimStore((state) => state.windSpeed);
+
+  return (
+    <Html position={[0, 2.5, 0]} center distanceFactor={15}>
+      <div className="whitespace-nowrap rounded-lg border border-white/20 bg-black/80 p-2 font-mono text-[10px] text-white backdrop-blur-md">
+        <div className="mb-1 border-b border-white/10 font-bold text-cyan-400">
+          BUOY #{id.toString().padStart(3, '0')}
+        </div>
+        <div>SURFACE: {surfaceHeight.toFixed(2)}m</div>
+        <div>WIND: {windSpeed.toFixed(1)} m/s</div>
+        <div className="text-yellow-400">STATUS: ACTIVE</div>
+      </div>
+    </Html>
+  );
+}
+
 interface BuoyProps {
   x: number;
   z: number;
@@ -47,9 +69,11 @@ function Buoy({ x, z, id }: BuoyProps) {
   const meshRef = useRef<Mesh>(null);
   const beaconMaterialRef = useRef<MeshStandardMaterial>(null);
   const [showTelemetry, setShowTelemetry] = useState(false);
+  const [surfaceHeight, setSurfaceHeight] = useState(0);
   const showTelemetryRef = useRef(false);
   const frameCounter = useRef(id % 10);
   const lastSurfaceHeight = useRef(0);
+  const telemetryAccumulator = useRef(0);
 
   const phase = useMemo(() => id * 1.61803398875, [id]);
   const color = useMemo(
@@ -91,6 +115,7 @@ function Buoy({ x, z, id }: BuoyProps) {
     if (isInteractive !== showTelemetryRef.current) {
       showTelemetryRef.current = isInteractive;
       setShowTelemetry(isInteractive);
+      telemetryAccumulator.current = 0;
     }
 
     // Distant buoys do not need full wave sampling every rendered frame.
@@ -135,6 +160,14 @@ function Buoy({ x, z, id }: BuoyProps) {
       sharedPhysics.obstacles[id * 4 + 1] = wave.y;
     }
 
+    if (isInteractive) {
+      telemetryAccumulator.current += delta;
+      if (telemetryAccumulator.current >= 0.2) {
+        telemetryAccumulator.current %= 0.2;
+        setSurfaceHeight(lastSurfaceHeight.current);
+      }
+    }
+
     if (beaconMaterialRef.current) {
       beaconMaterialRef.current.emissiveIntensity =
         Math.sin(elapsed * 4 + phase) > 0.72 ? 3 : 0.15;
@@ -164,18 +197,7 @@ function Buoy({ x, z, id }: BuoyProps) {
         </mesh>
 
         {showTelemetry && (
-          <Html position={[0, 2.5, 0]} center distanceFactor={15}>
-            <div className="whitespace-nowrap rounded-lg border border-white/20 bg-black/80 p-2 font-mono text-[10px] text-white backdrop-blur-md">
-              <div className="mb-1 border-b border-white/10 font-bold text-cyan-400">
-                BUOY #{id.toString().padStart(3, '0')}
-              </div>
-              <div>SURFACE: {lastSurfaceHeight.current.toFixed(2)}m</div>
-              <div>
-                WIND: {useSimStore.getState().windSpeed.toFixed(1)} m/s
-              </div>
-              <div className="text-yellow-400">STATUS: ACTIVE</div>
-            </div>
-          </Html>
+          <BuoyTelemetry id={id} surfaceHeight={surfaceHeight} />
         )}
       </mesh>
     </group>
