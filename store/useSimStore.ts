@@ -12,21 +12,15 @@ export interface PerformanceTelemetry {
   triangles: number;
 }
 
-// The wake is evaluated in the ocean fragment shader. Keeping the history compact
-// dramatically reduces fragment work while preserving a useful visual trail.
-export const MAX_WAKE_NODES = 24;
 export const MAX_OBSTACLES = 250;
 
-// Shared high-frequency state skips React completely so the render loop can update
-// physics and shader inputs without forcing component renders.
+// Shared high-frequency state skips React completely so the render loop can
+// update simulation and shader inputs without forcing component renders.
 export const sharedPhysics = {
   boatPos: new Vector3(0, 0, 0),
   boatDir: new Vector3(0, 0, -1),
   boatSpeed: 0,
   lightningFlash: 0,
-  absoluteOdometer: 0,
-  wakeNodes: new Float32Array(MAX_WAKE_NODES * 4),
-  wakeDirs: new Float32Array(MAX_WAKE_NODES * 4),
   obstacles: new Float32Array(MAX_OBSTACLES * 4), // x, y, z, radius
   worldTime: 12.0,
   season: 0.0, // 0=Spring, 0.25=Summer, 0.5=Fall, 0.75=Winter
