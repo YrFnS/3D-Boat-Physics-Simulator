@@ -5,6 +5,7 @@ on:
     paths:
       - scripts/finalize-phase1-repo.mjs
       - scripts/fix-final-lint.mjs
+      - scripts/fix-runtime-audit.mjs
       - .github/workflows/finalize-phase1.yml
   workflow_dispatch:
 
@@ -17,7 +18,7 @@ concurrency:
 
 jobs:
   finalize:
-    name: Clean dependencies, lint, typecheck, and build
+    name: Clean dependencies, lint, typecheck, build, and audit
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -39,6 +40,7 @@ jobs:
         run: |
           node scripts/finalize-phase1-repo.mjs
           node scripts/fix-final-lint.mjs
+          node scripts/fix-runtime-audit.mjs
 
       - name: Regenerate dependency lockfile
         run: npm install --package-lock-only --ignore-scripts
@@ -62,6 +64,7 @@ jobs:
         run: |
           rm -f scripts/finalize-phase1-repo.mjs
           rm -f scripts/fix-final-lint.mjs
+          rm -f scripts/fix-runtime-audit.mjs
           rm -f .github/workflows/finalize-phase1.yml
 
       - name: Commit validated cleanup
