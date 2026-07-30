@@ -92,26 +92,30 @@ function formatTriangles(value: number) {
   return `${value}`;
 }
 
+function loadLastResult(): BenchmarkResult | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    if (!stored) return null;
+    const results = JSON.parse(stored) as BenchmarkResult[];
+    return results[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export default function BenchmarkPanel() {
   const [phase, setPhase] = useState<BenchmarkPhase>('idle');
   const [progress, setProgress] = useState(0);
   const [activePreset, setActivePreset] = useState<BenchmarkPreset>('calm');
-  const [lastResult, setLastResult] = useState<BenchmarkResult | null>(null);
+  const [lastResult, setLastResult] = useState<BenchmarkResult | null>(loadLastResult);
   const mountedRef = useRef(true);
   const activeRunRef = useRef(false);
   const cancelledRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
-    try {
-      const stored = window.localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const results = JSON.parse(stored) as BenchmarkResult[];
-        if (results[0]) setLastResult(results[0]);
-      }
-    } catch {
-      // Benchmarking remains available even when storage is unavailable.
-    }
 
     return () => {
       mountedRef.current = false;

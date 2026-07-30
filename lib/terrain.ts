@@ -1,5 +1,5 @@
 import { createNoise2D } from 'simplex-noise';
-import { MathUtils, Vector3 } from 'three';
+import { MathUtils } from 'three';
 import { sharedPhysics } from '@/store/useSimStore';
 
 // Create a deterministic pseudo-random number generator

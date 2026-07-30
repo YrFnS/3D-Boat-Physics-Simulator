@@ -10,6 +10,11 @@ import { getTerrainHeight } from '@/lib/terrain';
 import { useBoatAudio } from './boat/useBoatAudio';
 import { useBoatVisualDamage } from './boat/useBoatVisualDamage';
 
+interface OrbitControlsLike {
+  target: Vector3;
+  update: () => void;
+}
+
 export default function Boat() {
   const boatRef = useRef<Group>(null);
   const velocity = useRef(new Vector3(0, 0, 0));
@@ -870,7 +875,7 @@ export default function Boat() {
     const boatPos = scratch.boatPosition.copy(boatRef.current.position);
     
     if (state.controls) {
-      const controls = state.controls as any;
+      const controls = state.controls as unknown as OrbitControlsLike;
       const targetPos = scratch.cameraTarget.copy(boatPos);
       targetPos.y += 2;
       const deltaPos = scratch.cameraDelta
