@@ -4,6 +4,7 @@ import { chromium } from 'playwright';
 
 const baseUrl = process.env.SMOKE_BASE_URL ?? 'http://127.0.0.1:3000';
 const outputDirectory = path.resolve('artifacts/visual-smoke');
+const expectedTitle = '3D Boat Physics Simulator';
 await fs.mkdir(outputDirectory, { recursive: true });
 
 const scenarios = [
@@ -31,6 +32,7 @@ const browser = await chromium.launch({
   headless: true,
   args: [
     '--enable-webgl',
+    '--enable-unsafe-swiftshader',
     '--ignore-gpu-blocklist',
     '--use-angle=swiftshader',
   ],
@@ -79,8 +81,10 @@ try {
     const runtime = await page.evaluate(() => {
       const canvas = document.querySelector('canvas');
       const bodyRect = document.body.getBoundingClientRect();
-      const horizontalOverflow = document.documentElement.scrollWidth > window.innerWidth + 1;
-      const verticalOverflow = document.documentElement.scrollHeight > window.innerHeight + 1;
+      const horizontalOverflow =
+        document.documentElement.scrollWidth > window.innerWidth + 1;
+      const verticalOverflow =
+        document.documentElement.scrollHeight > window.innerHeight + 1;
       const qualitySelector = document.querySelector(
         'select[aria-label="Rendering quality"]',
       );
@@ -104,11 +108,16 @@ try {
           qualitySelector instanceof HTMLSelectElement
             ? qualitySelector.value
             : null,
-        hasFpsReadout: /\bFPS\b/.test(visibleText),
+        hasFpsReadout: /\bFPS\b/i.test(visibleText),
         hasBenchmarkControls:
-          /\bBenchmark\b/.test(visibleText) &&
-          /\bCalm\b/.test(visibleText) &&
-          /\bStorm\b/.test(visibleText),
+          /\bBenchmark\b/i.test(visibleText) &&
+          /\bCalm\b/i.test(visibleText) &&
+          /\bStorm\b/i.test(visibleText),
+        hasTouchControls:
+          document.querySelector('[aria-label="Throttle forward"]') !== null &&
+          document.querySelector('[aria-label="Throttle reverse"]') !== null &&
+          document.querySelector('[aria-label="Steer left"]') !== null &&
+          document.querySelector('[aria-label="Steer right"]') !== null,
       };
     });
 
@@ -118,12 +127,28 @@ try {
     const severeConsoleEntries = consoleEntries.filter((entry) =>
       ['error', 'assert'].includes(entry.type),
     );
+    const canvasIsValid =
+      runtime.canvas &&
+      runtime.canvas.width > 0 &&
+      runtime.canvas.height > 0 &&
+      runtime.canvas.clientWidth === runtime.viewport.width &&
+      runtime.canvas.clientHeight === runtime.viewport.height;
+    const responsiveChecksPass =
+      scenario.name === 'mobile'
+        ? runtime.hasTouchControls && !runtime.hasBenchmarkControls
+        : runtime.hasBenchmarkControls;
     const scenarioFailed =
       !response?.ok() ||
+      runtime.title !== expectedTitle ||
       pageErrors.length > 0 ||
       severeConsoleEntries.length > 0 ||
-      !runtime.canvas ||
-      runtime.horizontalOverflow;
+      failedRequests.length > 0 ||
+      !canvasIsValid ||
+      runtime.horizontalOverflow ||
+      runtime.verticalOverflow ||
+      !runtime.qualityMode ||
+      !runtime.hasFpsReadout ||
+      !responsiveChecksPass;
 
     hasFatalError ||= scenarioFailed;
     report.scenarios.push({
