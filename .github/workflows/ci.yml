@@ -34,7 +34,7 @@ jobs:
 
       - name: Apply guarded Phase 1 boat pass
         if: github.event_name == 'pull_request' && github.head_ref == 'agent/phase-1-performance-foundation'
-        run: node scripts/apply-phase1-boat-pass.mjs
+        run: node scripts/run-phase1-boat-pass.mjs
 
       - name: Install dependencies
         run: npm ci
