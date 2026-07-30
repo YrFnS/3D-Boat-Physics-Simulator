@@ -14,16 +14,17 @@ import {
   UniformsLib,
   UniformsUtils,
   UnsignedByteType,
+  Vector2,
   Vector3,
   Vector4,
 } from 'three';
 import {
-  MAX_WAKE_NODES,
   type RenderQuality,
   sharedPhysics,
   useSimStore,
 } from '@/store/useSimStore';
 import { getTerrainHeight } from '@/lib/terrain';
+import { sharedWakeField } from './WakeField';
 
 interface WaveDefinition {
   x: number;
@@ -173,22 +174,19 @@ void main() {
 `;
 
 const fragmentShader = `
-#define WAKE_NODES ${MAX_WAKE_NODES}
 #define PI 3.14159265359
 
 uniform float uTime;
 uniform float uSeason;
 uniform float uLightningFlash;
 uniform float uDetailLevel;
+uniform float uWakeWorldSize;
+uniform float uWakeEnabled;
+uniform vec2 uWakeOrigin;
 uniform vec3 uBaseColor;
 uniform vec3 uShallowColor;
 uniform vec3 uWhirlpoolPos;
-uniform vec3 uBoatPos;
-uniform vec3 uBoatDir;
-uniform float uBoatSpeed;
-uniform float uAbsoluteOdometer;
-uniform vec4 uWakeNodes[WAKE_NODES];
-uniform vec4 uWakeDirs[WAKE_NODES];
+uniform sampler2D tWake;
 
 varying vec3 vWorldPosition;
 varying vec3 vNormal;
@@ -214,10 +212,6 @@ float valueNoise(vec2 point) {
   float d = hash21(cell + vec2(1.0, 1.0));
 
   return mix(mix(a, b, local.x), mix(c, d, local.x), local.y);
-}
-
-float cross2d(vec2 a, vec2 b) {
-  return a.x * b.y - a.y * b.x;
 }
 
 void main() {
@@ -262,46 +256,18 @@ void main() {
     smoothstep(0.25, 0.85, foamNoise) * normalFade;
 
   float wake = 0.0;
-  vec2 surfacePoint = vWorldPosition.xz;
-
-  if (uBoatSpeed > 1.5 && distance(surfacePoint, uBoatPos.xz) < 260.0) {
-    for (int index = 0; index < WAKE_NODES; index++) {
-      float nodeSpeed = uWakeDirs[index].z;
-      if (nodeSpeed > 1.5) {
-        vec2 direction = normalize(uWakeDirs[index].xy + vec2(0.0001));
-        vec2 wakeDirection = -direction;
-        vec2 delta = surfacePoint - uWakeNodes[index].xz;
-        float behind = dot(delta, wakeDirection);
-        float lateral = abs(cross2d(delta, wakeDirection));
-        float valid = step(0.0, behind) * (1.0 - smoothstep(110.0, 180.0, behind));
-        float armWidth = max(1.4, behind * 0.35);
-        float armThickness = mix(0.7, 3.2, clamp(behind / 110.0, 0.0, 1.0));
-        float arms = 1.0 - smoothstep(
-          armThickness,
-          armThickness * 2.2,
-          abs(lateral - armWidth)
-        );
-        float centerWash =
-          (1.0 - smoothstep(0.0, max(2.0, behind * 0.09), lateral)) * 0.32;
-        float age = max(0.0, uAbsoluteOdometer - uWakeNodes[index].w);
-        float fade = exp(-age / 75.0) * clamp(nodeSpeed / 12.0, 0.0, 1.0);
-        wake = max(wake, (arms + centerWash) * valid * fade);
-      }
-    }
-
-    vec2 boatDirection = normalize(uBoatDir.xz + vec2(0.0001));
-    vec2 sternDirection = -boatDirection;
-    vec2 boatDelta = surfacePoint - uBoatPos.xz;
-    float sternDistance = dot(boatDelta, sternDirection);
-    float sternLateral = abs(cross2d(boatDelta, sternDirection));
-    float sternWash =
-      step(0.0, sternDistance) *
-      (1.0 - smoothstep(0.0, 18.0, sternDistance)) *
-      (1.0 - smoothstep(0.0, 2.5 + sternDistance * 0.2, sternLateral));
-    wake = max(wake, sternWash * clamp(uBoatSpeed / 10.0, 0.0, 1.0));
+  vec2 wakeUv =
+    (vWorldPosition.xz - uWakeOrigin) /
+    max(uWakeWorldSize, 1.0) + 0.5;
+  if (
+    uWakeEnabled > 0.5 &&
+    wakeUv.x >= 0.0 && wakeUv.x <= 1.0 &&
+    wakeUv.y >= 0.0 && wakeUv.y <= 1.0
+  ) {
+    wake = texture2D(tWake, wakeUv).r;
+    wake = pow(clamp(wake, 0.0, 1.0), 0.72) * 1.18;
   }
-
-  wake *= 1.0 - vIce;
+  wake *= (1.0 - vIce) * normalFade;
   float foamIntensity = clamp(waveFoam + wake, 0.0, 1.0);
 
   vec2 vortexDelta = vWorldPosition.xz - uWhirlpoolPos.xz;
@@ -473,6 +439,20 @@ function createDampeningMap() {
   return texture;
 }
 
+function createWakeFallback() {
+  const texture = new DataTexture(
+    new Uint8Array([0, 0, 0, 255]),
+    1,
+    1,
+    RGBAFormat,
+    UnsignedByteType,
+  );
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 export const getWaveData = () => {
   const windSpeed = useSimStore.getState().windSpeed;
 
@@ -597,6 +577,7 @@ export default function Ocean() {
   const qualityConfig = QUALITY_CONFIG[renderQuality];
 
   const dampeningMap = useMemo(() => createDampeningMap(), []);
+  const fallbackWakeTexture = useMemo(() => createWakeFallback(), []);
   const geometries = useMemo(
     () => createOceanGeometry(qualityConfig),
     [qualityConfig],
@@ -628,26 +609,14 @@ export default function Ocean() {
           ),
         },
         tDampening: { value: dampeningMap },
+        tWake: { value: fallbackWakeTexture },
+        uWakeOrigin: { value: new Vector2() },
+        uWakeWorldSize: { value: 1 },
+        uWakeEnabled: { value: 0 },
         uBaseColor: { value: new Color('#021a28') },
         uShallowColor: { value: new Color('#0d6b7a') },
         uWhirlpoolPos: { value: new Vector3() },
-        uBoatPos: { value: new Vector3() },
-        uBoatDir: { value: new Vector3() },
-        uBoatSpeed: { value: 0 },
         uLightningFlash: { value: 0 },
-        uAbsoluteOdometer: { value: 0 },
-        uWakeNodes: {
-          value: Array.from(
-            { length: MAX_WAKE_NODES },
-            () => new Vector4(),
-          ),
-        },
-        uWakeDirs: {
-          value: Array.from(
-            { length: MAX_WAKE_NODES },
-            () => new Vector4(),
-          ),
-        },
       },
     ]);
 
@@ -657,14 +626,15 @@ export default function Ocean() {
       uniforms,
       fog: true,
     });
-  }, [dampeningMap]);
+  }, [dampeningMap, fallbackWakeTexture]);
 
   useEffect(
     () => () => {
       dampeningMap.dispose();
+      fallbackWakeTexture.dispose();
       material.dispose();
     },
-    [dampeningMap, material],
+    [dampeningMap, fallbackWakeTexture, material],
   );
 
   useEffect(
@@ -684,11 +654,17 @@ export default function Ocean() {
     uniforms.uSeason.value = sharedPhysics.season;
     uniforms.uDetailLevel.value = QUALITY_CONFIG[store.renderQuality].detail;
     uniforms.uWhirlpoolPos.value.copy(sharedPhysics.whirlpoolPos);
-    uniforms.uBoatPos.value.copy(sharedPhysics.boatPos);
-    uniforms.uBoatDir.value.copy(sharedPhysics.boatDir);
-    uniforms.uBoatSpeed.value = sharedPhysics.boatSpeed;
     uniforms.uLightningFlash.value = sharedPhysics.lightningFlash;
-    uniforms.uAbsoluteOdometer.value = sharedPhysics.absoluteOdometer;
+
+    if (sharedWakeField.texture) {
+      uniforms.tWake.value = sharedWakeField.texture;
+      uniforms.uWakeOrigin.value.copy(sharedWakeField.origin);
+      uniforms.uWakeWorldSize.value = sharedWakeField.worldSize;
+      uniforms.uWakeEnabled.value = 1;
+    } else {
+      uniforms.tWake.value = fallbackWakeTexture;
+      uniforms.uWakeEnabled.value = 0;
+    }
 
     const waves = getWaveData();
     for (let index = 0; index < waves.length; index += 1) {
@@ -697,22 +673,6 @@ export default function Ocean() {
         waves[index].y,
         waves[index].z,
         waves[index].w,
-      );
-    }
-
-    for (let index = 0; index < MAX_WAKE_NODES; index += 1) {
-      const offset = index * 4;
-      uniforms.uWakeNodes.value[index].set(
-        sharedPhysics.wakeNodes[offset],
-        sharedPhysics.wakeNodes[offset + 1],
-        sharedPhysics.wakeNodes[offset + 2],
-        sharedPhysics.wakeNodes[offset + 3],
-      );
-      uniforms.uWakeDirs.value[index].set(
-        sharedPhysics.wakeDirs[offset],
-        sharedPhysics.wakeDirs[offset + 1],
-        sharedPhysics.wakeDirs[offset + 2],
-        sharedPhysics.wakeDirs[offset + 3],
       );
     }
 
