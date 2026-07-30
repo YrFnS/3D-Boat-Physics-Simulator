@@ -1,4 +1,4 @@
-name: Full dependency audit
+name: Finalize dependency audit
 
 on:
   pull_request:
@@ -7,17 +7,25 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: finalize-full-dependency-audit
+  cancel-in-progress: false
 
 jobs:
   audit:
-    name: Full npm audit report
+    name: Apply audit fixes and validate
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
-      - name: Check out repository
+      - name: Check out performance branch
         uses: actions/checkout@v4
+        with:
+          ref: agent/phase-1-performance-foundation
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -28,5 +36,36 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Print full audit report
+      - name: Apply non-breaking audit fixes to lockfile
+        run: npm audit fix --package-lock-only
+
+      - name: Reinstall fixed dependency graph
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Require a clean full audit
         run: npm audit --audit-level=low
+
+      - name: Remove one-time audit workflow
+        run: rm -f .github/workflows/full-dependency-audit.yml
+
+      - name: Commit validated lockfile
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json .github/workflows/full-dependency-audit.yml
+          if git diff --cached --quiet; then
+            echo "No audit changes to commit."
+            exit 0
+          fi
+          git commit -m "security: resolve development dependency advisories"
+          git push origin "HEAD:agent/phase-1-performance-foundation"
