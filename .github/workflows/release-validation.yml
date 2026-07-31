@@ -11,6 +11,7 @@ on:
       - store/**
       - scripts/release-validation.mjs
       - scripts/release-visual-audit.mjs
+      - scripts/hardware-benchmark-smoke.mjs
       - package.json
       - package-lock.json
       - next.config.ts
@@ -30,6 +31,7 @@ on:
       - store/**
       - scripts/release-validation.mjs
       - scripts/release-visual-audit.mjs
+      - scripts/hardware-benchmark-smoke.mjs
       - package.json
       - package-lock.json
       - next.config.ts
@@ -136,6 +138,12 @@ jobs:
           --server-args='-screen 0 1600x1200x24'
           node scripts/release-validation.mjs
 
+      - name: Validate physical benchmark harness
+        id: hardware_benchmark
+        if: always()
+        continue-on-error: true
+        run: node scripts/hardware-benchmark-smoke.mjs
+
       - name: Reject blank or uniform 3D screenshots
         id: visual_audit
         if: always()
@@ -160,5 +168,6 @@ jobs:
       - name: Enforce release-validation result
         if: >-
           steps.release_validation.outcome != 'success' ||
+          steps.hardware_benchmark.outcome != 'success' ||
           steps.visual_audit.outcome != 'success'
         run: exit 1
