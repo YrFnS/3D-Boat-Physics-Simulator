@@ -302,3 +302,5 @@ jobs:
           git add scripts/release-validation.mjs .github/workflows/release-validation.yml
           git commit -m 'test: run Firefox release validation under Xvfb'
           git push origin HEAD:agent/phase-4-release-validation
+
+# This second connector-authored update intentionally triggers the one-time job.
