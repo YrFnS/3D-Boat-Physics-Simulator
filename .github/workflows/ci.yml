@@ -19,7 +19,7 @@ env:
 
 jobs:
   validate:
-    name: Lint, typecheck, build, and runtime audit
+    name: Lint, typecheck, build, and full audit
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -45,5 +45,5 @@ jobs:
       - name: Build application
         run: npm run build
 
-      - name: Reject runtime dependency advisories
-        run: npm audit --omit=dev --audit-level=low
+      - name: Reject dependency advisories
+        run: npm run audit
