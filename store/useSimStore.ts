@@ -61,6 +61,15 @@ export interface ScenarioNavigationTelemetry {
   boatZ: number;
 }
 
+export interface ScenarioCheckpointState {
+  id: string;
+  label: string;
+  waypointIndex: number;
+  x: number;
+  z: number;
+  headingDeg: number;
+}
+
 export interface ScenarioResult {
   outcome: 'completed' | 'failed';
   reason: string;
@@ -68,6 +77,8 @@ export interface ScenarioResult {
   score: number;
   waypointsCompleted: number;
   totalWaypoints: number;
+  entitiesCompleted: number;
+  totalEntities: number;
   hullHealth: number;
   engineHealth: number;
   rudderHealth: number;
@@ -75,6 +86,7 @@ export interface ScenarioResult {
   resetCount: number;
   maximumSpeedKnots: number;
   distanceTravelledM: number;
+  checkpointLabel: string;
 }
 
 export const MAX_OBSTACLES = 250;
@@ -108,6 +120,14 @@ function createScenarioGameplayState(
     navigationBoatZ: 0,
     scenarioResult: null as ScenarioResult | null,
     scenarioResetCount: 0,
+    completedScenarioEntityIds: [] as string[],
+    scenarioEventMessage: '',
+    scenarioCheckpointId: null as string | null,
+    scenarioCheckpointLabel: 'Departure point',
+    scenarioCheckpointWaypointIndex: -1,
+    scenarioSpawnX: 0,
+    scenarioSpawnZ: 0,
+    scenarioSpawnHeadingDeg: 0,
   };
 }
 
@@ -188,6 +208,14 @@ export interface SimState {
   navigationBoatZ: number;
   scenarioResult: ScenarioResult | null;
   scenarioResetCount: number;
+  completedScenarioEntityIds: string[];
+  scenarioEventMessage: string;
+  scenarioCheckpointId: string | null;
+  scenarioCheckpointLabel: string;
+  scenarioCheckpointWaypointIndex: number;
+  scenarioSpawnX: number;
+  scenarioSpawnZ: number;
+  scenarioSpawnHeadingDeg: number;
 
   // Telemetry (updated by physics)
   speedKnots: number;
@@ -252,6 +280,13 @@ export interface SimState {
     telemetry: ScenarioNavigationTelemetry,
   ) => void;
   setActiveWaypointIndex: (index: number) => void;
+  completeScenarioEntities: (
+    entityIds: readonly string[],
+    message: string,
+  ) => void;
+  setScenarioCheckpoint: (
+    checkpoint: ScenarioCheckpointState,
+  ) => void;
   finishScenario: (result: ScenarioResult) => void;
   resetVessel: () => void;
   instantRepairTrigger: number;
@@ -514,6 +549,23 @@ export const useSimStore = create<SimState>((set, get) => ({
     }),
   setActiveWaypointIndex: (activeWaypointIndex) =>
     set({ activeWaypointIndex }),
+  completeScenarioEntities: (entityIds, scenarioEventMessage) =>
+    set((state) => ({
+      completedScenarioEntityIds: Array.from(
+        new Set([...state.completedScenarioEntityIds, ...entityIds]),
+      ),
+      scenarioEventMessage,
+    })),
+  setScenarioCheckpoint: (checkpoint) =>
+    set({
+      scenarioCheckpointId: checkpoint.id,
+      scenarioCheckpointLabel: checkpoint.label,
+      scenarioCheckpointWaypointIndex: checkpoint.waypointIndex,
+      scenarioSpawnX: checkpoint.x,
+      scenarioSpawnZ: checkpoint.z,
+      scenarioSpawnHeadingDeg: checkpoint.headingDeg,
+      scenarioEventMessage: `Recovery checkpoint updated: ${checkpoint.label}.`,
+    }),
   finishScenario: (scenarioResult) =>
     set({
       scenarioRunStatus: scenarioResult.outcome,
@@ -533,6 +585,7 @@ export const useSimStore = create<SimState>((set, get) => ({
         state.scenarioRunStatus === 'active'
           ? state.scenarioResetCount + 1
           : state.scenarioResetCount,
+      scenarioEventMessage: `Vessel recovered at ${state.scenarioCheckpointLabel}.`,
       ...resetTelemetry(),
     })),
   fireInstantRepair: () =>
