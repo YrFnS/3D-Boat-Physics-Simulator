@@ -10,6 +10,7 @@ await fs.mkdir(outputDirectory, { recursive: true });
 const scenarios = [
   {
     name: 'desktop',
+    path: '/?debug=1',
     context: {
       viewport: { width: 1440, height: 900 },
       deviceScaleFactor: 1,
@@ -19,11 +20,22 @@ const scenarios = [
   },
   {
     name: 'mobile',
+    path: '/?debug=1',
     context: {
       viewport: { width: 390, height: 844 },
       deviceScaleFactor: 1,
       isMobile: true,
       hasTouch: true,
+    },
+  },
+  {
+    name: 'collision',
+    path: '/?debug=1&collisionTest=1',
+    context: {
+      viewport: { width: 1280, height: 800 },
+      deviceScaleFactor: 1,
+      isMobile: false,
+      hasTouch: false,
     },
   },
 ];
@@ -64,6 +76,14 @@ function physicsSnapshotIsBounded(snapshot) {
       snapshot.directionLength,
       snapshot.submergedRatio,
       snapshot.droppedTime,
+      snapshot.hullHealth,
+      snapshot.collision.sequence,
+      snapshot.collision.terrainSequence,
+      snapshot.collision.obstacleSequence,
+      snapshot.collision.debugProbeSequence,
+      snapshot.collision.maxImpactSpeed,
+      snapshot.collision.maxImpulse,
+      snapshot.collision.maxPenetration,
     ]) &&
     Math.abs(snapshot.position.x) < 1_000 &&
     snapshot.position.y > -50 &&
@@ -79,7 +99,19 @@ function physicsSnapshotIsBounded(snapshot) {
     snapshot.directionLength < 1.1 &&
     snapshot.submergedRatio >= 0 &&
     snapshot.submergedRatio <= 1 &&
-    snapshot.droppedTime >= 0
+    snapshot.droppedTime >= 0 &&
+    snapshot.hullHealth >= 0 &&
+    snapshot.hullHealth <= 100 &&
+    snapshot.collision.ready &&
+    snapshot.collision.sequence >= 0 &&
+    snapshot.collision.terrainSequence >= 0 &&
+    snapshot.collision.obstacleSequence >= 0 &&
+    snapshot.collision.debugProbeSequence >= 0 &&
+    snapshot.collision.maxImpactSpeed >= 0 &&
+    snapshot.collision.maxImpactSpeed < 80 &&
+    snapshot.collision.maxImpulse >= 0 &&
+    snapshot.collision.maxPenetration >= 0 &&
+    snapshot.collision.maxPenetration < 5
   );
 }
 
@@ -102,6 +134,17 @@ async function readPhysicsSnapshot(page) {
       directionLength: readNumber('simDirectionLength'),
       submergedRatio: readNumber('simSubmergedRatio'),
       droppedTime: readNumber('simDroppedTime'),
+      hullHealth: readNumber('simHullHealth'),
+      collision: {
+        ready: dataset.simCollisionReady === '1',
+        sequence: readNumber('simCollisionSequence'),
+        terrainSequence: readNumber('simTerrainCollisionSequence'),
+        obstacleSequence: readNumber('simObstacleCollisionSequence'),
+        debugProbeSequence: readNumber('simDebugProbeCollisionSequence'),
+        maxImpactSpeed: readNumber('simCollisionMaxImpactSpeed'),
+        maxImpulse: readNumber('simCollisionMaxImpulse'),
+        maxPenetration: readNumber('simCollisionMaxPenetration'),
+      },
     };
   });
 }
@@ -122,6 +165,16 @@ async function holdPointer(page, locator, durationMs) {
 }
 
 async function exerciseVesselControls(page, scenarioName) {
+  if (scenarioName === 'collision') {
+    await page.keyboard.down('w');
+    try {
+      await page.waitForTimeout(2_400);
+    } finally {
+      await page.keyboard.up('w');
+    }
+    return;
+  }
+
   if (scenarioName === 'desktop') {
     await page.keyboard.down('w');
     await page.keyboard.down('a');
@@ -170,7 +223,7 @@ try {
       });
     });
 
-    const response = await page.goto(`${baseUrl}/?debug=1`, {
+    const response = await page.goto(`${baseUrl}${scenario.path}`, {
       waitUntil: 'domcontentloaded',
       timeout: 60_000,
     });
@@ -185,6 +238,10 @@ try {
     );
     await page.waitForFunction(
       () => document.documentElement.dataset.simReady === '1',
+      { timeout: 60_000 },
+    );
+    await page.waitForFunction(
+      () => document.documentElement.dataset.simCollisionReady === '1',
       { timeout: 60_000 },
     );
     await page.waitForTimeout(4_000);
@@ -210,6 +267,20 @@ try {
       vesselResponded:
         displacement > 0.05 || physicsAfter.linearSpeed > 0.05,
     };
+    const collisionChecks =
+      scenario.name === 'collision'
+        ? {
+            RapierReady: physicsBefore.collision.ready,
+            debugProbeContacted:
+              physicsAfter.collision.debugProbeSequence >
+              physicsBefore.collision.debugProbeSequence,
+            obstacleContactRecorded:
+              physicsAfter.collision.obstacleSequence >
+              physicsBefore.collision.obstacleSequence,
+            contactImpulseRecorded: physicsAfter.collision.maxImpulse > 0,
+            penetrationRecorded: physicsAfter.collision.maxPenetration > 0,
+          }
+        : null;
 
     const runtime = await page.evaluate(() => {
       const canvas = document.querySelector('canvas');
@@ -271,6 +342,8 @@ try {
         ? runtime.hasTouchControls && !runtime.hasBenchmarkControls
         : runtime.hasBenchmarkControls;
     const physicsChecksPass = Object.values(physicsChecks).every(Boolean);
+    const collisionChecksPass =
+      collisionChecks === null || Object.values(collisionChecks).every(Boolean);
     const scenarioFailed =
       !response?.ok() ||
       runtime.title !== expectedTitle ||
@@ -283,7 +356,8 @@ try {
       !runtime.qualityMode ||
       !runtime.hasFpsReadout ||
       !responsiveChecksPass ||
-      !physicsChecksPass;
+      !physicsChecksPass ||
+      !collisionChecksPass;
 
     hasFatalError ||= scenarioFailed;
     report.scenarios.push({
@@ -296,6 +370,7 @@ try {
         displacement,
         simulationAdvance,
         checks: physicsChecks,
+        collisionChecks,
       },
       consoleEntries,
       pageErrors,

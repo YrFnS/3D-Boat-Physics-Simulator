@@ -6,7 +6,6 @@ import { Vector3, Group, MathUtils, Quaternion } from 'three';
 import { MeshDistortMaterial } from '@react-three/drei';
 import { useSimStore, sharedPhysics } from '@/store/useSimStore';
 import { getWaveHeight } from './Ocean';
-import { getTerrainHeight } from '@/lib/terrain';
 import { useBoatAudio } from './boat/useBoatAudio';
 import { useBoatVisualDamage } from './boat/useBoatVisualDamage';
 import { FixedStepRunner } from '@/sim/core/FixedStepRunner';
@@ -14,6 +13,7 @@ import { SixDofBody } from '@/sim/core/SixDofBody';
 import { SeededRandom } from '@/sim/core/SeededRandom';
 import { getVesselConfig } from '@/sim/vessels/VesselConfig';
 import { DistributedHullForces } from '@/sim/vessels/DistributedHullForces';
+import { RapierCollisionWorld } from '@/sim/collision/RapierCollisionWorld';
 
 interface OrbitControlsLike {
   target: Vector3;
@@ -26,6 +26,10 @@ export default function Boat() {
   const fixedStepRunner = useRef(new FixedStepRunner());
   const simulationRandom = useRef(new SeededRandom(0xb0475eed));
   const distributedHullForces = useRef(new DistributedHullForces());
+  const rapierCollisionWorld = useRef<RapierCollisionWorld | null>(null);
+  const collisionTestEnabled = useRef(false);
+  const lastTerrainImpactTime = useRef(Number.NEGATIVE_INFINITY);
+  const lastObstacleImpactTime = useRef(Number.NEGATIVE_INFINITY);
   const previousPosition = useRef(new Vector3());
   const currentPosition = useRef(new Vector3());
   const previousQuaternion = useRef(new Quaternion());
@@ -60,7 +64,6 @@ export default function Boat() {
       worldPlaning: new Vector3(),
       planingForce: new Vector3(),
       rudderForce: new Vector3(),
-      terrainNormal: new Vector3(),
       boatForward: new Vector3(),
       boatRight: new Vector3(),
       boatPosition: new Vector3(),
@@ -98,6 +101,41 @@ export default function Boat() {
       engineTemperature.current = 20;
     }
   }, [instantRepairTrigger]);
+
+  useEffect(() => {
+    let cancelled = false;
+    collisionTestEnabled.current =
+      new URLSearchParams(window.location.search).get('collisionTest') === '1';
+
+    sharedPhysics.collisionReady = 0;
+    sharedPhysics.collisionSequence = 0;
+    sharedPhysics.terrainCollisionSequence = 0;
+    sharedPhysics.obstacleCollisionSequence = 0;
+    sharedPhysics.debugProbeCollisionSequence = 0;
+    sharedPhysics.collisionMaxImpactSpeed = 0;
+    sharedPhysics.collisionMaxImpulse = 0;
+    sharedPhysics.collisionMaxPenetration = 0;
+
+    void RapierCollisionWorld.create()
+      .then((collisionWorld) => {
+        if (cancelled) {
+          collisionWorld.dispose();
+          return;
+        }
+        rapierCollisionWorld.current = collisionWorld;
+        sharedPhysics.collisionReady = 1;
+      })
+      .catch((error: unknown) => {
+        console.error('Failed to initialize Rapier collision world.', error);
+      });
+
+    return () => {
+      cancelled = true;
+      rapierCollisionWorld.current?.dispose();
+      rapierCollisionWorld.current = null;
+      sharedPhysics.collisionReady = 0;
+    };
+  }, []);
 
   // Apparent wind flag rotation
   const flagRef = useRef<Group>(null);
@@ -165,7 +203,6 @@ export default function Boat() {
     // --- Distributed Hull Buoyancy & Hydrodynamic Resistance ---
     const pos = body.position;
     const halfL = vessel.halfLengthM;
-    const halfW = vessel.halfWidthM;
 
     const windRad = MathUtils.degToRad(windDir);
     const windVelocity = scratch.windVelocity
@@ -450,51 +487,8 @@ export default function Boat() {
       scratch.worldRudder,
     );
 
-    // --- PHASE 4: OBSTACLE COLLISION DETECTION ---
-    const currentBoatPos = body.position;
-    for (let i = 0; i < 250; i++) { // MAX_OBSTACLES
-        const ox = sharedPhysics.obstacles[i*4 + 0];
-        const oz = sharedPhysics.obstacles[i*4 + 2];
-        if (ox === 0 && oz === 0) continue; // Uninitialized
-        
-        const orad = sharedPhysics.obstacles[i*4 + 3];
-        
-        // Simple 2D Cylinder collision (ignoring Y for debris/trees)
-        const dx = currentBoatPos.x - ox;
-        const dz = currentBoatPos.z - oz;
-        const distSq = dx*dx + dz*dz;
-        const boatRad = halfW * 0.8; // Approximate hit radius 
-        const totalRad = boatRad + orad;
-        
-        if (distSq < totalRad * totalRad) {
-            // COLLISION!
-            const dist = Math.max(Math.sqrt(distSq), 1e-4);
-            const nx = dx / (dist || 1);
-            const nz = dz / (dist || 1);
-            
-            // Resolve overlap rigidly
-            const overlap = totalRad - dist;
-            currentBoatPos.x += nx * overlap;
-            currentBoatPos.z += nz * overlap;
-            
-            // Calculate impact severity based on relative velocity towards object
-            const dotVelocity = -(body.linearVelocity.x * nx + body.linearVelocity.z * nz);
-            
-            if (dotVelocity > 0.5) { // Lowered impact threshold so buoys consistently bonk
-                // Apply impulse response bounce (restitution = 0.5)
-                body.linearVelocity.x += nx * dotVelocity * 1.5;
-                body.linearVelocity.z += nz * dotVelocity * 1.5;
-                
-                // Add chaotic spin
-                body.angularVelocity.y += (simulationRandom.current.next() - 0.5) * dotVelocity * 1.0;
-
-                // Damage Hull! (Reduced damage from buoys)
-                hullHealth.current = Math.max(0, hullHealth.current - dotVelocity * 1.5);
-
-                audio.playImpact(dotVelocity, 'obstacle');
-            }
-        }
-    }
+    // Rapier resolves compound-hull obstacle and terrain contacts after
+    // the custom marine forces have been integrated for this fixed step.
 
     // Extreme physics safety clamp to prevent space launches (Flying Boat Bug fix)
     body.linearVelocity.x = MathUtils.clamp(body.linearVelocity.x, -80, 80);
@@ -522,6 +516,98 @@ export default function Boat() {
     // --- Integrate the accumulated six-degree-of-freedom forces ---
     body.integrate(dt);
 
+    const collisionSummary = rapierCollisionWorld.current?.step(
+      body,
+      vessel,
+      dt,
+      sharedPhysics.obstacles,
+      collisionTestEnabled.current && Math.abs(thrustRaw) > 0.1,
+    );
+
+    if (collisionSummary) {
+      sharedPhysics.collisionReady = 1;
+      sharedPhysics.collisionMaxImpactSpeed = Math.max(
+        sharedPhysics.collisionMaxImpactSpeed,
+        collisionSummary.maxTerrainImpactSpeedMps,
+        collisionSummary.maxObstacleImpactSpeedMps,
+      );
+      sharedPhysics.collisionMaxImpulse = Math.max(
+        sharedPhysics.collisionMaxImpulse,
+        collisionSummary.maxTerrainImpulseNs,
+        collisionSummary.maxObstacleImpulseNs,
+      );
+      sharedPhysics.collisionMaxPenetration = Math.max(
+        sharedPhysics.collisionMaxPenetration,
+        collisionSummary.maxPenetrationM,
+      );
+
+      if (collisionSummary.contactCount > 0) {
+        sharedPhysics.collisionSequence += collisionSummary.contactCount;
+      }
+      if (collisionSummary.terrainContactCount > 0) {
+        sharedPhysics.terrainCollisionSequence +=
+          collisionSummary.terrainContactCount;
+      }
+      if (collisionSummary.obstacleContactCount > 0) {
+        sharedPhysics.obstacleCollisionSequence +=
+          collisionSummary.obstacleContactCount;
+      }
+      if (collisionSummary.debugProbeContactCount > 0) {
+        sharedPhysics.debugProbeCollisionSequence +=
+          collisionSummary.debugProbeContactCount;
+      }
+
+      const terrainImpact = collisionSummary.maxTerrainImpactSpeedMps;
+      if (
+        terrainImpact > 1.8 &&
+        time - lastTerrainImpactTime.current >= 0.25
+      ) {
+        lastTerrainImpactTime.current = time;
+        const normalizedImpulse =
+          collisionSummary.maxTerrainImpulseNs / vessel.massKg;
+        const severity = terrainImpact - 1.8;
+        const damage = Math.min(
+          24,
+          severity * 3.6 + normalizedImpulse * 0.42,
+        );
+        hullHealth.current = Math.max(0, hullHealth.current - damage);
+        if (severity > 2.5) {
+          engineHealth.current = Math.max(
+            0,
+            engineHealth.current - damage * 0.22,
+          );
+          rudderHealth.current = Math.max(
+            0,
+            rudderHealth.current - damage * 0.32,
+          );
+        }
+        audio.playImpact(terrainImpact, 'terrain');
+      }
+
+      const obstacleImpact = collisionSummary.maxObstacleImpactSpeedMps;
+      if (
+        obstacleImpact > 0.65 &&
+        time - lastObstacleImpactTime.current >= 0.2
+      ) {
+        lastObstacleImpactTime.current = time;
+        const normalizedImpulse =
+          collisionSummary.maxObstacleImpulseNs / vessel.massKg;
+        const severity = obstacleImpact - 0.65;
+        const damage = Math.min(
+          9,
+          severity * 1.45 + normalizedImpulse * 0.16,
+        );
+        hullHealth.current = Math.max(0, hullHealth.current - damage);
+        if (severity > 2.5) {
+          rudderHealth.current = Math.max(
+            0,
+            rudderHealth.current - damage * 0.25,
+          );
+        }
+        audio.playImpact(obstacleImpact, 'obstacle');
+      }
+    }
+
     forwardDir.set(0, 0, -1).applyQuaternion(body.quaternion);
     forwardDir.y = 0;
     if (forwardDir.lengthSq() > 1e-8) forwardDir.normalize();
@@ -532,106 +618,6 @@ export default function Boat() {
     sharedPhysics.boatDir.copy(forwardDir);
     const speed2D = Math.hypot(body.linearVelocity.x, body.linearVelocity.z);
     sharedPhysics.boatSpeed = Math.min(speed2D, 35.0);
-
-    // --- PHASE 3: TERRAIN COLLISION & BEACHING ---
-    let terrainY = getTerrainHeight(body.position.x, body.position.z);
-    
-    // Dynamic Seabed Cratering: If the whirlpool is here, the water pushes the effective seabed down
-    // This fixes the bug where the boat floats flat in mid-air over the vortex because the physical terrain was catching the hull.
-    const distToW = Math.sqrt((body.position.x - sharedPhysics.whirlpoolPos.x)**2 + (body.position.z - sharedPhysics.whirlpoolPos.z)**2);
-    if (distToW < 160) {
-        const vFactor = 1.0 - MathUtils.smoothstep(distToW, 0.0, 160.0);
-        let dampening = 1.0;
-        if (terrainY > -10.0) {
-            dampening = Math.max(0, Math.min(1.0, -terrainY / 10.0));
-        }
-        
-        // Match the shader: A perfectly smooth rankine depression
-        const vortexSink = Math.pow(vFactor, 3.0) * 80.0 * dampening;
-        terrainY -= vortexSink; // Plunge the terrain
-    }
-    
-    // The boat's origin is roughly at the waterline, but the hull extends down.
-    // Trawler is deeper than the speedboat
-    const deepestDraft = vessel.deepestDraftM;
-    
-    // Check if the bottom of the hull is touching the procedural terrain
-    if (body.position.y - deepestDraft < terrainY) {
-        // We hit the ground!
-        
-        // 1. Calculate how hard we hit it vertically
-        const penetrationY = terrainY - (body.position.y - deepestDraft);
-        
-        // 2. Resolve vertical penetration (prevent falling through the world)
-        body.position.y = terrainY + deepestDraft;
-        
-        // Calculate terrain normal
-        const d = 1.0;
-        const ty1 = getTerrainHeight(body.position.x + d, body.position.z);
-        const ty2 = getTerrainHeight(body.position.x - d, body.position.z);
-        const ty3 = getTerrainHeight(body.position.x, body.position.z + d);
-        const ty4 = getTerrainHeight(body.position.x, body.position.z - d);
-        
-        const normalX = ty2 - ty1;
-        const normalZ = ty4 - ty3;
-        const normalVector = scratch.terrainNormal.set(normalX, 2 * d, normalZ).normalize();
-        
-        // 3. Rigid Lateral Correction (Fixes clipping/sliding over steep cliffs)
-        if (normalVector.y < 0.9) { 
-           // Push the boat OUT horizontally away from the cliff
-           const pushOut = penetrationY * (1.0 - normalVector.y) * 2.0;
-           body.position.x += normalVector.x * pushOut;
-           body.position.z += normalVector.z * pushOut;
-        }
-
-        // Dot product to see if we slammed into a wall
-        const dotVelocity = body.linearVelocity.x * normalVector.x + body.linearVelocity.y * normalVector.y + body.linearVelocity.z * normalVector.z;
-        const speedIntoWall = -dotVelocity;
-        
-        // 4. Velocity Projection (Stop forward momentum from completely burrowing into the wall)
-        if (dotVelocity < 0) {
-           body.linearVelocity.x -= normalVector.x * dotVelocity;
-           // If we hit a steep wall, cancel the horizontal energy entirely. 
-           // Do NOT convert horizontal momentum into vertical climbing momentum!
-           body.linearVelocity.y = Math.min(body.linearVelocity.y, 0); 
-           body.linearVelocity.z -= normalVector.z * dotVelocity;
-        }
-
-        // 5. Apply severe ground friction (beaching)
-        const groundFriction = 3.0; 
-        body.linearVelocity.x -= body.linearVelocity.x * groundFriction * dt;
-        body.linearVelocity.z -= body.linearVelocity.z * groundFriction * dt;
-        
-        // Ensure bouncing upwards is stopped if we are pinned, stop downward velocity if falling
-        if (body.linearVelocity.y > 0 && normalVector.y >= 0.9) {
-            body.linearVelocity.y *= 0.5; // Dampen upward bouncing intelligently
-        } else if (body.linearVelocity.y < 0) {
-            body.linearVelocity.y = 0; // Prevent infinite gravity accumulation
-        }
-
-        // 6. Crash Damage
-        if (speedIntoWall > 2.0 && penetrationY > 0.1) {
-             // CRASH!
-             const severity = speedIntoWall;
-             
-             // Massive damage for hitting solid rock/sand at speed
-             hullHealth.current = Math.max(0, hullHealth.current - severity * 5);
-             if (severity > 5) {
-                 engineHealth.current = Math.max(0, engineHealth.current - severity * 2);
-                 rudderHealth.current = Math.max(0, rudderHealth.current - severity * 3);
-             }
-             
-             // Bounce off terrain (no upward geometry launch from lateral impacts)
-             body.linearVelocity.x += normalVector.x * speedIntoWall * 0.8;
-             body.linearVelocity.y += (normalVector.y > 0.9 ? normalVector.y * speedIntoWall * 0.5 : 0); 
-             body.linearVelocity.z += normalVector.z * speedIntoWall * 0.8;
-             
-             // Add chaotic spin
-              body.angularVelocity.y +=
-                (simulationRandom.current.next() - 0.5) * speedIntoWall;
-              audio.playImpact(severity, 'terrain');
-        }
-    }
 
     // --- PHASE 5: TORNADO / WATERSPOUT PHYSICS ---
     // Tornado and Whirlpool are now independent hazards wandering the sea.
