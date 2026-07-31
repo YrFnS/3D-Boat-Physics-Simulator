@@ -8,11 +8,14 @@ on:
       - components/ContextualControlHints.tsx
       - components/ExperienceChrome.tsx
       - components/ExperiencePersistence.tsx
+      - components/FreeNavigationDirector.tsx
+      - components/GameplayPersistence.tsx
       - components/HUD.tsx
       - components/InputModeTracker.tsx
       - components/NavigationHUD.tsx
       - components/OnboardingOverlay.tsx
       - components/ScenarioDirector.tsx
+      - components/ScenarioEntities.tsx
       - components/ScenarioResultOverlay.tsx
       - components/ScenarioWaypoints.tsx
       - components/SessionOverlay.tsx
@@ -21,9 +24,13 @@ on:
       - components/Simulator.tsx
       - components/SimulatorRecovery.tsx
       - hooks/useAutomationMode.ts
+      - sim/core/SixDofBody.ts
       - sim/scenarios/**
       - store/useExperienceSettings.ts
+      - store/useNavigationPlanner.ts
+      - store/useScenarioHistory.ts
       - store/useSimStore.ts
+      - scripts/gameplay-systems-smoke.mjs
       - scripts/onboarding-settings-smoke.mjs
       - scripts/product-experience-smoke.mjs
       - package.json
@@ -38,11 +45,14 @@ on:
       - components/ContextualControlHints.tsx
       - components/ExperienceChrome.tsx
       - components/ExperiencePersistence.tsx
+      - components/FreeNavigationDirector.tsx
+      - components/GameplayPersistence.tsx
       - components/HUD.tsx
       - components/InputModeTracker.tsx
       - components/NavigationHUD.tsx
       - components/OnboardingOverlay.tsx
       - components/ScenarioDirector.tsx
+      - components/ScenarioEntities.tsx
       - components/ScenarioResultOverlay.tsx
       - components/ScenarioWaypoints.tsx
       - components/SessionOverlay.tsx
@@ -51,9 +61,13 @@ on:
       - components/Simulator.tsx
       - components/SimulatorRecovery.tsx
       - hooks/useAutomationMode.ts
+      - sim/core/SixDofBody.ts
       - sim/scenarios/**
       - store/useExperienceSettings.ts
+      - store/useNavigationPlanner.ts
+      - store/useScenarioHistory.ts
       - store/useSimStore.ts
+      - scripts/gameplay-systems-smoke.mjs
       - scripts/onboarding-settings-smoke.mjs
       - scripts/product-experience-smoke.mjs
       - package.json
@@ -70,9 +84,9 @@ env:
 
 jobs:
   experience:
-    name: Session, navigation, onboarding, settings, and persistence flow
+    name: Session, gameplay, onboarding, settings, and persistence flow
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
 
     steps:
       - name: Check out repository
@@ -121,6 +135,11 @@ jobs:
         continue-on-error: true
         run: node scripts/product-experience-smoke.mjs
 
+      - name: Run gameplay systems smoke
+        id: gameplay_systems
+        continue-on-error: true
+        run: node scripts/gameplay-systems-smoke.mjs
+
       - name: Run onboarding and settings smoke
         id: onboarding_settings
         continue-on-error: true
@@ -144,5 +163,6 @@ jobs:
       - name: Enforce product experience result
         if: >-
           steps.product_experience.outcome != 'success' ||
+          steps.gameplay_systems.outcome != 'success' ||
           steps.onboarding_settings.outcome != 'success'
         run: exit 1
