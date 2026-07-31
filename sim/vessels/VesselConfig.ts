@@ -160,7 +160,7 @@ const VESSEL_CONFIGS = {
     angularDampingPerSecond: [4.6, 4.2, 10],
     centerOfMassLocal: [0, -0.22, 0.35],
     maxAngularSpeedRadPerSecond: 2,
-    engineForceMaxN: 25_000,
+    engineForceMaxN: 22_000,
     forwardDragCoefficient: 205,
     keelDragMultiplier: 3,
     dragApplicationDepthM: 0.35,

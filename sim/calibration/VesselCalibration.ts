@@ -381,7 +381,7 @@ export class VesselCalibrationRunner {
     }
     if (this.request.scenario === 'turn') {
       const approachThrottle =
-        this.request.vessel === 'speedboat' ? 0.18 : 0.82;
+        this.request.vessel === 'speedboat' ? 0.24 : 0.82;
       if (this.turnMeasurementComplete) {
         return { throttle: 0.35, steer: 0 };
       }
