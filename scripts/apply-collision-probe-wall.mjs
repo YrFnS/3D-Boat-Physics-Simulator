@@ -25,16 +25,28 @@ const DEBUG_PROBE_GAP_M = 0.03;
 
 source = replaceOnce(
   source,
-  '    rapierInitialization = RAPIER.init().then(() => RAPIER);\n',
-  '    rapierInitialization = RAPIER.init({}).then(() => RAPIER);\n',
-  'Rapier initialization call',
+  '  private readonly otherPosition = new Vector3();\n',
+  '',
+  'unused collision scratch vector',
 );
 
 source = replaceOnce(
   source,
-  '  private readonly otherPosition = new Vector3();\n',
-  '',
-  'unused collision scratch vector',
+  `    if (summary.debugProbeContactCount > 0 && this.debugProbeCollider) {
+      this.debugProbeCollider.setEnabled(false);
+      this.debugProbeConsumed = true;
+    }
+`,
+  `    if (
+      summary.debugProbeContactCount > 0 &&
+      summary.maxObstacleImpulseNs > 0 &&
+      this.debugProbeCollider
+    ) {
+      this.debugProbeCollider.setEnabled(false);
+      this.debugProbeConsumed = true;
+    }
+`,
+  'debug probe consumption condition',
 );
 
 const previousProbe = `  private syncDebugProbe(
@@ -156,4 +168,4 @@ source = replaceOnce(
 );
 
 await fs.writeFile(path, source);
-console.log('Replaced the spherical collision probe with a vessel-aligned wall.');
+console.log('Replaced the spherical collision probe with a drift-tolerant wall.');
