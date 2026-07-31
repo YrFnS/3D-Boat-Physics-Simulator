@@ -3,6 +3,7 @@ import { Quaternion, Vector3 } from 'three';
 import {
   DEFAULT_SCENARIO_ID,
   getScenarioDefinition,
+  SCENARIOS,
   type ScenarioId,
 } from '@/sim/scenarios/ScenarioCatalog';
 
@@ -38,6 +39,13 @@ export interface ControlState {
   arrowright: boolean;
 }
 
+export interface ExperiencePreferences {
+  activeBoat: BoatType;
+  activeScenario: ScenarioId;
+  cameraMode: CameraMode;
+  hudVisible: boolean;
+}
+
 export const MAX_OBSTACLES = 250;
 
 function createEmptyKeys(): ControlState {
@@ -52,6 +60,18 @@ function createEmptyKeys(): ControlState {
     arrowleft: false,
     arrowright: false,
   };
+}
+
+function isBoatType(value: unknown): value is BoatType {
+  return value === 'trawler' || value === 'speedboat';
+}
+
+function isCameraMode(value: unknown): value is CameraMode {
+  return CAMERA_MODES.includes(value as CameraMode);
+}
+
+function isScenarioId(value: unknown): value is ScenarioId {
+  return SCENARIOS.some((scenario) => scenario.id === value);
 }
 
 // Shared high-frequency state skips React completely so the render loop can
@@ -103,6 +123,7 @@ export interface SimState {
   sessionPhase: SessionPhase;
   activeScenario: ScenarioId;
   cameraMode: CameraMode;
+  hudVisible: boolean;
   resetVesselTrigger: number;
 
   // Telemetry (updated by physics)
@@ -159,6 +180,11 @@ export interface SimState {
   returnToMenu: () => void;
   setCameraMode: (mode: CameraMode) => void;
   cycleCameraMode: () => void;
+  setHudVisible: (visible: boolean) => void;
+  toggleHud: () => void;
+  hydrateExperiencePreferences: (
+    preferences: Partial<ExperiencePreferences>,
+  ) => void;
   resetVessel: () => void;
   instantRepairTrigger: number;
   fireInstantRepair: () => void;
@@ -186,6 +212,7 @@ export const useSimStore = create<SimState>((set, get) => ({
   sessionPhase: 'menu',
   activeScenario: DEFAULT_SCENARIO_ID,
   cameraMode: 'chase',
+  hudVisible: true,
   resetVesselTrigger: 0,
 
   ...resetTelemetry(),
@@ -218,7 +245,10 @@ export const useSimStore = create<SimState>((set, get) => ({
             activeBoat,
             engineThrust: 0,
             keys: createEmptyKeys(),
-            resetVesselTrigger: state.resetVesselTrigger + 1,
+            resetVesselTrigger:
+              state.sessionPhase === 'menu'
+                ? state.resetVesselTrigger
+                : state.resetVesselTrigger + 1,
             ...resetTelemetry(),
           },
     ),
@@ -279,7 +309,6 @@ export const useSimStore = create<SimState>((set, get) => ({
       activeScenario,
       activeBoat: requestedBoat ?? state.activeBoat,
       sessionPhase: 'running',
-      cameraMode: 'chase',
       windSpeed: scenario.windSpeed,
       windDir: scenario.windDir,
       currentSpeed: scenario.currentSpeed,
@@ -302,7 +331,12 @@ export const useSimStore = create<SimState>((set, get) => ({
             keys: createEmptyKeys(),
           },
     ),
-  resumeSession: () => set({ sessionPhase: 'running' }),
+  resumeSession: () =>
+    set((state) =>
+      state.sessionPhase === 'paused' || state.sessionPhase === 'menu'
+        ? { sessionPhase: 'running', keys: createEmptyKeys() }
+        : {},
+    ),
   togglePause: () =>
     set((state) => {
       if (state.sessionPhase === 'running') {
@@ -313,7 +347,7 @@ export const useSimStore = create<SimState>((set, get) => ({
         };
       }
       if (state.sessionPhase === 'paused') {
-        return { sessionPhase: 'running' };
+        return { sessionPhase: 'running', keys: createEmptyKeys() };
       }
       return {};
     }),
@@ -347,6 +381,35 @@ export const useSimStore = create<SimState>((set, get) => ({
       return {
         cameraMode:
           CAMERA_MODES[(currentIndex + 1) % CAMERA_MODES.length],
+      };
+    }),
+  setHudVisible: (hudVisible) => set({ hudVisible }),
+  toggleHud: () => set((state) => ({ hudVisible: !state.hudVisible })),
+  hydrateExperiencePreferences: (preferences) =>
+    set((state) => {
+      const activeScenario = isScenarioId(preferences.activeScenario)
+        ? preferences.activeScenario
+        : state.activeScenario;
+      const scenario = getScenarioDefinition(activeScenario);
+
+      return {
+        activeScenario,
+        activeBoat: isBoatType(preferences.activeBoat)
+          ? preferences.activeBoat
+          : state.activeBoat,
+        cameraMode: isCameraMode(preferences.cameraMode)
+          ? preferences.cameraMode
+          : state.cameraMode,
+        hudVisible:
+          typeof preferences.hudVisible === 'boolean'
+            ? preferences.hudVisible
+            : state.hudVisible,
+        windSpeed: scenario.windSpeed,
+        windDir: scenario.windDir,
+        currentSpeed: scenario.currentSpeed,
+        currentDir: scenario.currentDir,
+        targetTime: scenario.targetTime,
+        targetSeason: scenario.targetSeason,
       };
     }),
   resetVessel: () =>
