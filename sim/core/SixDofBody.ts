@@ -1,6 +1,24 @@
 import { Object3D, Quaternion, Vector3 } from 'three';
 
 const EPSILON = 1e-8;
+const MAX_ANGULAR_SPEED_RAD_PER_SECOND = Math.PI * 4;
+
+function vectorIsFinite(value: Vector3) {
+  return (
+    Number.isFinite(value.x) &&
+    Number.isFinite(value.y) &&
+    Number.isFinite(value.z)
+  );
+}
+
+function quaternionIsFinite(value: Quaternion) {
+  return (
+    Number.isFinite(value.x) &&
+    Number.isFinite(value.y) &&
+    Number.isFinite(value.z) &&
+    Number.isFinite(value.w)
+  );
+}
 
 /**
  * Lightweight six-degree-of-freedom body used by the marine force model.
@@ -31,7 +49,6 @@ export class SixDofBody extends Object3D {
   private readonly rotationAxis = new Vector3();
   private readonly pointOffset = new Vector3();
 
-  private massKg = 1;
   private inverseMass = 1;
 
   setMassProperties(
@@ -40,8 +57,8 @@ export class SixDofBody extends Object3D {
     angularDampingPerSecond: readonly [number, number, number],
     centerOfMassLocal: readonly [number, number, number] = [0, 0, 0],
   ) {
-    this.massKg = Math.max(EPSILON, massKg);
-    this.inverseMass = 1 / this.massKg;
+    const safeMassKg = Math.max(EPSILON, massKg);
+    this.inverseMass = 1 / safeMassKg;
 
     this.principalInertia.set(
       Math.max(EPSILON, principalInertiaKgM2[0]),
@@ -74,9 +91,7 @@ export class SixDofBody extends Object3D {
     this.accumulatedForce.add(forceWorld);
     this.getWorldCenterOfMass(this.worldCenterOfMass);
     this.leverArm.copy(pointWorld).sub(this.worldCenterOfMass);
-    this.accumulatedTorque.add(
-      this.leverArm.cross(forceWorld),
-    );
+    this.accumulatedTorque.add(this.leverArm.cross(forceWorld));
   }
 
   getWorldCenterOfMass(target: Vector3) {
@@ -139,17 +154,40 @@ export class SixDofBody extends Object3D {
     );
 
     const angularSpeed = this.angularVelocity.length();
-    if (angularSpeed > EPSILON) {
+    if (angularSpeed > MAX_ANGULAR_SPEED_RAD_PER_SECOND) {
+      this.angularVelocity.multiplyScalar(
+        MAX_ANGULAR_SPEED_RAD_PER_SECOND / angularSpeed,
+      );
+    }
+
+    const boundedAngularSpeed = this.angularVelocity.length();
+    if (boundedAngularSpeed > EPSILON) {
       this.rotationAxis
         .copy(this.angularVelocity)
-        .multiplyScalar(1 / angularSpeed);
+        .multiplyScalar(1 / boundedAngularSpeed);
       this.deltaRotation.setFromAxisAngle(
         this.rotationAxis,
-        angularSpeed * dt,
+        boundedAngularSpeed * dt,
       );
       // Angular velocity is world-space, so the incremental rotation is
       // premultiplied.
       this.quaternion.premultiply(this.deltaRotation).normalize();
+    }
+
+    // A single invalid force must not permanently poison every subsequent
+    // frame. Diagnostics still expose the recovered state so browser smoke can
+    // catch unexpected resets during development.
+    if (!vectorIsFinite(this.linearVelocity)) {
+      this.linearVelocity.set(0, 0, 0);
+    }
+    if (!vectorIsFinite(this.angularVelocity)) {
+      this.angularVelocity.set(0, 0, 0);
+    }
+    if (!vectorIsFinite(this.position)) {
+      this.position.set(0, 0, 0);
+    }
+    if (!quaternionIsFinite(this.quaternion)) {
+      this.quaternion.identity();
     }
   }
 }
