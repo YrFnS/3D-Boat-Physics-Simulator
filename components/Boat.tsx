@@ -19,11 +19,19 @@ import {
   sampleFlatCalibrationWater,
   VesselCalibrationRunner,
 } from '@/sim/calibration/VesselCalibration';
+import {
+  CollisionCalibrationRunner,
+  parseCollisionCalibrationRequest,
+} from '@/sim/calibration/CollisionCalibration';
 
 interface OrbitControlsLike {
   target: Vector3;
   update: () => void;
 }
+
+type SimulationCalibrationRunner =
+  | VesselCalibrationRunner
+  | CollisionCalibrationRunner;
 
 export default function Boat() {
   const boatRef = useRef<Group>(null);
@@ -46,7 +54,8 @@ export default function Boat() {
   const speedboatEngineLRef = useRef<Group>(null);
   const speedboatEngineRRef = useRef<Group>(null);
   const telemetryAccumulator = useRef(0);
-  const calibrationRunner = useRef<VesselCalibrationRunner | null>(null);
+  const calibrationRunner =
+    useRef<SimulationCalibrationRunner | null>(null);
   const calibrationSimulationTime = useRef(0);
 
   const scratch = useMemo(
@@ -73,6 +82,7 @@ export default function Boat() {
       rudderForce: new Vector3(),
       boatForward: new Vector3(),
       boatRight: new Vector3(),
+      boatUp: new Vector3(),
       boatPosition: new Vector3(),
       cameraTarget: new Vector3(),
       cameraDelta: new Vector3(),
@@ -110,12 +120,18 @@ export default function Boat() {
   }, [instantRepairTrigger]);
 
   useEffect(() => {
-    const request = parseCalibrationRequest(window.location.search);
+    const vesselRequest = parseCalibrationRequest(window.location.search);
+    const collisionRequest = parseCollisionCalibrationRequest(
+      window.location.search,
+    );
+    const request = vesselRequest ?? collisionRequest;
     if (!request) return undefined;
 
     const store = useSimStore.getState();
     const vessel = getVesselConfig(request.vessel);
-    const runner = new VesselCalibrationRunner(request);
+    const runner: SimulationCalibrationRunner = vesselRequest
+      ? new VesselCalibrationRunner(vesselRequest)
+      : new CollisionCalibrationRunner(collisionRequest!);
     const body = physicsBody.current;
 
     calibrationRunner.current = runner;
@@ -533,6 +549,21 @@ export default function Boat() {
     // --- ADVANCED RUDDER & PROP WASH SYSTEM ---
     // Rudder takes time to turn to target angle
     let targetRudder = steerRaw * vessel.maxRudderAngleRad;
+    const normalizedSteeringSpeed =
+      Math.abs(vRelForward) /
+      Math.max(1, vessel.planingReferenceSpeedMps);
+    const highSpeedRudderAuthority = vessel.planingCapable
+      ? MathUtils.lerp(
+          1,
+          0.38,
+          MathUtils.smoothstep(normalizedSteeringSpeed, 0.55, 1.25),
+        )
+      : MathUtils.lerp(
+          1,
+          0.72,
+          MathUtils.smoothstep(normalizedSteeringSpeed, 0.8, 1.5),
+        );
+    targetRudder *= highSpeedRudderAuthority;
     
     // --- PHASE 2: Rudder Damage Penalty ---
     // If rudder health is low, max turning angle drops significantly
@@ -558,7 +589,16 @@ export default function Boat() {
     const steeringBite = Math.max(0.1, Math.min(speedBite + propWashBite, 6.0)) * submergedRatio;
     
     const turnTorque = rudderAngle.current * steeringBite * turnForceMax;
-    const rudderForceMagnitude = turnTorque * mass * 0.7;
+    const uprightY = scratch.boatUp
+      .set(0, 1, 0)
+      .applyQuaternion(body.quaternion).y;
+    const uprightSteeringAuthority = MathUtils.smoothstep(
+      Math.abs(uprightY),
+      0.18,
+      0.78,
+    );
+    const rudderForceMagnitude =
+      turnTorque * mass * 0.7 * uprightSteeringAuthority;
     body.localPointToWorld(
       scratch.localRudder.fromArray(vessel.rudderPointLocal),
       scratch.worldRudder,
@@ -599,15 +639,19 @@ export default function Boat() {
     // --- Integrate the accumulated six-degree-of-freedom forces ---
     body.integrate(dt);
 
-    const collisionSummary = calibration
-      ? undefined
-      : rapierCollisionWorld.current?.step(
-          body,
-          vessel,
-          dt,
-          sharedPhysics.obstacles,
-          collisionTestEnabled.current && Math.abs(thrustRaw) > 0.1,
-        );
+    const collisionSummary =
+      calibration && !calibration.usesCollisionWorld
+        ? undefined
+        : rapierCollisionWorld.current?.step(
+            body,
+            vessel,
+            dt,
+            sharedPhysics.obstacles,
+            !calibration &&
+              collisionTestEnabled.current &&
+              Math.abs(thrustRaw) > 0.1,
+            calibration?.collisionFixture ?? null,
+          );
 
     if (collisionSummary) {
       sharedPhysics.collisionReady = 1;
@@ -678,15 +722,25 @@ export default function Boat() {
         const normalizedImpulse =
           collisionSummary.maxObstacleImpulseNs / vessel.massKg;
         const severity = obstacleImpact - 0.65;
+        const headOnFactor =
+          collisionSummary.maxObstacleHeadOnFactor;
         const damage = Math.min(
-          9,
-          severity * 1.45 + normalizedImpulse * 0.16,
+          28,
+          severity * 1.75 + normalizedImpulse * 0.28,
         );
         hullHealth.current = Math.max(0, hullHealth.current - damage);
+        if (severity > 4 && headOnFactor > 0.35) {
+          engineHealth.current = Math.max(
+            0,
+            engineHealth.current -
+              damage * 0.18 * headOnFactor,
+          );
+        }
         if (severity > 2.5) {
           rudderHealth.current = Math.max(
             0,
-            rudderHealth.current - damage * 0.25,
+            rudderHealth.current -
+              damage * 0.2 * (1 - headOnFactor * 0.35),
           );
         }
         audio.playImpact(obstacleImpact, 'obstacle');
@@ -819,6 +873,9 @@ export default function Boat() {
       speedMps: speed2D,
       headingRadians: MathUtils.degToRad(headingDeg),
       hullHealth: hullHealth.current,
+      engineHealth: engineHealth.current,
+      rudderHealth: rudderHealth.current,
+      collisionSummary,
     });
     sharedPhysics.calibrationProgress = calibration?.progress ?? 0;
     if (calibrationResult) {
@@ -935,7 +992,17 @@ export default function Boat() {
     const calibration = calibrationRunner.current;
     let stepResult;
 
-    if (calibration) {
+    if (
+      calibration?.usesCollisionWorld &&
+      !rapierCollisionWorld.current
+    ) {
+      stepResult = {
+        steps: 0,
+        alpha: 1,
+        simulationTimeSeconds: calibrationSimulationTime.current,
+        droppedTimeSeconds: 0,
+      };
+    } else if (calibration) {
       const stepSeconds = fixedStepRunner.current.stepSeconds;
       let steps = 0;
 

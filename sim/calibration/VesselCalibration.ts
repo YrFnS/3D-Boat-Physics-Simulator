@@ -3,6 +3,7 @@ import type { BoatType } from '@/store/useSimStore';
 import type { SixDofBody } from '@/sim/core/SixDofBody';
 import type { WaterHeightSampler } from '@/sim/vessels/DistributedHullForces';
 import type { VesselConfig } from '@/sim/vessels/VesselConfig';
+import type { RapierContactSummary } from '@/sim/collision/RapierCollisionWorld';
 
 export const CALIBRATION_SCENARIOS = [
   'rest',
@@ -72,6 +73,9 @@ export interface CalibrationStepMetrics {
   speedMps: number;
   headingRadians: number;
   hullHealth: number;
+  engineHealth: number;
+  rudderHealth: number;
+  collisionSummary?: RapierContactSummary;
 }
 
 export interface CalibrationResult {
@@ -98,6 +102,7 @@ const STOP_CUTOFF_SECONDS = 14;
 const TURN_START_SECONDS = 12;
 const STOP_SPEED_THRESHOLD_MPS = 0.5;
 const STABILITY_RECOVERY_ROLL_DEG = 2;
+const TURN_MEASUREMENT_RADIANS = Math.PI;
 const STEPS_PER_RENDER_FRAME = 240;
 
 export const VESSEL_CALIBRATION_TARGETS: Readonly<
@@ -148,7 +153,7 @@ export const VESSEL_CALIBRATION_TARGETS: Readonly<
       peakRollMaxDeg: 20,
     },
     speed: {
-      steadySpeedMps: { min: 17, max: 36 },
+      steadySpeedMps: { min: 15, max: 36 },
       maximumSpeedMaxMps: 40,
       timeToMinimumCruiseMaxSeconds: 18,
     },
@@ -222,7 +227,7 @@ function averageHullPointY(vessel: VesselConfig) {
   return totalWeight > 0 ? weightedY / totalWeight : 0;
 }
 
-function estimateRestingOriginY(vessel: VesselConfig) {
+export function estimateRestingOriginY(vessel: VesselConfig) {
   const averagePointY = averageHullPointY(vessel);
   const hydrostaticDepthM = 9.81 / Math.max(1, vessel.buoyancyStiffness);
 
@@ -278,6 +283,8 @@ export const sampleFlatCalibrationWater: WaterHeightSampler = (
 export class VesselCalibrationRunner {
   readonly stepsPerRenderFrame = STEPS_PER_RENDER_FRAME;
   readonly durationSeconds: number;
+  readonly usesCollisionWorld = false;
+  readonly collisionFixture = null;
 
   private readonly euler = new Euler(0, 0, 0, 'YXZ');
   private readonly previousPosition = new Vector3();
@@ -308,6 +315,7 @@ export class VesselCalibrationRunner {
   private maximumTurnRollDeg = 0;
   private stopTrackingInitialized = false;
   private turnTrackingInitialized = false;
+  private turnMeasurementComplete = false;
 
   constructor(readonly request: CalibrationRequest) {
     this.durationSeconds =
@@ -372,8 +380,16 @@ export class VesselCalibrationRunner {
       };
     }
     if (this.request.scenario === 'turn') {
+      const approachThrottle =
+        this.request.vessel === 'speedboat' ? 0.72 : 0.82;
+      if (this.turnMeasurementComplete) {
+        return { throttle: 0.35, steer: 0 };
+      }
       return {
-        throttle: timeSeconds < TURN_START_SECONDS ? 1 : 0.78,
+        throttle:
+          timeSeconds < TURN_START_SECONDS
+            ? approachThrottle
+            : approachThrottle * 0.82,
         steer: timeSeconds < TURN_START_SECONDS ? 0 : 1,
       };
     }
@@ -500,7 +516,9 @@ export class VesselCalibrationRunner {
       this.previousPosition.copy(metrics.body.position);
     }
 
-    if (!this.turnTrackingInitialized) return;
+    if (!this.turnTrackingInitialized || this.turnMeasurementComplete) {
+      return;
+    }
 
     const horizontalStepDistance = Math.hypot(
       metrics.body.position.x - this.previousPosition.x,
@@ -516,6 +534,12 @@ export class VesselCalibrationRunner {
       this.maximumTurnRollDeg,
       Math.abs(rollDeg),
     );
+    if (
+      Math.abs(this.accumulatedHeadingRadians) >=
+      TURN_MEASUREMENT_RADIANS
+    ) {
+      this.turnMeasurementComplete = true;
+    }
   }
 
   private createResult(

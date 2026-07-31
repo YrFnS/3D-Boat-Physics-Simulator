@@ -7,12 +7,22 @@ const outputDirectory = path.resolve('artifacts/physics-calibration');
 await fs.mkdir(outputDirectory, { recursive: true });
 
 const vessels = ['trawler', 'speedboat'];
-const calibrationScenarios = ['rest', 'stability', 'speed', 'stop', 'turn'];
+const calibrationScenarios = [
+  { scenario: 'rest', queryKey: 'calibration' },
+  { scenario: 'stability', queryKey: 'calibration' },
+  { scenario: 'speed', queryKey: 'calibration' },
+  { scenario: 'stop', queryKey: 'calibration' },
+  { scenario: 'turn', queryKey: 'calibration' },
+  { scenario: 'grounding', queryKey: 'collisionCalibration' },
+  { scenario: 'glancing', queryKey: 'collisionCalibration' },
+  { scenario: 'impact', queryKey: 'collisionCalibration' },
+];
 const scenarios = vessels.flatMap((vessel) =>
-  calibrationScenarios.map((scenario) => ({
+  calibrationScenarios.map(({ scenario, queryKey }) => ({
     name: `${vessel}-${scenario}`,
     vessel,
     scenario,
+    queryKey,
   })),
 );
 
@@ -65,7 +75,7 @@ try {
 
     const url = new URL(baseUrl);
     url.searchParams.set('debug', '1');
-    url.searchParams.set('calibration', scenario.scenario);
+    url.searchParams.set(scenario.queryKey, scenario.scenario);
     url.searchParams.set('vessel', scenario.vessel);
 
     const response = await page.goto(url.toString(), {

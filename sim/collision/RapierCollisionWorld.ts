@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { MathUtils, Vector3 } from 'three';
+import { MathUtils, Quaternion, Vector3 } from 'three';
 import { getTerrainHeight } from '@/lib/terrain';
 import { MAX_OBSTACLES } from '@/store/useSimStore';
 import type { SixDofBody } from '@/sim/core/SixDofBody';
@@ -15,6 +15,18 @@ const DEBUG_PROBE_HALF_WIDTH_M = 3.5;
 const DEBUG_PROBE_HALF_HEIGHT_M = 1.5;
 const DEBUG_PROBE_HALF_DEPTH_M = 0.24;
 const DEBUG_PROBE_GAP_M = 0.03;
+const FIXTURE_WALL_HALF_WIDTH_M = 4.5;
+const FIXTURE_WALL_HALF_HEIGHT_M = 1.8;
+const FIXTURE_WALL_HALF_DEPTH_M = 0.28;
+const SHORE_HALF_WIDTH_M = 6;
+const SHORE_HALF_HEIGHT_M = 0.6;
+const SHORE_HALF_DEPTH_M = 5;
+const SHORE_SLOPE_RAD = MathUtils.degToRad(8);
+
+export type CollisionFixtureKind =
+  | 'shoreline'
+  | 'glancing'
+  | 'head-on';
 
 let rapierInitialization: Promise<typeof RAPIER> | null = null;
 
@@ -30,6 +42,9 @@ export interface RapierContactSummary {
   terrainContactCount: number;
   obstacleContactCount: number;
   debugProbeContactCount: number;
+  fixtureContactCount: number;
+  fixtureKind: CollisionFixtureKind | null;
+  maxObstacleHeadOnFactor: number;
   maxPenetrationM: number;
   maxTerrainImpactSpeedMps: number;
   maxObstacleImpactSpeedMps: number;
@@ -44,6 +59,9 @@ function createEmptySummary(): RapierContactSummary {
     terrainContactCount: 0,
     obstacleContactCount: 0,
     debugProbeContactCount: 0,
+    fixtureContactCount: 0,
+    fixtureKind: null,
+    maxObstacleHeadOnFactor: 0,
     maxPenetrationM: 0,
     maxTerrainImpactSpeedMps: 0,
     maxObstacleImpactSpeedMps: 0,
@@ -120,6 +138,8 @@ export class RapierCollisionWorld {
   private vesselType: VesselConfig['type'] | null = null;
   private debugProbeCollider: RAPIER.Collider | null = null;
   private debugProbeConsumed = false;
+  private calibrationFixtureCollider: RAPIER.Collider | null = null;
+  private calibrationFixtureKind: CollisionFixtureKind | null = null;
 
   private readonly normal = new Vector3();
   private readonly separation = new Vector3();
@@ -130,7 +150,11 @@ export class RapierCollisionWorld {
   private readonly correction = new Vector3();
   private readonly vesselCenterOfMass = new Vector3();
   private readonly debugProbePosition = new Vector3();
+  private readonly fixturePosition = new Vector3();
   private readonly forward = new Vector3();
+  private readonly right = new Vector3();
+  private readonly fixtureRotation = new Quaternion();
+  private readonly localFixtureRotation = new Quaternion();
 
   private constructor(private readonly rapier: typeof RAPIER) {
     this.world = new rapier.World({ x: 0, y: 0, z: 0 });
@@ -167,6 +191,7 @@ export class RapierCollisionWorld {
     deltaSeconds: number,
     obstacleData: Float32Array,
     debugProbeEnabled = false,
+    fixtureKind: CollisionFixtureKind | null = null,
   ): RapierContactSummary {
     this.ensureVessel(body, vessel);
     const vesselBody = this.vesselBody;
@@ -174,6 +199,7 @@ export class RapierCollisionWorld {
 
     this.syncObstacles(obstacleData);
     this.syncDebugProbe(body, vessel, debugProbeEnabled);
+    this.syncCalibrationFixture(body, vessel, fixtureKind);
 
     vesselBody.setNextKinematicTranslation({
       x: body.position.x,
@@ -227,8 +253,14 @@ export class RapierCollisionWorld {
             }
             if (penetrationM <= 0) return;
 
+            const isCalibrationFixture =
+              otherCollider.handle === this.calibrationFixtureCollider?.handle;
+            const fixtureIsTerrain =
+              isCalibrationFixture &&
+              this.calibrationFixtureKind === 'shoreline';
             const isTerrain =
-              otherCollider.handle === this.terrainCollider.handle;
+              otherCollider.handle === this.terrainCollider.handle ||
+              fixtureIsTerrain;
             const isDebugProbe =
               otherCollider.handle === this.debugProbeCollider?.handle;
 
@@ -314,6 +346,10 @@ export class RapierCollisionWorld {
             }
 
             summary.contactCount += 1;
+            if (isCalibrationFixture) {
+              summary.fixtureContactCount += 1;
+              summary.fixtureKind = this.calibrationFixtureKind;
+            }
             summary.maxPenetrationM = Math.max(
               summary.maxPenetrationM,
               penetrationM,
@@ -330,6 +366,14 @@ export class RapierCollisionWorld {
               );
             } else {
               summary.obstacleContactCount += 1;
+              this.forward
+                .set(0, 0, -1)
+                .applyQuaternion(body.quaternion)
+                .normalize();
+              summary.maxObstacleHeadOnFactor = Math.max(
+                summary.maxObstacleHeadOnFactor,
+                Math.abs(this.normal.dot(this.forward)),
+              );
               summary.maxObstacleImpactSpeedMps = Math.max(
                 summary.maxObstacleImpactSpeedMps,
                 impactSpeedMps,
@@ -369,6 +413,7 @@ export class RapierCollisionWorld {
       this.vesselColliderHandles.clear();
     }
     this.removeDebugProbe();
+    this.removeCalibrationFixture();
 
     this.vesselType = vessel.type;
     const bodyDescription = this.rapier.RigidBodyDesc.kinematicPositionBased()
@@ -473,6 +518,117 @@ export class RapierCollisionWorld {
         }
       }
     }
+  }
+
+  private syncCalibrationFixture(
+    body: SixDofBody,
+    vessel: VesselConfig,
+    fixtureKind: CollisionFixtureKind | null,
+  ) {
+    if (!fixtureKind) {
+      this.calibrationFixtureCollider?.setEnabled(false);
+      return;
+    }
+    if (
+      this.calibrationFixtureCollider &&
+      this.calibrationFixtureKind === fixtureKind
+    ) {
+      this.calibrationFixtureCollider.setEnabled(true);
+      return;
+    }
+
+    this.removeCalibrationFixture();
+    this.calibrationFixtureKind = fixtureKind;
+    this.forward
+      .set(0, 0, -1)
+      .applyQuaternion(body.quaternion)
+      .normalize();
+    this.right
+      .set(-1, 0, 0)
+      .applyQuaternion(body.quaternion)
+      .normalize();
+    this.fixtureRotation.copy(body.quaternion);
+
+    if (fixtureKind === 'shoreline') {
+      this.fixturePosition
+        .copy(body.position)
+        .addScaledVector(
+          this.forward,
+          vessel.halfLengthM + SHORE_HALF_DEPTH_M + 0.5,
+        );
+      this.fixturePosition.y = -1.4;
+      this.localFixtureRotation.setFromAxisAngle(
+        new Vector3(1, 0, 0),
+        SHORE_SLOPE_RAD,
+      );
+      this.fixtureRotation.multiply(this.localFixtureRotation).normalize();
+      this.calibrationFixtureCollider = this.world.createCollider(
+        this.rapier.ColliderDesc.roundCuboid(
+          SHORE_HALF_WIDTH_M,
+          SHORE_HALF_HEIGHT_M,
+          SHORE_HALF_DEPTH_M,
+          COLLIDER_BORDER_M,
+        )
+          .setTranslation(
+            this.fixturePosition.x,
+            this.fixturePosition.y,
+            this.fixturePosition.z,
+          )
+          .setRotation(this.fixtureRotation)
+          .setFriction(0.82)
+          .setRestitution(0.01)
+          .setContactSkin(CONTACT_SLOP_M)
+          .setActiveCollisionTypes(this.rapier.ActiveCollisionTypes.ALL),
+      );
+      return;
+    }
+
+    const glancing = fixtureKind === 'glancing';
+    this.fixturePosition
+      .copy(body.position)
+      .addScaledVector(
+        this.forward,
+        vessel.halfLengthM + 5.5,
+      );
+    this.fixturePosition.y = body.position.y - 0.05;
+    if (glancing) {
+      this.fixturePosition.addScaledVector(
+        this.right,
+        vessel.halfWidthM * 0.45,
+      );
+      this.localFixtureRotation.setFromAxisAngle(
+        new Vector3(0, 1, 0),
+        MathUtils.degToRad(50),
+      );
+      this.fixtureRotation.multiply(this.localFixtureRotation).normalize();
+    }
+
+    this.calibrationFixtureCollider = this.world.createCollider(
+      this.rapier.ColliderDesc.roundCuboid(
+        FIXTURE_WALL_HALF_WIDTH_M,
+        FIXTURE_WALL_HALF_HEIGHT_M,
+        FIXTURE_WALL_HALF_DEPTH_M,
+        COLLIDER_BORDER_M,
+      )
+        .setTranslation(
+          this.fixturePosition.x,
+          this.fixturePosition.y,
+          this.fixturePosition.z,
+        )
+        .setRotation(this.fixtureRotation)
+        .setFriction(glancing ? 0.24 : 0.32)
+        .setRestitution(glancing ? 0.08 : 0.025)
+        .setContactSkin(CONTACT_SLOP_M)
+        .setActiveCollisionTypes(this.rapier.ActiveCollisionTypes.ALL),
+    );
+  }
+
+  private removeCalibrationFixture() {
+    if (this.calibrationFixtureCollider) {
+      this.world.removeCollider(this.calibrationFixtureCollider, false);
+      this.calibrationFixtureCollider = null;
+    }
+    this.calibrationFixtureKind = null;
   }
 
   private syncDebugProbe(
