@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - scripts/apply-six-dof-body.mjs
+      - scripts/fix-six-dof-body.mjs
       - .github/workflows/apply-six-dof-body.yml
   workflow_dispatch:
 
@@ -43,7 +44,9 @@ jobs:
         run: npm ci
 
       - name: Apply six-degree body refactor
-        run: node scripts/apply-six-dof-body.mjs
+        run: |
+          node scripts/apply-six-dof-body.mjs
+          node scripts/fix-six-dof-body.mjs
 
       - name: Validate repository
         run: npm run validate
@@ -51,6 +54,7 @@ jobs:
       - name: Remove one-time migration tooling
         run: |
           rm -f scripts/apply-six-dof-body.mjs
+          rm -f scripts/fix-six-dof-body.mjs
           rm -f .github/workflows/apply-six-dof-body.yml
 
       - name: Commit validated body model
