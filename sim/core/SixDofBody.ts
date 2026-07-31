@@ -23,10 +23,12 @@ function quaternionIsFinite(value: Quaternion) {
 /**
  * Lightweight six-degree-of-freedom body used by the marine force model.
  *
- * The body keeps linear/angular velocity in world space, accumulates forces
- * and torques for one fixed simulation step, then integrates its transform.
- * Collision solving will move to Rapier in the following slice; keeping the
- * force model behind this small interface makes that replacement mechanical.
+ * Linear velocity is the world-space velocity of the center of mass. Angular
+ * velocity is stored in world space for point-velocity queries, while inertia
+ * and damping are evaluated in the vessel's principal body axes.
+ *
+ * Collision solving will move to Rapier in a later slice; keeping marine
+ * forces behind this interface makes that replacement mechanical.
  */
 export class SixDofBody extends Object3D {
   readonly linearVelocity = new Vector3();
@@ -40,10 +42,14 @@ export class SixDofBody extends Object3D {
   private readonly centerOfMassLocal = new Vector3();
 
   private readonly worldCenterOfMass = new Vector3();
+  private readonly centerOfMassOffsetWorld = new Vector3();
   private readonly leverArm = new Vector3();
   private readonly localTorque = new Vector3();
+  private readonly localAngularVelocity = new Vector3();
+  private readonly localAngularMomentum = new Vector3();
+  private readonly gyroscopicTorque = new Vector3();
   private readonly localAngularAcceleration = new Vector3();
-  private readonly worldAngularAcceleration = new Vector3();
+  private readonly worldAngularVelocity = new Vector3();
   private readonly inverseRotation = new Quaternion();
   private readonly deltaRotation = new Quaternion();
   private readonly rotationAxis = new Vector3();
@@ -121,62 +127,83 @@ export class SixDofBody extends Object3D {
     const dt = Math.max(0, deltaSeconds);
     if (dt <= 0) return;
 
+    // Integrate the center of mass, then reconstruct the model origin after
+    // rotation. This prevents an offset center of mass from orbiting around
+    // the visual origin when the vessel pitches or rolls.
+    this.getWorldCenterOfMass(this.worldCenterOfMass);
     this.linearVelocity.addScaledVector(
       this.accumulatedForce,
       this.inverseMass * dt,
     );
-    this.position.addScaledVector(this.linearVelocity, dt);
+    this.worldCenterOfMass.addScaledVector(this.linearVelocity, dt);
 
-    // Principal inertia is stored in body-local axes. Convert the accumulated
-    // world torque into that frame, apply inverse inertia, then transform the
-    // resulting angular acceleration back to world space.
+    // Euler's rigid-body equation in principal axes:
+    // I * angularAcceleration = torque - angularVelocity x (I * angularVelocity)
+    // The gyroscopic term matters once pitch, roll, and yaw are all active.
     this.inverseRotation.copy(this.quaternion).invert();
     this.localTorque
       .copy(this.accumulatedTorque)
       .applyQuaternion(this.inverseRotation);
+    this.localAngularVelocity
+      .copy(this.angularVelocity)
+      .applyQuaternion(this.inverseRotation);
+    this.localAngularMomentum.set(
+      this.localAngularVelocity.x * this.principalInertia.x,
+      this.localAngularVelocity.y * this.principalInertia.y,
+      this.localAngularVelocity.z * this.principalInertia.z,
+    );
+    this.gyroscopicTorque
+      .copy(this.localAngularVelocity)
+      .cross(this.localAngularMomentum);
+    this.localTorque.sub(this.gyroscopicTorque);
     this.localAngularAcceleration.set(
       this.localTorque.x * this.inversePrincipalInertia.x,
       this.localTorque.y * this.inversePrincipalInertia.y,
       this.localTorque.z * this.inversePrincipalInertia.z,
     );
-    this.worldAngularAcceleration
-      .copy(this.localAngularAcceleration)
-      .applyQuaternion(this.quaternion);
-    this.angularVelocity.addScaledVector(
-      this.worldAngularAcceleration,
+    this.localAngularVelocity.addScaledVector(
+      this.localAngularAcceleration,
       dt,
     );
-
-    this.angularVelocity.set(
-      this.angularVelocity.x * Math.exp(-this.angularDamping.x * dt),
-      this.angularVelocity.y * Math.exp(-this.angularDamping.y * dt),
-      this.angularVelocity.z * Math.exp(-this.angularDamping.z * dt),
+    this.localAngularVelocity.set(
+      this.localAngularVelocity.x * Math.exp(-this.angularDamping.x * dt),
+      this.localAngularVelocity.y * Math.exp(-this.angularDamping.y * dt),
+      this.localAngularVelocity.z * Math.exp(-this.angularDamping.z * dt),
     );
 
-    const angularSpeed = this.angularVelocity.length();
-    if (angularSpeed > MAX_ANGULAR_SPEED_RAD_PER_SECOND) {
-      this.angularVelocity.multiplyScalar(
-        MAX_ANGULAR_SPEED_RAD_PER_SECOND / angularSpeed,
+    let localAngularSpeed = this.localAngularVelocity.length();
+    if (localAngularSpeed > MAX_ANGULAR_SPEED_RAD_PER_SECOND) {
+      this.localAngularVelocity.multiplyScalar(
+        MAX_ANGULAR_SPEED_RAD_PER_SECOND / localAngularSpeed,
       );
+      localAngularSpeed = MAX_ANGULAR_SPEED_RAD_PER_SECOND;
     }
 
-    const boundedAngularSpeed = this.angularVelocity.length();
-    if (boundedAngularSpeed > EPSILON) {
+    this.worldAngularVelocity
+      .copy(this.localAngularVelocity)
+      .applyQuaternion(this.quaternion);
+    if (localAngularSpeed > EPSILON) {
       this.rotationAxis
-        .copy(this.angularVelocity)
-        .multiplyScalar(1 / boundedAngularSpeed);
+        .copy(this.worldAngularVelocity)
+        .multiplyScalar(1 / localAngularSpeed);
       this.deltaRotation.setFromAxisAngle(
         this.rotationAxis,
-        boundedAngularSpeed * dt,
+        localAngularSpeed * dt,
       );
-      // Angular velocity is world-space, so the incremental rotation is
-      // premultiplied.
       this.quaternion.premultiply(this.deltaRotation).normalize();
     }
 
-    // A single invalid force must not permanently poison every subsequent
-    // frame. Diagnostics still expose the recovered state so browser smoke can
-    // catch unexpected resets during development.
+    this.angularVelocity
+      .copy(this.localAngularVelocity)
+      .applyQuaternion(this.quaternion);
+    this.centerOfMassOffsetWorld
+      .copy(this.centerOfMassLocal)
+      .applyQuaternion(this.quaternion);
+    this.position
+      .copy(this.worldCenterOfMass)
+      .sub(this.centerOfMassOffsetWorld);
+
+    // A single invalid force must not permanently poison subsequent steps.
     if (!vectorIsFinite(this.linearVelocity)) {
       this.linearVelocity.set(0, 0, 0);
     }
