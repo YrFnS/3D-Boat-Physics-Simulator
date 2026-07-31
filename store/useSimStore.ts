@@ -12,6 +12,11 @@ export type RenderQuality = 'low' | 'medium' | 'high' | 'ultra';
 export type QualityMode = 'auto' | RenderQuality;
 export type SessionPhase = 'menu' | 'running' | 'paused';
 export type CameraMode = 'chase' | 'helm' | 'orbit' | 'cinematic';
+export type ScenarioRunStatus =
+  | 'inactive'
+  | 'active'
+  | 'completed'
+  | 'failed';
 
 export const CAMERA_MODES: readonly CameraMode[] = [
   'chase',
@@ -46,6 +51,32 @@ export interface ExperiencePreferences {
   hudVisible: boolean;
 }
 
+export interface ScenarioNavigationTelemetry {
+  elapsedSeconds: number;
+  progress: number;
+  distanceM: number;
+  bearingDeg: number;
+  relativeBearingDeg: number;
+  boatX: number;
+  boatZ: number;
+}
+
+export interface ScenarioResult {
+  outcome: 'completed' | 'failed';
+  reason: string;
+  elapsedSeconds: number;
+  score: number;
+  waypointsCompleted: number;
+  totalWaypoints: number;
+  hullHealth: number;
+  engineHealth: number;
+  rudderHealth: number;
+  collisionCount: number;
+  resetCount: number;
+  maximumSpeedKnots: number;
+  distanceTravelledM: number;
+}
+
 export const MAX_OBSTACLES = 250;
 
 function createEmptyKeys(): ControlState {
@@ -59,6 +90,24 @@ function createEmptyKeys(): ControlState {
     arrowdown: false,
     arrowleft: false,
     arrowright: false,
+  };
+}
+
+function createScenarioGameplayState(
+  scenarioRunStatus: ScenarioRunStatus,
+) {
+  return {
+    scenarioRunStatus,
+    activeWaypointIndex: 0,
+    scenarioElapsedSeconds: 0,
+    scenarioProgress: 0,
+    navigationDistanceM: 0,
+    navigationBearingDeg: 0,
+    navigationRelativeBearingDeg: 0,
+    navigationBoatX: 0,
+    navigationBoatZ: 0,
+    scenarioResult: null as ScenarioResult | null,
+    scenarioResetCount: 0,
   };
 }
 
@@ -126,6 +175,20 @@ export interface SimState {
   hudVisible: boolean;
   resetVesselTrigger: number;
 
+  // Scenario navigation and progression
+  scenarioRunStatus: ScenarioRunStatus;
+  scenarioRunId: number;
+  activeWaypointIndex: number;
+  scenarioElapsedSeconds: number;
+  scenarioProgress: number;
+  navigationDistanceM: number;
+  navigationBearingDeg: number;
+  navigationRelativeBearingDeg: number;
+  navigationBoatX: number;
+  navigationBoatZ: number;
+  scenarioResult: ScenarioResult | null;
+  scenarioResetCount: number;
+
   // Telemetry (updated by physics)
   speedKnots: number;
   heading: number;
@@ -185,6 +248,11 @@ export interface SimState {
   hydrateExperiencePreferences: (
     preferences: Partial<ExperiencePreferences>,
   ) => void;
+  setScenarioNavigation: (
+    telemetry: ScenarioNavigationTelemetry,
+  ) => void;
+  setActiveWaypointIndex: (index: number) => void;
+  finishScenario: (result: ScenarioResult) => void;
   resetVessel: () => void;
   instantRepairTrigger: number;
   fireInstantRepair: () => void;
@@ -215,6 +283,9 @@ export const useSimStore = create<SimState>((set, get) => ({
   hudVisible: true,
   resetVesselTrigger: 0,
 
+  ...createScenarioGameplayState('inactive'),
+  scenarioRunId: 0,
+
   ...resetTelemetry(),
 
   keys: createEmptyKeys(),
@@ -238,20 +309,23 @@ export const useSimStore = create<SimState>((set, get) => ({
   setEngineThrust: (engineThrust) =>
     set({ engineThrust: Math.max(-1, Math.min(1, engineThrust)) }),
   setActiveBoat: (activeBoat) =>
-    set((state) =>
-      state.activeBoat === activeBoat
-        ? {}
-        : {
-            activeBoat,
-            engineThrust: 0,
-            keys: createEmptyKeys(),
-            resetVesselTrigger:
-              state.sessionPhase === 'menu'
-                ? state.resetVesselTrigger
-                : state.resetVesselTrigger + 1,
-            ...resetTelemetry(),
-          },
-    ),
+    set((state) => {
+      if (state.activeBoat === activeBoat) return {};
+
+      if (state.sessionPhase === 'menu') {
+        return { activeBoat };
+      }
+
+      return {
+        activeBoat,
+        engineThrust: 0,
+        keys: createEmptyKeys(),
+        resetVesselTrigger: state.resetVesselTrigger + 1,
+        scenarioRunId: state.scenarioRunId + 1,
+        ...createScenarioGameplayState('active'),
+        ...resetTelemetry(),
+      };
+    }),
   setTelemetry: (
     speedKnots,
     heading,
@@ -300,6 +374,7 @@ export const useSimStore = create<SimState>((set, get) => ({
       currentDir: scenario.currentDir,
       targetTime: scenario.targetTime,
       targetSeason: scenario.targetSeason,
+      ...createScenarioGameplayState('inactive'),
     });
   },
   startScenario: (scenarioId, requestedBoat) => {
@@ -318,12 +393,15 @@ export const useSimStore = create<SimState>((set, get) => ({
       engineThrust: 0,
       keys: createEmptyKeys(),
       resetVesselTrigger: state.resetVesselTrigger + 1,
+      scenarioRunId: state.scenarioRunId + 1,
+      ...createScenarioGameplayState('active'),
       ...resetTelemetry(),
     }));
   },
   pauseSession: () =>
     set((state) =>
-      state.sessionPhase !== 'running'
+      state.sessionPhase !== 'running' ||
+      state.scenarioRunStatus !== 'active'
         ? {}
         : {
             sessionPhase: 'paused',
@@ -333,20 +411,29 @@ export const useSimStore = create<SimState>((set, get) => ({
     ),
   resumeSession: () =>
     set((state) =>
-      state.sessionPhase === 'paused' || state.sessionPhase === 'menu'
+      state.sessionPhase === 'paused' &&
+      state.scenarioRunStatus === 'active'
         ? { sessionPhase: 'running', keys: createEmptyKeys() }
-        : {},
+        : state.sessionPhase === 'menu'
+          ? { sessionPhase: 'running', keys: createEmptyKeys() }
+          : {},
     ),
   togglePause: () =>
     set((state) => {
-      if (state.sessionPhase === 'running') {
+      if (
+        state.sessionPhase === 'running' &&
+        state.scenarioRunStatus === 'active'
+      ) {
         return {
           sessionPhase: 'paused',
           engineThrust: 0,
           keys: createEmptyKeys(),
         };
       }
-      if (state.sessionPhase === 'paused') {
+      if (
+        state.sessionPhase === 'paused' &&
+        state.scenarioRunStatus === 'active'
+      ) {
         return { sessionPhase: 'running', keys: createEmptyKeys() };
       }
       return {};
@@ -365,6 +452,8 @@ export const useSimStore = create<SimState>((set, get) => ({
       engineThrust: 0,
       keys: createEmptyKeys(),
       resetVesselTrigger: state.resetVesselTrigger + 1,
+      scenarioRunId: state.scenarioRunId + 1,
+      ...createScenarioGameplayState('active'),
       ...resetTelemetry(),
     });
   },
@@ -373,6 +462,7 @@ export const useSimStore = create<SimState>((set, get) => ({
       sessionPhase: 'menu',
       engineThrust: 0,
       keys: createEmptyKeys(),
+      ...createScenarioGameplayState('inactive'),
     }),
   setCameraMode: (cameraMode) => set({ cameraMode }),
   cycleCameraMode: () =>
@@ -412,11 +502,37 @@ export const useSimStore = create<SimState>((set, get) => ({
         targetSeason: scenario.targetSeason,
       };
     }),
+  setScenarioNavigation: (telemetry) =>
+    set({
+      scenarioElapsedSeconds: telemetry.elapsedSeconds,
+      scenarioProgress: telemetry.progress,
+      navigationDistanceM: telemetry.distanceM,
+      navigationBearingDeg: telemetry.bearingDeg,
+      navigationRelativeBearingDeg: telemetry.relativeBearingDeg,
+      navigationBoatX: telemetry.boatX,
+      navigationBoatZ: telemetry.boatZ,
+    }),
+  setActiveWaypointIndex: (activeWaypointIndex) =>
+    set({ activeWaypointIndex }),
+  finishScenario: (scenarioResult) =>
+    set({
+      scenarioRunStatus: scenarioResult.outcome,
+      scenarioResult,
+      scenarioProgress:
+        scenarioResult.outcome === 'completed' ? 1 : get().scenarioProgress,
+      sessionPhase: 'paused',
+      engineThrust: 0,
+      keys: createEmptyKeys(),
+    }),
   resetVessel: () =>
     set((state) => ({
       engineThrust: 0,
       keys: createEmptyKeys(),
       resetVesselTrigger: state.resetVesselTrigger + 1,
+      scenarioResetCount:
+        state.scenarioRunStatus === 'active'
+          ? state.scenarioResetCount + 1
+          : state.scenarioResetCount,
       ...resetTelemetry(),
     })),
   fireInstantRepair: () =>
