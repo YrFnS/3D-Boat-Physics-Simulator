@@ -1,0 +1,307 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { chromium } from 'playwright';
+
+const baseUrl = process.env.SMOKE_BASE_URL ?? 'http://127.0.0.1:3000';
+const outputDirectory = path.resolve('artifacts/product-experience');
+await fs.mkdir(outputDirectory, { recursive: true });
+
+const browser = await chromium.launch({
+  headless: true,
+  args: [
+    '--enable-webgl',
+    '--enable-unsafe-swiftshader',
+    '--ignore-gpu-blocklist',
+    '--use-angle=swiftshader',
+  ],
+});
+
+const report = {
+  generatedAt: new Date().toISOString(),
+  baseUrl,
+  scenarios: [],
+};
+
+function readExperienceState(page) {
+  return page.evaluate(() => {
+    const dataset = document.documentElement.dataset;
+    return {
+      sessionPhase: dataset.simSessionPhase ?? '',
+      scenario: dataset.simScenario ?? '',
+      cameraMode: dataset.simCameraMode ?? '',
+      hudVisible: dataset.simHudVisible ?? '',
+      activeBoat: dataset.simActiveBoat ?? '',
+      resetVesselTrigger: Number(dataset.simResetVesselTrigger ?? '0'),
+    };
+  });
+}
+
+async function waitForDataset(page, key, value) {
+  await page.waitForFunction(
+    ({ datasetKey, expected }) =>
+      document.documentElement.dataset[datasetKey] === expected,
+    { datasetKey: key, expected: value },
+    { timeout: 60_000 },
+  );
+}
+
+async function readRuntime(page) {
+  return page.evaluate(() => {
+    const canvas = document.querySelector('canvas');
+    const bodyRect = document.body.getBoundingClientRect();
+    return {
+      title: document.title,
+      viewport: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      },
+      body: {
+        width: bodyRect.width,
+        height: bodyRect.height,
+      },
+      canvas: canvas
+        ? {
+            width: canvas.width,
+            height: canvas.height,
+            clientWidth: canvas.clientWidth,
+            clientHeight: canvas.clientHeight,
+          }
+        : null,
+      horizontalOverflow:
+        document.documentElement.scrollWidth > window.innerWidth + 1,
+      verticalOverflow:
+        document.documentElement.scrollHeight > window.innerHeight + 1,
+    };
+  });
+}
+
+function runtimeIsValid(runtime) {
+  return (
+    runtime.title === '3D Boat Physics Simulator' &&
+    runtime.canvas !== null &&
+    runtime.canvas.width > 0 &&
+    runtime.canvas.height > 0 &&
+    runtime.canvas.clientWidth === runtime.viewport.width &&
+    runtime.canvas.clientHeight === runtime.viewport.height &&
+    !runtime.horizontalOverflow &&
+    !runtime.verticalOverflow
+  );
+}
+
+async function runFlow(name, contextOptions, flow) {
+  const context = await browser.newContext(contextOptions);
+  const page = await context.newPage();
+  const consoleEntries = [];
+  const pageErrors = [];
+  const failedRequests = [];
+  const checks = {};
+
+  page.on('console', (message) => {
+    consoleEntries.push({ type: message.type(), text: message.text() });
+  });
+  page.on('pageerror', (error) => {
+    pageErrors.push(error.stack ?? error.message);
+  });
+  page.on('requestfailed', (request) => {
+    failedRequests.push({
+      url: request.url(),
+      error: request.failure()?.errorText ?? 'unknown request failure',
+    });
+  });
+
+  let responseStatus = null;
+  let runtime = null;
+  let experience = null;
+  let flowError = null;
+
+  try {
+    const response = await page.goto(baseUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: 60_000,
+    });
+    responseStatus = response?.status() ?? null;
+
+    await page.waitForSelector('canvas', { timeout: 60_000 });
+    await waitForDataset(page, 'simSessionPhase', 'menu');
+    await page.getByRole('heading', { name: 'Choose your passage.' }).waitFor();
+
+    checks.briefingVisible = true;
+    checks.scenarioCardsVisible =
+      (await page.locator('button').filter({ hasText: 'Open Water' }).count()) > 0 &&
+      (await page.locator('button').filter({ hasText: 'Harbor Training' }).count()) > 0 &&
+      (await page.locator('button').filter({ hasText: 'Storm Passage' }).count()) > 0 &&
+      (await page.locator('button').filter({ hasText: 'Winter Rescue' }).count()) > 0;
+
+    await flow({ page, checks });
+
+    runtime = await readRuntime(page);
+    experience = await readExperienceState(page);
+    await page.screenshot({
+      path: path.join(outputDirectory, `${name}.png`),
+      fullPage: false,
+    });
+  } catch (error) {
+    flowError = error instanceof Error ? error.stack ?? error.message : String(error);
+  }
+
+  const severeConsoleEntries = consoleEntries.filter((entry) =>
+    ['error', 'assert'].includes(entry.type),
+  );
+  const passed =
+    flowError === null &&
+    responseStatus === 200 &&
+    runtime !== null &&
+    runtimeIsValid(runtime) &&
+    Object.values(checks).every(Boolean) &&
+    pageErrors.length === 0 &&
+    severeConsoleEntries.length === 0 &&
+    failedRequests.length === 0;
+
+  report.scenarios.push({
+    name,
+    responseStatus,
+    runtime,
+    experience,
+    checks,
+    consoleEntries,
+    pageErrors,
+    failedRequests,
+    flowError,
+    screenshot: `${name}.png`,
+    passed,
+  });
+
+  await context.close();
+  return passed;
+}
+
+let allPassed = true;
+
+allPassed =
+  (await runFlow(
+    'desktop-product-flow',
+    {
+      viewport: { width: 1440, height: 900 },
+      deviceScaleFactor: 1,
+      isMobile: false,
+      hasTouch: false,
+    },
+    async ({ page, checks }) => {
+      await page.locator('button').filter({ hasText: 'Storm Passage' }).first().click();
+      await waitForDataset(page, 'simScenario', 'storm-passage');
+      checks.scenarioSelection = true;
+
+      await page.getByRole('button', { name: /speedboat/i }).first().click();
+      await waitForDataset(page, 'simActiveBoat', 'speedboat');
+      checks.vesselSelection = true;
+
+      await page.getByRole('button', { name: /Begin passage/i }).click();
+      await waitForDataset(page, 'simSessionPhase', 'running');
+      checks.launch = true;
+
+      const launched = await readExperienceState(page);
+      await page.keyboard.press('c');
+      await waitForDataset(page, 'simCameraMode', 'helm');
+      checks.cameraCycle = true;
+
+      await page.keyboard.press('h');
+      await waitForDataset(page, 'simHudVisible', '0');
+      await page.keyboard.press('h');
+      await waitForDataset(page, 'simHudVisible', '1');
+      checks.hudToggle = true;
+
+      await page.keyboard.press('Home');
+      await page.waitForFunction(
+        (previousReset) =>
+          Number(document.documentElement.dataset.simResetVesselTrigger ?? '0') >
+          previousReset,
+        launched.resetVesselTrigger,
+        { timeout: 60_000 },
+      );
+      const afterReset = await readExperienceState(page);
+      checks.vesselReset = true;
+
+      await page.keyboard.press('Escape');
+      await waitForDataset(page, 'simSessionPhase', 'paused');
+      await page.getByRole('heading', { name: 'Storm Passage' }).waitFor();
+      checks.pause = true;
+
+      await page.getByRole('button', { name: /Resume passage/i }).click();
+      await waitForDataset(page, 'simSessionPhase', 'running');
+      checks.resume = true;
+
+      await page.keyboard.press('Escape');
+      await waitForDataset(page, 'simSessionPhase', 'paused');
+      await page.getByRole('button', { name: /Restart scenario/i }).click();
+      await waitForDataset(page, 'simSessionPhase', 'running');
+      await page.waitForFunction(
+        (previousReset) =>
+          Number(document.documentElement.dataset.simResetVesselTrigger ?? '0') >
+          previousReset,
+        afterReset.resetVesselTrigger,
+        { timeout: 60_000 },
+      );
+      checks.restart = true;
+
+      await page.keyboard.press('Escape');
+      await waitForDataset(page, 'simSessionPhase', 'paused');
+      await page.getByRole('button', { name: /Return to briefing/i }).click();
+      await waitForDataset(page, 'simSessionPhase', 'menu');
+      checks.returnToBriefing = true;
+
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await waitForDataset(page, 'simSessionPhase', 'menu');
+      const restored = await readExperienceState(page);
+      checks.preferencePersistence =
+        restored.scenario === 'storm-passage' &&
+        restored.activeBoat === 'speedboat' &&
+        restored.cameraMode === 'helm' &&
+        restored.hudVisible === '1';
+    },
+  )) && allPassed;
+
+allPassed =
+  (await runFlow(
+    'mobile-product-flow',
+    {
+      viewport: { width: 390, height: 844 },
+      deviceScaleFactor: 1,
+      isMobile: true,
+      hasTouch: true,
+    },
+    async ({ page, checks }) => {
+      await page.getByRole('button', { name: /Begin passage/i }).click();
+      await waitForDataset(page, 'simSessionPhase', 'running');
+      checks.launch = true;
+
+      await page.getByRole('button', { name: 'Pause simulation' }).click();
+      await waitForDataset(page, 'simSessionPhase', 'paused');
+      checks.mobilePause = true;
+
+      await page.getByRole('button', { name: /Resume passage/i }).click();
+      await waitForDataset(page, 'simSessionPhase', 'running');
+      checks.mobileResume = true;
+
+      await page.getByRole('button', { name: 'Hide instrument HUD' }).click();
+      await waitForDataset(page, 'simHudVisible', '0');
+      await page.getByRole('button', { name: 'Show instrument HUD' }).click();
+      await waitForDataset(page, 'simHudVisible', '1');
+      checks.mobileHudToggle = true;
+
+      checks.mobileTouchControls =
+        (await page.getByRole('button', { name: 'Throttle forward' }).count()) > 0 &&
+        (await page.getByRole('button', { name: 'Throttle reverse' }).count()) > 0 &&
+        (await page.getByRole('button', { name: 'Steer left' }).count()) > 0 &&
+        (await page.getByRole('button', { name: 'Steer right' }).count()) > 0;
+    },
+  )) && allPassed;
+
+await browser.close();
+await fs.writeFile(
+  path.join(outputDirectory, 'report.json'),
+  `${JSON.stringify(report, null, 2)}\n`,
+  'utf8',
+);
+
+console.log(JSON.stringify(report, null, 2));
+if (!allPassed) process.exitCode = 1;
