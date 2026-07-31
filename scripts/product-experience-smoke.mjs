@@ -45,6 +45,23 @@ async function waitForDataset(page, key, value) {
   );
 }
 
+async function waitForCanvasReady(page) {
+  await page.waitForFunction(
+    () => {
+      const canvas = document.querySelector('canvas');
+      return (
+        canvas instanceof HTMLCanvasElement &&
+        canvas.clientWidth === window.innerWidth &&
+        canvas.clientHeight === window.innerHeight &&
+        canvas.width > 0 &&
+        canvas.height > 0
+      );
+    },
+    undefined,
+    { timeout: 60_000 },
+  );
+}
+
 async function readRuntime(page) {
   return page.evaluate(() => {
     const canvas = document.querySelector('canvas');
@@ -122,6 +139,7 @@ async function runFlow(name, contextOptions, flow) {
     responseStatus = response?.status() ?? null;
 
     await page.waitForSelector('canvas', { timeout: 60_000 });
+    await waitForCanvasReady(page);
     await waitForDataset(page, 'simSessionPhase', 'menu');
     await page.getByRole('heading', { name: 'Choose your passage.' }).waitFor();
 
@@ -133,6 +151,7 @@ async function runFlow(name, contextOptions, flow) {
       (await page.locator('button').filter({ hasText: 'Winter Rescue' }).count()) > 0;
 
     await flow({ page, checks });
+    await waitForCanvasReady(page);
 
     runtime = await readRuntime(page);
     experience = await readExperienceState(page);
@@ -250,6 +269,8 @@ allPassed =
       checks.returnToBriefing = true;
 
       await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('canvas', { timeout: 60_000 });
+      await waitForCanvasReady(page);
       await waitForDataset(page, 'simSessionPhase', 'menu');
       const restored = await readExperienceState(page);
       checks.preferencePersistence =
