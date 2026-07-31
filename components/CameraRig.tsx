@@ -70,14 +70,17 @@ function CameraDriver({ mode }: CameraDriverProps) {
       scratch.desiredLookAt.y += activeBoat === 'speedboat' ? 1.1 : 1.7;
       camera.up.lerp(scratch.worldUp, response).normalize();
     } else if (mode === 'helm') {
+      // The procedural trawler cabin is a solid mesh. Keep its helm camera
+      // just ahead of the windshield and roof overhang so the player sees the
+      // bow and horizon instead of the underside of the cabin roof.
       const helmPosition =
         activeBoat === 'speedboat'
           ? scratch.localPosition.set(0, 1.28, -0.45)
-          : scratch.localPosition.set(0, 2.35, 0.25);
+          : scratch.localPosition.set(0, 2.35, -1.15);
       const helmLookAt =
         activeBoat === 'speedboat'
           ? scratch.localLookAt.set(0, 1.05, -24)
-          : scratch.localLookAt.set(0, 2.05, -30);
+          : scratch.localLookAt.set(0, 1.5, -30);
 
       scratch.desiredPosition
         .copy(helmPosition)
