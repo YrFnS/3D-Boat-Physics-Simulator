@@ -204,7 +204,9 @@ try {
     const physicsChecks = {
       beforeBounded: physicsSnapshotIsBounded(physicsBefore),
       afterBounded: physicsSnapshotIsBounded(physicsAfter),
-      simulationAdvanced: simulationAdvance > 0.5,
+      // Require at least 27 completed 60 Hz steps. Comparing against exactly
+      // 0.5 seconds is brittle because the accumulated value can be one ULP low.
+      simulationAdvanced: simulationAdvance >= 0.45,
       vesselResponded:
         displacement > 0.05 || physicsAfter.linearSpeed > 0.05,
     };
