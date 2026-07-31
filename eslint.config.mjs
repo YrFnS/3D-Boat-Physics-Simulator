@@ -17,6 +17,8 @@ const imperativeThreeFiles = [
   'components/boat/useBoatVisualDamage.ts',
 ];
 
+// Keep the checks this project relies on without pulling in the legacy
+// React/import/accessibility plugin bundle from eslint-config-next.
 export default defineConfig([
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -35,7 +37,7 @@ export default defineConfig([
       },
       parserOptions: {
         ecmaFeatures: {
-jsx: true,
+          jsx: true,
         },
       },
     },
