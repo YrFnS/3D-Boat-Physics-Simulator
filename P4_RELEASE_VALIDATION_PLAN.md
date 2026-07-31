@@ -10,7 +10,7 @@ Phase 4 turns the merged simulator into a defensible release candidate. It does 
 - [x] Validate held touch controls and responsive layout in a mobile Chromium profile.
 - [x] Reject page errors, severe console messages, failed requests, unexpected external HTTP requests, and viewport overflow.
 - [x] Add accessible-name, dialog-label, and duplicate-ID checks for tested product states.
-- [x] Add central-viewport screenshot entropy, deviation, and dynamic-range checks to reject blank or uniform 3D output.
+- [x] Add central-viewport screenshot entropy, deviation, dynamic-range, and dominant-color checks to reject blank, uniform, or camera-obstructed 3D output.
 
 ## P4.2 — Simulation consistency
 
@@ -42,15 +42,18 @@ Phase 4 turns the merged simulator into a defensible release candidate. It does 
 ## P4.5 — Release closeout
 
 - [x] Resolve the Firefox Linux CI WebGL issue by running headed Firefox under Xvfb while keeping the same product and calibration assertions.
+- [x] Remove the obsolete camera tracker from `Boat.tsx` so `CameraRig.tsx` is the sole camera authority.
 - [x] Add a concise release checklist and physical-hardware benchmark matrix.
-- [ ] Update the README from Phase 3 language to release-candidate status.
+- [x] Update the README from Phase 3 language to release-candidate status.
 - [ ] Review the generated Phase 4 artifact on the exact final PR head.
 - [ ] Set the release version only after the physical-device gate is reviewed.
 - [ ] Merge the Phase 4 PR and create the first stable tag/release.
 
 ## Current automated result
 
-The permanent release matrix currently passes all three desktop engines, four cross-engine calibration comparisons, mobile touch, WebGL recovery, corrupted-storage recovery, and every expected screenshot-integrity check. Headless FPS is retained only as diagnostic data; it is not used as a physical-GPU performance claim.
+The permanent release matrix covers all three desktop engines, four cross-engine calibration comparisons, mobile touch, WebGL recovery, corrupted-storage recovery, source validation, deterministic physics calibration, product flows, and screenshot-integrity checks. Headless FPS is retained only as diagnostic data; it is not used as a physical-GPU performance claim.
+
+The final source layout has one camera owner: `CameraRig.tsx`. `Boat.tsx` now publishes vessel state and updates vessel visuals/audio without moving the active camera or OrbitControls target.
 
 ## Exit criteria
 
