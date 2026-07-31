@@ -2,7 +2,7 @@
 
 An interactive browser-based marine simulation built with Next.js, React Three Fiber, Three.js, and Rapier. The project combines procedural water, severe weather, calibrated six-degree vessel handling, route-based missions, free navigation, damage, recovery, and a responsive instrument suite in a local-first web application.
 
-> **Project status:** release candidate. The rendering and performance foundation, calibrated six-degree vessel physics, Rapier contacts, mission gameplay, navigation, onboarding, accessibility, and product settings are complete. Automated Phase 4 validation covers Chromium, Firefox, WebKit, mobile touch, deterministic calibration, runtime recovery, screenshot integrity, and the production build. Representative physical-GPU and touch-device benchmarks remain the final manual sign-off before the first stable tag.
+> **Project status:** release candidate. The rendering and performance foundation, calibrated six-degree vessel physics, Rapier contacts, mission gameplay, navigation, onboarding, accessibility, and product settings are complete. Automated Phase 4 validation covers Chromium, Firefox, WebKit, mobile touch, deterministic calibration, runtime recovery, screenshot integrity, the physical-benchmark export path, and the production build. Representative physical-GPU and touch-device measurements remain the final manual sign-off before the first stable tag.
 
 ## Features
 
@@ -26,7 +26,7 @@ An interactive browser-based marine simulation built with Next.js, React Three F
 - Procedural islands, seasonal terrain, navigation buoys, ice, a whirlpool, and weather-gated tornado hazards.
 - Adaptive Low, Medium, High, and Ultra quality tiers covering ocean, terrain, weather, wake, and shadow budgets.
 - Recoverable WebGL context handling and unsupported-device guidance.
-- Optional FPS, draw-call, triangle, and Calm/Storm benchmark diagnostics.
+- Optional FPS, draw-call, triangle, quick diagnostic, and physical-release benchmark tools.
 
 ### Product and gameplay
 
@@ -131,9 +131,10 @@ This runs lint, TypeScript checking, the production build, and the full dependen
 - Chromium, Firefox, and WebKit production-browser validation;
 - cross-engine deterministic metric comparison;
 - WebGL unsupported/context-loss and corrupted-storage recovery;
-- screenshot entropy, variation, dynamic-range, and dominant-color checks that reject blank or camera-obstructed 3D output.
+- screenshot entropy, variation, dynamic-range, and dominant-color checks that reject blank or camera-obstructed 3D output;
+- a production smoke of the physical-device benchmark, metadata capture, and JSON export path.
 
-Software-rendered CI FPS is retained only as diagnostic data. Use the Calm and Storm benchmark panel on real hardware for release performance decisions.
+Software-rendered CI FPS is retained only as diagnostic data. Use the dedicated physical benchmark mode on real hardware for release performance decisions.
 
 ## Controls
 
@@ -153,13 +154,24 @@ Software-rendered CI FPS is retained only as diagnostic data. Use the Calm and S
 
 The quality selector is available in production and its selection is remembered. Auto mode chooses a conservative initial tier from the device profile, then adapts using measured rendering performance.
 
-Append `?debug=1` to enable FPS metrics and Calm/Storm benchmark controls. Append `?debug=0` to clear the remembered debug preference.
+Append `?debug=1` to enable FPS metrics and short Calm/Storm diagnostic controls. Append `?debug=0` to clear the remembered debug preference.
 
-The browser suites validate held keyboard and touch input, finite and bounded vessel state, Rapier contact response, responsive layouts, launch/session actions, navigation values, mission outcomes, onboarding, settings persistence, free-route plotting, checkpoint recovery, scenario-record persistence, and cross-browser camera presentation.
+Append `?benchmark=1` to enter the responsive physical-release harness. Each Calm or Storm run performs a 10-second warmup followed by a 30-second measurement while recording:
+
+- average, minimum, and fifth-percentile FPS;
+- average and maximum frame time;
+- draw calls and triangle count;
+- manual or Auto quality behavior and quality changes;
+- first-half versus second-half FPS drift;
+- browser, operating system, WebGL GPU renderer, CPU concurrency, reported memory, touch capability, viewport, DPR, and orientation.
+
+A hidden tab invalidates the run. A second-half FPS drop of 15% or more is flagged for thermal or power-mode review. The latest 24 results are kept locally and can be exported as JSON or copied directly as Markdown rows for `RELEASE_CHECKLIST.md`.
+
+The browser suites validate held keyboard and touch input, finite and bounded vessel state, Rapier contact response, responsive layouts, launch/session actions, navigation values, mission outcomes, onboarding, settings persistence, free-route plotting, checkpoint recovery, scenario-record persistence, cross-browser camera presentation, and the physical benchmark export flow.
 
 ## Release candidate status
 
-The automated release gate is designed to reject source, runtime, layout, accessibility, physics, calibration, recovery, and obvious 3D-rendering regressions before merge.
+The automated release gate is designed to reject source, runtime, layout, accessibility, physics, calibration, recovery, benchmark-harness, and obvious 3D-rendering regressions before merge.
 
 The remaining manual sign-off is tracked in `RELEASE_CHECKLIST.md`:
 
@@ -171,12 +183,12 @@ The remaining manual sign-off is tracked in `RELEASE_CHECKLIST.md`:
 
 Deferred optional product expansion includes remappable keyboard controls, configurable touch layout/sensitivity, full gamepad mapping and vibration, independent audio-channel controls, configurable HUD modules, and additional river/harbor content. These are not blockers for the current agreed release scope.
 
-The Vercel integration may report a deployment-rate-limit failure when the linked account exceeds its daily build quota. Repository-owned production builds and browser workflows are the source-code validation authority.
+Deployment-provider quotas are tracked separately from source-code validation. Repository-owned production builds and browser workflows remain the validation authority.
 
 ## Project structure
 
 - `app/`: App Router entry point and global styles
-- `components/`: simulation rendering, product shell, HUD, mission systems, weather, wake, camera, recovery, and diagnostics
+- `components/`: simulation rendering, product shell, HUD, mission systems, weather, wake, camera, recovery, benchmark, and diagnostics
 - `components/boat/`: vessel audio and visual-damage subsystems
 - `sim/core/`: fixed-step timing, deterministic randomness, six-degree integration, and safe body spawning
 - `sim/vessels/`: typed vessel configuration and distributed marine-force models
@@ -184,7 +196,7 @@ The Vercel integration may report a deployment-rate-limit failure when the linke
 - `sim/scenarios/`: mission definitions plus route/entity/checkpoint water-safety resolution
 - `lib/`: deterministic terrain and water helpers
 - `store/`: simulation controls, product settings, navigation planning, records, telemetry, and shared high-frequency values
-- `scripts/`: smoke, gameplay, onboarding/settings, calibration, cross-browser release, and screenshot-integrity probes
+- `scripts/`: smoke, gameplay, onboarding/settings, calibration, cross-browser release, screenshot-integrity, and physical-benchmark probes
 - `.github/workflows/`: source validation, production-browser testing, physics calibration, product flows, and release validation
 
 ## License
