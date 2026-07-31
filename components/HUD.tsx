@@ -248,9 +248,21 @@ function holdKey(
   active: boolean,
 ) {
   event.preventDefault();
-  if (active) {
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+  const target = event.currentTarget;
+
+  try {
+    if (active) {
+      if (!target.hasPointerCapture?.(event.pointerId)) {
+        target.setPointerCapture?.(event.pointerId);
+      }
+    } else if (target.hasPointerCapture?.(event.pointerId)) {
+      target.releasePointerCapture?.(event.pointerId);
+    }
+  } catch {
+    // Synthetic pointer events and interrupted touch streams may no
+    // longer own an active pointer. Key state must still be updated.
   }
+
   useSimStore.getState().setKey(key, active);
 }
 
