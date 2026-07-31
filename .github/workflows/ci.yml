@@ -6,11 +6,9 @@ on:
       - agent/phase-2-fixed-timestep-physics
     paths:
       - .github/workflows/ci.yml
-      - scripts/run-vessel-calibration-patched.mjs
   pull_request:
     paths:
       - .github/workflows/ci.yml
-      - scripts/run-vessel-calibration-patched.mjs
 
 permissions:
   contents: write
@@ -24,7 +22,7 @@ env:
 
 jobs:
   apply:
-    name: Apply, validate, and commit calibration suite
+    name: Apply, validate, and push calibration code
     if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -45,67 +43,6 @@ jobs:
       - name: Apply guarded calibration integration
         run: node scripts/run-vessel-calibration-patched.mjs
 
-      - name: Remove one-time integration tooling
-        run: |
-          rm -f scripts/apply-vessel-calibration.mjs
-          rm -f scripts/run-vessel-calibration-patched.mjs
-          rm -f .github/workflows/apply-vessel-calibration.yml
-
-      - name: Restore permanent read-only CI
-        shell: bash
-        run: |
-          cat > .github/workflows/ci.yml <<'YAML'
-          name: CI
-
-          on:
-            push:
-              branches:
-                - main
-                - 'agent/**'
-            pull_request:
-
-          permissions:
-            contents: read
-
-          concurrency:
-            group: ci-${{ github.workflow }}-${{ github.ref }}
-            cancel-in-progress: true
-
-          env:
-            NEXT_TELEMETRY_DISABLED: 1
-
-          jobs:
-            validate:
-              name: Lint, typecheck, build, and full audit
-              runs-on: ubuntu-latest
-              timeout-minutes: 20
-
-              steps:
-                - name: Check out repository
-                  uses: actions/checkout@v4
-
-                - name: Set up Node.js
-                  uses: actions/setup-node@v4
-                  with:
-                    node-version: 22
-                    cache: npm
-
-                - name: Install dependencies
-                  run: npm ci
-
-                - name: Lint
-                  run: npm run lint
-
-                - name: Typecheck
-                  run: npm run typecheck
-
-                - name: Build application
-                  run: npm run build
-
-                - name: Reject dependency advisories
-                  run: npm run audit
-          YAML
-
       - name: Check calibration runner syntax
         run: node --check scripts/physics-calibration.mjs
 
@@ -115,14 +52,19 @@ jobs:
       - name: Validate repository
         run: npm run validate
 
-      - name: Commit validated calibration suite
+      - name: Commit validated non-workflow calibration code
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add \
+            components/Boat.tsx \
+            components/PerformanceTelemetry.tsx \
+            store/useSimStore.ts \
+            sim/calibration/VesselCalibration.ts \
+            scripts/physics-calibration.mjs
           if git diff --cached --quiet; then
-            echo "No calibration changes to commit."
+            echo "No calibration code changes to commit."
             exit 0
           fi
           git commit -m "test: add deterministic vessel calibration"
