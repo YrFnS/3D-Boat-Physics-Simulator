@@ -11,7 +11,7 @@ This document tracks the work required to turn the calibrated marine simulation 
 - [x] Add running, paused, and briefing session states.
 - [x] Add pause, resume, restart, reset-vessel, and return-to-briefing actions.
 - [x] Add chase, helm, orbit, and cinematic camera modes.
-- [x] Add keyboard shortcuts for pause, camera cycling, and vessel reset.
+- [x] Add keyboard shortcuts for pause, camera cycling, vessel reset, HUD visibility, settings, and fullscreen.
 - [x] Preserve calibration, smoke-test, benchmark, and debug automation entry points.
 - [x] Add persistent vessel, scenario, camera, and HUD preferences.
 - [x] Add HUD visibility and fullscreen controls.
@@ -36,19 +36,30 @@ This document tracks the work required to turn the calibrated marine simulation 
 - [ ] Add gamepad detection, mapping, dead zones, and vibration feedback where supported.
 - [ ] Add remappable keyboard controls.
 - [ ] Add adjustable touch-control size, placement, and steering sensitivity.
-- [ ] Add camera sensitivity, field-of-view, and motion-smoothing settings.
+- [x] Add camera field-of-view and follow-smoothing settings.
 - [ ] Add independent master, engine, water, weather, and interface volume controls.
-- [ ] Persist control, camera, audio, accessibility, and scenario preferences.
+- [x] Persist camera, interface, accessibility, onboarding, and control-hint preferences.
+- [x] Add a settings overlay that safely pauses and resumes an active simulation.
+- [x] Add a reset-to-defaults action without clearing completed onboarding state.
 
 ## P3.4 — Onboarding, accessibility, and polish
 
-- [ ] Add a short interactive first-launch tutorial.
-- [ ] Add contextual control hints that adapt to keyboard, touch, and gamepad input.
-- [ ] Add reduced-motion, high-contrast, and larger-interface options.
-- [ ] Add a collapsible desktop HUD and refined tablet/phone layouts.
-- [ ] Add loading progress, recoverable WebGL errors, and unsupported-device guidance.
+- [x] Add a short interactive first-launch tutorial.
+- [x] Add contextual control hints that adapt to keyboard and touch input.
+- [x] Add reduced-motion, high-contrast, and larger-interface options.
+- [x] Add a collapsible HUD and refined responsive desktop/tablet/phone layouts.
+- [x] Add loading progress, recoverable WebGL-context handling, and unsupported-device guidance.
+- [x] Allow software and integrated WebGL renderers instead of rejecting performance-caveat devices.
 - [ ] Add camera transitions, scenario introductions, completion moments, and refined sound cues.
 - [ ] Run final product-level browser, mobile, integrated-GPU, and real-device review before Phase 4.
+
+## Permanent validation
+
+- [x] Validate desktop launch, navigation, camera, HUD, pause, reset, restart, and preference persistence.
+- [x] Validate mobile navigation, pause/resume, HUD behavior, and touch controls.
+- [x] Validate mission-completion and mission-failure result flows.
+- [x] Validate first-run onboarding, guide replay, settings application, and settings persistence.
+- [x] Preserve the deterministic vessel calibration and Rapier contact suites.
 
 ## Phase 3 exit criteria
 
