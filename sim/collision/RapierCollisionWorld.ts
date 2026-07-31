@@ -11,8 +11,10 @@ const CONTACT_SLOP_M = 0.012;
 const MAX_POSITION_CORRECTION_M = 0.16;
 const MAX_TOTAL_CORRECTION_M = 0.42;
 const COLLIDER_BORDER_M = 0.08;
-const DEBUG_PROBE_RADIUS_M = 0.65;
-const DEBUG_PROBE_GAP_M = 0.12;
+const DEBUG_PROBE_HALF_WIDTH_M = 3.5;
+const DEBUG_PROBE_HALF_HEIGHT_M = 1.5;
+const DEBUG_PROBE_HALF_DEPTH_M = 0.24;
+const DEBUG_PROBE_GAP_M = 0.03;
 
 let rapierInitialization: Promise<typeof RAPIER> | null = null;
 
@@ -126,7 +128,6 @@ export class RapierCollisionWorld {
   private readonly impulse = new Vector3();
   private readonly tangent = new Vector3();
   private readonly correction = new Vector3();
-  private readonly otherPosition = new Vector3();
   private readonly vesselCenterOfMass = new Vector3();
   private readonly debugProbePosition = new Vector3();
   private readonly forward = new Vector3();
@@ -346,7 +347,11 @@ export class RapierCollisionWorld {
 
     summary.totalPositionCorrectionM = totalCorrectionM;
 
-    if (summary.debugProbeContactCount > 0 && this.debugProbeCollider) {
+    if (
+      summary.debugProbeContactCount > 0 &&
+      summary.maxObstacleImpulseNs > 0 &&
+      this.debugProbeCollider
+    ) {
       this.debugProbeCollider.setEnabled(false);
       this.debugProbeConsumed = true;
     }
@@ -493,20 +498,41 @@ export class RapierCollisionWorld {
       .copy(body.position)
       .addScaledVector(
         this.forward,
-        vessel.halfLengthM + DEBUG_PROBE_RADIUS_M + DEBUG_PROBE_GAP_M,
+        vessel.halfLengthM +
+          DEBUG_PROBE_HALF_DEPTH_M +
+          COLLIDER_BORDER_M +
+          DEBUG_PROBE_GAP_M,
       );
     this.debugProbePosition.y -= Math.min(
       0.15,
       vessel.deepestDraftM * 0.25,
     );
 
+    // A short wall is intentionally used instead of a small sphere. The
+    // headless browser can advance fewer fixed steps while the simulated wind
+    // creates lateral drift, so the wall verifies a real Rapier manifold
+    // without coupling the test to one exact trajectory.
     this.debugProbeCollider = this.world.createCollider(
-      this.rapier.ColliderDesc.ball(DEBUG_PROBE_RADIUS_M)
+      this.rapier.ColliderDesc.roundCuboid(
+        DEBUG_PROBE_HALF_WIDTH_M,
+        DEBUG_PROBE_HALF_HEIGHT_M,
+        DEBUG_PROBE_HALF_DEPTH_M,
+        Math.min(
+          COLLIDER_BORDER_M,
+          DEBUG_PROBE_HALF_DEPTH_M * 0.35,
+        ),
+      )
         .setTranslation(
           this.debugProbePosition.x,
           this.debugProbePosition.y,
           this.debugProbePosition.z,
         )
+        .setRotation({
+          x: body.quaternion.x,
+          y: body.quaternion.y,
+          z: body.quaternion.z,
+          w: body.quaternion.w,
+        })
         .setFriction(0.18)
         .setRestitution(0.06)
         .setContactSkin(CONTACT_SLOP_M)
