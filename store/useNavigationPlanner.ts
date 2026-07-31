@@ -7,6 +7,7 @@ export type FreeNavigationStatus = 'idle' | 'active' | 'completed';
 export interface FreeNavigationWaypoint {
   id: string;
   label: string;
+  guidance: string;
   x: number;
   z: number;
   sourceX: number;
@@ -87,6 +88,7 @@ export const useNavigationPlanner = create<NavigationPlannerState>((set) => ({
       const waypoint: FreeNavigationWaypoint = {
         id: `free-waypoint-${index + 1}`,
         label: `Plotted mark ${index + 1}`,
+        guidance: 'Follow the amber bearing to the plotted safe-water mark.',
         radiusM: 20,
         ...resolved,
       };
