@@ -278,7 +278,9 @@ try {
               physicsAfter.collision.obstacleSequence >
               physicsBefore.collision.obstacleSequence,
             contactImpulseRecorded: physicsAfter.collision.maxImpulse > 0,
-            penetrationRecorded: physicsAfter.collision.maxPenetration > 0,
+            residualPenetrationBounded:
+              physicsAfter.collision.maxPenetration >= 0 &&
+              physicsAfter.collision.maxPenetration < 0.25,
           }
         : null;
 

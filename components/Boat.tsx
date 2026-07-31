@@ -554,11 +554,18 @@ export default function Boat() {
     const normalizedSteeringSpeed =
       Math.abs(vRelForward) /
       Math.max(1, vessel.planingReferenceSpeedMps);
+    // Planing hulls retain useful authority through normal cruise, then
+    // taper again at extreme speed so full steering remains controllable.
     const highSpeedRudderAuthority = vessel.planingCapable
       ? MathUtils.lerp(
           1,
-          0.38,
+          0.76,
           MathUtils.smoothstep(normalizedSteeringSpeed, 0.45, 1.1),
+        ) *
+        MathUtils.lerp(
+          1,
+          0.5,
+          MathUtils.smoothstep(normalizedSteeringSpeed, 1.1, 2),
         )
       : MathUtils.lerp(
           1,
