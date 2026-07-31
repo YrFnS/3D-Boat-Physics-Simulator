@@ -26,10 +26,13 @@ This document tracks the work required to turn the calibrated marine simulation 
 - [x] Add route gameplay for open water, harbor training, storm passage, and winter rescue.
 - [x] Add mission scoring based on time, damage, contacts, and vessel resets.
 - [x] Add scenario-completion and failure summaries with retry, briefing, and next-passage actions.
-- [ ] Add player-placed free-navigation waypoints.
-- [ ] Add rescue targets, delivery cargo, obstacle-course gates, river navigation, and harbor-approach mission entities.
-- [ ] Add restart checkpoints and scenario-specific safe respawn locations.
-- [ ] Add best-time, best-score, and per-scenario history persistence.
+- [x] Add player-placed free-navigation waypoints with safe-water correction, undo, clear, restart, and mission/free switching.
+- [x] Add physical rescue targets, delivery cargo, navigation gates, and emergency-relay mission entities.
+- [x] Require mission-task completion before route progression and final success.
+- [x] Add restart checkpoints and scenario-specific safe respawn locations.
+- [x] Recreate the authoritative six-degree vessel body at the latest recovery checkpoint.
+- [x] Add best-time, best-score, completion, failure, and attempt history per scenario.
+- [ ] Add a dedicated river-navigation passage and richer harbor-approach scenery.
 
 ## P3.3 — Input and settings
 
@@ -59,6 +62,9 @@ This document tracks the work required to turn the calibrated marine simulation 
 - [x] Validate mobile navigation, pause/resume, HUD behavior, and touch controls.
 - [x] Validate mission-completion and mission-failure result flows.
 - [x] Validate first-run onboarding, guide replay, settings application, and settings persistence.
+- [x] Validate free-route plotting, editing, mission/free switching, and clearing.
+- [x] Validate checkpoint activation and authoritative vessel recovery.
+- [x] Validate mission-task completion and persistent scenario records.
 - [x] Preserve the deterministic vessel calibration and Rapier contact suites.
 
 ## Phase 3 exit criteria
