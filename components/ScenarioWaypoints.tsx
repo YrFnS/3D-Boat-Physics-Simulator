@@ -2,6 +2,7 @@
 
 import { Float, Line } from '@react-three/drei';
 import { useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { getResolvedScenarioRoute } from '@/sim/scenarios/ScenarioRoute';
 import { useNavigationPlanner } from '@/store/useNavigationPlanner';
 import { useSimStore } from '@/store/useSimStore';
@@ -80,12 +81,14 @@ export default function ScenarioWaypoints({
   const scenarioRunStatus = useSimStore(
     (state) => state.scenarioRunStatus,
   );
-  const planner = useNavigationPlanner((state) => ({
-    mode: state.mode,
-    status: state.status,
-    waypoints: state.waypoints,
-    activeWaypointIndex: state.activeWaypointIndex,
-  }));
+  const planner = useNavigationPlanner(
+    useShallow((state) => ({
+      mode: state.mode,
+      status: state.status,
+      waypoints: state.waypoints,
+      activeWaypointIndex: state.activeWaypointIndex,
+    })),
+  );
   const missionRoute = useMemo(
     () => getResolvedScenarioRoute(activeScenario),
     [activeScenario],
