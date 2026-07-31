@@ -8,8 +8,9 @@ import type { VesselConfig } from '@/sim/vessels/VesselConfig';
 const TERRAIN_SIZE_M = 3_000;
 const TERRAIN_SEGMENTS = 96;
 const CONTACT_SLOP_M = 0.012;
-const MAX_POSITION_CORRECTION_M = 0.16;
-const MAX_TOTAL_CORRECTION_M = 0.42;
+const CONTACT_PREDICTION_M = 0.12;
+const MAX_POSITION_CORRECTION_M = 0.22;
+const MAX_TOTAL_CORRECTION_M = 0.55;
 const COLLIDER_BORDER_M = 0.08;
 const DEBUG_PROBE_HALF_WIDTH_M = 3.5;
 const DEBUG_PROBE_HALF_HEIGHT_M = 1.5;
@@ -171,7 +172,7 @@ export class RapierCollisionWorld {
       )
         .setFriction(0.55)
         .setRestitution(0.02)
-        .setContactSkin(CONTACT_SLOP_M)
+        .setContactSkin(CONTACT_PREDICTION_M)
         .setActiveCollisionTypes(rapier.ActiveCollisionTypes.ALL),
     );
   }
@@ -244,14 +245,19 @@ export class RapierCollisionWorld {
             const contactCount = manifold.numContacts();
             if (contactCount <= 0) return;
 
-            let penetrationM = 0;
+            let signedContactDistanceM = Number.POSITIVE_INFINITY;
             for (let index = 0; index < contactCount; index += 1) {
-              penetrationM = Math.max(
-                penetrationM,
-                -manifold.contactDist(index),
+              signedContactDistanceM = Math.min(
+                signedContactDistanceM,
+                manifold.contactDist(index),
               );
             }
-            if (penetrationM <= 0) return;
+            const penetrationM = Math.max(0, -signedContactDistanceM);
+            const predictiveDepthM = Math.max(
+              0,
+              CONTACT_PREDICTION_M - signedContactDistanceM,
+            );
+            if (predictiveDepthM <= 0) return;
 
             const isCalibrationFixture =
               otherCollider.handle === this.calibrationFixtureCollider?.handle;
@@ -318,7 +324,10 @@ export class RapierCollisionWorld {
                   vessel.massKg *
                   (isTerrain ? 0.18 : 0.06),
                 vessel.massKg * (isTerrain ? 2.5 : 0.8),
-                Math.max(impulseNs, vessel.massKg * penetrationM * 0.9) *
+                Math.max(
+                  impulseNs,
+                  vessel.massKg * predictiveDepthM * 0.9,
+                ) *
                   (isTerrain ? 0.75 : 0.3),
               );
               if (frictionImpulseNs > 0) {
@@ -350,9 +359,11 @@ export class RapierCollisionWorld {
               summary.fixtureContactCount += 1;
               summary.fixtureKind = this.calibrationFixtureKind;
             }
+            // Diagnostics track unresolved overlap after the bounded
+            // correction actually applied to the authoritative custom body.
             summary.maxPenetrationM = Math.max(
               summary.maxPenetrationM,
-              penetrationM,
+              Math.max(0, penetrationM - correctionM),
             );
             if (isTerrain) {
               summary.terrainContactCount += 1;
@@ -478,7 +489,7 @@ export class RapierCollisionWorld {
           .setTranslation(piece.x, piece.y, piece.z)
           .setFriction(0.22)
           .setRestitution(0.04)
-          .setContactSkin(CONTACT_SLOP_M)
+          .setContactSkin(CONTACT_PREDICTION_M)
           .setActiveCollisionTypes(this.rapier.ActiveCollisionTypes.ALL),
         this.vesselBody,
       );
@@ -509,7 +520,7 @@ export class RapierCollisionWorld {
             .setTranslation(x, y, z)
             .setFriction(0.15)
             .setRestitution(0.08)
-            .setContactSkin(CONTACT_SLOP_M)
+            .setContactSkin(CONTACT_PREDICTION_M)
             .setActiveCollisionTypes(this.rapier.ActiveCollisionTypes.ALL),
         );
         this.obstacleColliders[index] = collider;
@@ -582,7 +593,7 @@ export class RapierCollisionWorld {
           .setRotation(this.fixtureRotation)
           .setFriction(0.82)
           .setRestitution(0.01)
-          .setContactSkin(CONTACT_SLOP_M)
+          .setContactSkin(CONTACT_PREDICTION_M)
           .setActiveCollisionTypes(this.rapier.ActiveCollisionTypes.ALL),
       );
       return;
@@ -623,7 +634,7 @@ export class RapierCollisionWorld {
         .setRotation(this.fixtureRotation)
         .setFriction(glancing ? 0.24 : 0.32)
         .setRestitution(glancing ? 0.08 : 0.025)
-        .setContactSkin(CONTACT_SLOP_M)
+        .setContactSkin(CONTACT_PREDICTION_M)
         .setActiveCollisionTypes(this.rapier.ActiveCollisionTypes.ALL),
     );
   }
@@ -696,7 +707,7 @@ export class RapierCollisionWorld {
         })
         .setFriction(0.18)
         .setRestitution(0.06)
-        .setContactSkin(CONTACT_SLOP_M)
+        .setContactSkin(CONTACT_PREDICTION_M)
         .setActiveCollisionTypes(this.rapier.ActiveCollisionTypes.ALL),
     );
   }

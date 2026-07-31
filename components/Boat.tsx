@@ -84,6 +84,7 @@ export default function Boat() {
       boatForward: new Vector3(),
       boatRight: new Vector3(),
       boatUp: new Vector3(),
+      worldUp: new Vector3(0, 1, 0),
       boatPosition: new Vector3(),
       cameraTarget: new Vector3(),
       cameraDelta: new Vector3(),
@@ -556,7 +557,7 @@ export default function Boat() {
     const highSpeedRudderAuthority = vessel.planingCapable
       ? MathUtils.lerp(
           1,
-          0.22,
+          0.38,
           MathUtils.smoothstep(normalizedSteeringSpeed, 0.45, 1.1),
         )
       : MathUtils.lerp(
@@ -589,7 +590,7 @@ export default function Boat() {
     // You cannot steer if the prop/rudder is out of the water. Planing
     // hulls also lose effective rudder bite as dynamic pressure rises, which
     // prevents an arcade-like pivot at full speed.
-    const steeringBiteLimit = vessel.planingCapable ? 3.2 : 6;
+    const steeringBiteLimit = vessel.planingCapable ? 4 : 6;
     const steeringBite =
       Math.max(
         0.1,
@@ -619,10 +620,13 @@ export default function Boat() {
     );
 
     if (vessel.planingCapable && speedRatio > 0.15) {
-      const signedRollRadians = Math.atan2(
-        scratch.boatUp.dot(rightDir),
-        Math.max(0.05, scratch.boatUp.y),
-      );
+      // The component of current-up × world-up along the vessel's forward
+      // axis gives a signed roll error without depending on Euler angles or a
+      // horizontalized body axis. This remains valid through large banks.
+      const signedRollError = scratch.rollStabilityTorque
+        .copy(scratch.boatUp)
+        .cross(scratch.worldUp)
+        .dot(forwardDir);
       const rollRateRadPerSecond =
         body.angularVelocity.dot(forwardDir);
       const stabilityBlend = MathUtils.smoothstep(
@@ -631,10 +635,10 @@ export default function Boat() {
         0.65,
       );
       const rollStabilityTorqueNm = MathUtils.clamp(
-        signedRollRadians * mass * 12 -
-          rollRateRadPerSecond * mass * 4.5,
-        -mass * 22,
-        mass * 22,
+        signedRollError * mass * 18 -
+          rollRateRadPerSecond * mass * 6.5,
+        -mass * 28,
+        mass * 28,
       );
       body.addTorque(
         scratch.rollStabilityTorque
