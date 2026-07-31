@@ -90,6 +90,9 @@ export default function Simulator() {
   const clearKeys = useSimStore((state) => state.clearKeys);
   const renderQuality = useSimStore((state) => state.renderQuality);
   const sessionPhase = useSimStore((state) => state.sessionPhase);
+  const scenarioRunStatus = useSimStore(
+    (state) => state.scenarioRunStatus,
+  );
   const hudVisible = useSimStore((state) => state.hudVisible);
   const activeBoat = useSimStore((state) => state.activeBoat);
   const resetVesselTrigger = useSimStore(
@@ -186,6 +189,8 @@ export default function Simulator() {
 
   const simulationRunning = automationMode || sessionPhase === 'running';
   const showHud = automationMode || (sessionPhase !== 'menu' && hudVisible);
+  const showSessionOverlay =
+    scenarioRunStatus === 'inactive' || scenarioRunStatus === 'active';
 
   return (
     <div className="relative h-screen w-full select-none overflow-hidden bg-slate-900">
@@ -240,7 +245,9 @@ export default function Simulator() {
         </div>
       )}
       <PerformanceHUD showMetrics={debugEnabled} />
-      <SessionOverlay automationMode={automationMode} />
+      {showSessionOverlay && (
+        <SessionOverlay automationMode={automationMode} />
+      )}
       <ExperienceChrome automationMode={automationMode} />
       <ScenarioResultOverlay automationMode={automationMode} />
     </div>
