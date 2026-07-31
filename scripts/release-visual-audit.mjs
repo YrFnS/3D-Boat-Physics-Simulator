@@ -13,11 +13,34 @@ const expectedSnapshots = [
   'chromium-mobile.png',
 ];
 
+const MAXIMUM_DOMINANT_COLOR_RATIO = 0.55;
+
 const report = {
   generatedAt: new Date().toISOString(),
   snapshots: [],
   passed: false,
 };
+
+function calculateDominantColorRatio(data, channels) {
+  // Quantize RGB into 8 buckets per channel. This catches a viewport covered
+  // by one large flat mesh (for example a cabin roof) without requiring exact
+  // pixel equality, which would be too brittle across browser engines.
+  const buckets = new Uint32Array(8 * 8 * 8);
+  let dominantCount = 0;
+  let pixelCount = 0;
+
+  for (let offset = 0; offset + 2 < data.length; offset += channels) {
+    const red = data[offset] >> 5;
+    const green = data[offset + 1] >> 5;
+    const blue = data[offset + 2] >> 5;
+    const bucketIndex = (red << 6) | (green << 3) | blue;
+    const count = (buckets[bucketIndex] += 1);
+    if (count > dominantCount) dominantCount = count;
+    pixelCount += 1;
+  }
+
+  return pixelCount > 0 ? dominantCount / pixelCount : 1;
+}
 
 async function auditSnapshot(fileName) {
   const filePath = path.join(artifactDirectory, fileName);
@@ -35,6 +58,8 @@ async function auditSnapshot(fileName) {
         entropy: 0,
         meanDeviation: 0,
         dynamicRange: 0,
+        dominantColorRatio: 1,
+        maximumDominantColorRatio: MAXIMUM_DOMINANT_COLOR_RATIO,
         passed: false,
         reason: 'Screenshot dimensions are invalid.',
       };
@@ -46,10 +71,16 @@ async function auditSnapshot(fileName) {
     const top = Math.floor(height * 0.22);
     const cropWidth = Math.max(1, Math.floor(width * 0.44));
     const cropHeight = Math.max(1, Math.floor(height * 0.56));
-    const stats = await sharp(filePath)
-      .extract({ left, top, width: cropWidth, height: cropHeight })
-      .removeAlpha()
-      .stats();
+    const crop = sharp(filePath).extract({
+      left,
+      top,
+      width: cropWidth,
+      height: cropHeight,
+    });
+    const stats = await crop.clone().removeAlpha().stats();
+    const raw = await crop.clone().removeAlpha().raw().toBuffer({
+      resolveWithObject: true,
+    });
     const channels = stats.channels.slice(0, 3);
     const meanDeviation =
       channels.reduce((total, channel) => total + channel.stdev, 0) /
@@ -57,11 +88,16 @@ async function auditSnapshot(fileName) {
     const dynamicRange = Math.max(
       ...channels.map((channel) => channel.max - channel.min),
     );
+    const dominantColorRatio = calculateDominantColorRatio(
+      raw.data,
+      raw.info.channels,
+    );
     const passed =
       Number.isFinite(stats.entropy) &&
       stats.entropy > 0.75 &&
       meanDeviation > 2.5 &&
-      dynamicRange > 20;
+      dynamicRange > 20 &&
+      dominantColorRatio < MAXIMUM_DOMINANT_COLOR_RATIO;
 
     return {
       fileName,
@@ -71,10 +107,14 @@ async function auditSnapshot(fileName) {
       entropy: stats.entropy,
       meanDeviation,
       dynamicRange,
+      dominantColorRatio,
+      maximumDominantColorRatio: MAXIMUM_DOMINANT_COLOR_RATIO,
       passed,
       reason: passed
         ? null
-        : 'Central 3D viewport is too uniform and may be blank or unrendered.',
+        : dominantColorRatio >= MAXIMUM_DOMINANT_COLOR_RATIO
+          ? 'One quantized color dominates the central 3D viewport; the camera may be inside or too close to a flat mesh.'
+          : 'Central 3D viewport is too uniform and may be blank or unrendered.',
     };
   } catch (error) {
     return {
@@ -85,6 +125,8 @@ async function auditSnapshot(fileName) {
       entropy: 0,
       meanDeviation: 0,
       dynamicRange: 0,
+      dominantColorRatio: 1,
+      maximumDominantColorRatio: MAXIMUM_DOMINANT_COLOR_RATIO,
       passed: false,
       reason: error instanceof Error ? error.message : String(error),
     };
