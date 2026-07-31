@@ -27,8 +27,8 @@ function quaternionIsFinite(value: Quaternion) {
  * velocity is stored in world space for point-velocity queries, while inertia
  * and damping are evaluated in the vessel's principal body axes.
  *
- * Collision solving will move to Rapier in a later slice; keeping marine
- * forces behind this interface makes that replacement mechanical.
+ * Rapier supplies contact manifolds, but this body remains authoritative for
+ * marine forces, momentum, orientation, and contact impulses.
  */
 export class SixDofBody extends Object3D {
   readonly linearVelocity = new Vector3();
@@ -49,6 +49,8 @@ export class SixDofBody extends Object3D {
   private readonly localAngularMomentum = new Vector3();
   private readonly gyroscopicTorque = new Vector3();
   private readonly localAngularAcceleration = new Vector3();
+  private readonly localAngularImpulse = new Vector3();
+  private readonly deltaAngularVelocity = new Vector3();
   private readonly worldAngularVelocity = new Vector3();
   private readonly inverseRotation = new Quaternion();
   private readonly deltaRotation = new Quaternion();
@@ -98,6 +100,39 @@ export class SixDofBody extends Object3D {
     this.getWorldCenterOfMass(this.worldCenterOfMass);
     this.leverArm.copy(pointWorld).sub(this.worldCenterOfMass);
     this.accumulatedTorque.add(this.leverArm.cross(forceWorld));
+  }
+
+  applyImpulseAtPoint(impulseWorld: Vector3, pointWorld: Vector3) {
+    if (!vectorIsFinite(impulseWorld) || !vectorIsFinite(pointWorld)) return;
+
+    this.linearVelocity.addScaledVector(impulseWorld, this.inverseMass);
+
+    this.getWorldCenterOfMass(this.worldCenterOfMass);
+    this.leverArm.copy(pointWorld).sub(this.worldCenterOfMass);
+    this.localAngularImpulse
+      .copy(this.leverArm)
+      .cross(impulseWorld)
+      .applyQuaternion(this.inverseRotation.copy(this.quaternion).invert());
+    this.deltaAngularVelocity
+      .set(
+        this.localAngularImpulse.x * this.inversePrincipalInertia.x,
+        this.localAngularImpulse.y * this.inversePrincipalInertia.y,
+        this.localAngularImpulse.z * this.inversePrincipalInertia.z,
+      )
+      .applyQuaternion(this.quaternion);
+    this.angularVelocity.add(this.deltaAngularVelocity);
+
+    const angularSpeed = this.angularVelocity.length();
+    if (angularSpeed > MAX_ANGULAR_SPEED_RAD_PER_SECOND) {
+      this.angularVelocity.multiplyScalar(
+        MAX_ANGULAR_SPEED_RAD_PER_SECOND / angularSpeed,
+      );
+    }
+  }
+
+  applyPositionCorrection(correctionWorld: Vector3) {
+    if (!vectorIsFinite(correctionWorld)) return;
+    this.position.add(correctionWorld);
   }
 
   getWorldCenterOfMass(target: Vector3) {
