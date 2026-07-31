@@ -186,7 +186,7 @@ export default function Simulator() {
   return (
     <div className="relative h-screen w-full select-none overflow-hidden bg-slate-900">
       <QualityPersistence />
-      <ExperiencePersistence />
+      <ExperiencePersistence automationMode={automationMode} />
       <Canvas
         camera={{ position: [0, 15, -25], fov: 60, near: 0.1, far: 3000 }}
         dpr={DPR_BY_QUALITY[renderQuality]}
