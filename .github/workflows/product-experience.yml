@@ -7,6 +7,10 @@ on:
       - components/ExperienceChrome.tsx
       - components/ExperiencePersistence.tsx
       - components/HUD.tsx
+      - components/NavigationHUD.tsx
+      - components/ScenarioDirector.tsx
+      - components/ScenarioResultOverlay.tsx
+      - components/ScenarioWaypoints.tsx
       - components/SessionOverlay.tsx
       - components/Simulator.tsx
       - hooks/useAutomationMode.ts
@@ -24,6 +28,10 @@ on:
       - components/ExperienceChrome.tsx
       - components/ExperiencePersistence.tsx
       - components/HUD.tsx
+      - components/NavigationHUD.tsx
+      - components/ScenarioDirector.tsx
+      - components/ScenarioResultOverlay.tsx
+      - components/ScenarioWaypoints.tsx
       - components/SessionOverlay.tsx
       - components/Simulator.tsx
       - hooks/useAutomationMode.ts
@@ -44,7 +52,7 @@ env:
 
 jobs:
   experience:
-    name: Launch, pause, camera, reset, and persistence flow
+    name: Session, navigation, pause, reset, and persistence flow
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
