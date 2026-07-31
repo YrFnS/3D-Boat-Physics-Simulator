@@ -1,326 +1,625 @@
 'use client';
 
-import { useSimStore, BoatType } from '@/store/useSimStore';
-import { Compass, Navigation, Wind, Ship, Activity, Thermometer, ShieldAlert, Navigation2, Sun, Moon, Sunrise, Sunset, Leaf, Snowflake, Cloud } from 'lucide-react';
+import { useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useShallow } from 'zustand/react/shallow';
+import {
+  Activity,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Compass,
+  Gauge,
+  Leaf,
+  Moon,
+  Navigation,
+  Navigation2,
+  Settings2,
+  ShieldAlert,
+  Ship,
+  Snowflake,
+  Sun,
+  Sunrise,
+  Sunset,
+  Thermometer,
+  Wind,
+  Wrench,
+  X,
+} from 'lucide-react';
+import { useDebugMode } from '@/hooks/useDebugMode';
+import { type BoatType, useSimStore } from '@/store/useSimStore';
 
-export default function HUD() {
-  const {
-    windSpeed, windDir, currentSpeed, currentDir, engineThrust,
-    speedKnots, heading, activeBoat,
-    hullHealth, engineHealth, engineTemperature, rudderHealth,
-    targetTime, targetSeason, setTargetTime, setTargetSeason,
-    setWindSpeed, setWindDir, setCurrentSpeed, setCurrentDir, setEngineThrust, setActiveBoat,
-    keys
-  } = useSimStore();
+type MobilePanel = 'environment' | 'forces' | null;
+type HeldKey = 'arrowup' | 'arrowdown' | 'arrowleft' | 'arrowright' | 'r';
 
-  const isRepairing = keys.r && Math.abs(speedKnots) < 2.0 && engineThrust < 0.1 && !keys.w && !keys.s && !keys.arrowup && !keys.arrowdown;
+interface HealthBarProps {
+  icon: typeof Activity;
+  label: string;
+  value: number;
+  display: string;
+  tone: 'health' | 'temperature';
+}
+
+function HealthBar({ icon: Icon, label, value, display, tone }: HealthBarProps) {
+  const normalized = Math.max(0, Math.min(100, value));
+  const barClass =
+    tone === 'temperature'
+      ? normalized < 80
+        ? 'bg-sky-400'
+        : normalized < 100
+          ? 'bg-amber-500'
+          : 'bg-red-600'
+      : normalized > 50
+        ? 'bg-emerald-400'
+        : normalized > 20
+          ? 'bg-amber-400'
+          : 'bg-red-500';
 
   return (
-    <div className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-between z-50">
-      
-      {/* Top Bar: Boat Selector, Controls, & Environment */}
-      <div className="flex justify-between items-start">
-        <div className="bg-black/50 backdrop-blur-xl border border-white/10 rounded-2xl p-4 text-white shadow-2xl pointer-events-auto">
-           <h2 className="text-xs font-bold text-slate-400 tracking-widest uppercase mb-3 flex items-center gap-2">
-            <Ship className="w-4 h-4" /> Vessel
-          </h2>
-          <div className="flex gap-2">
-            {(['trawler', 'speedboat'] as BoatType[]).map(boat => (
-              <button 
-                key={boat}
-                onClick={() => setActiveBoat(boat)}
-                className={`px-4 py-2 rounded-lg text-sm font-semibold capitalize transition-all ${activeBoat === boat ? 'bg-sky-500 text-white' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}
-              >
-                {boat}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex flex-col items-center gap-2 pointer-events-auto">
-            <div className="bg-black/40 backdrop-blur-md text-white/80 px-6 py-2 rounded-full border border-white/10 text-sm font-mono tracking-wider flex items-center gap-4">
-              <span>[W/S] Throttle</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-              <span>[A/D] Steer</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-              <span 
-                className={`cursor-pointer select-none transition-colors ${keys.r ? "text-emerald-400 font-bold" : "hover:text-emerald-300"}`}
-                onPointerDown={() => useSimStore.getState().setKey('r', true)}
-                onPointerUp={() => useSimStore.getState().setKey('r', false)}
-                onPointerLeave={() => useSimStore.getState().setKey('r', false)}
-              >
-                HOLD [R] TO REPAIR
-              </span>
-            </div>
-            {keys.r && !isRepairing && (
-                <div className="text-xs text-red-400 font-bold uppercase tracking-widest animate-pulse">
-                    Must slow down and cut throttle to repair!
-                </div>
-            )}
-            {isRepairing && (
-                <div className="bg-emerald-950/80 backdrop-blur-md border border-emerald-500/50 rounded-xl p-4 min-w-[320px] mt-2 flex flex-col gap-3 shadow-[0_0_30px_rgba(16,185,129,0.2)]">
-                    <div className="flex items-center justify-center gap-2 text-emerald-400 font-bold uppercase tracking-widest text-sm animate-pulse mb-1">
-                        <Activity className="w-5 h-5" /> Active Field Repair
-                    </div>
-                    
-                    <div className="space-y-3">
-                        {/* Hull Repair Bar */}
-                        <div>
-                            <div className="flex justify-between text-[10px] uppercase font-bold text-emerald-200 mb-1">
-                                <span>Hull & Bilge Pumps</span>
-                                <span>{hullHealth >= 99.9 ? 'FIXED' : `${hullHealth.toFixed(1)}%`}</span>
-                            </div>
-                            <div className="h-2 w-full bg-black/50 rounded-full overflow-hidden border border-emerald-500/30 relative">
-                                <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: `${hullHealth}%` }}></div>
-                                {hullHealth < 99.9 && (
-                                    <div className="absolute top-0 bottom-0 left-0 right-0 bg-gradient-to-r from-transparent via-white/50 to-transparent w-full animate-shimmer"></div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Engine Repair Bar */}
-                        <div>
-                            <div className="flex justify-between text-[10px] uppercase font-bold text-emerald-200 mb-1">
-                                <span>Engine Block & Cooling</span>
-                                <span>{engineHealth >= 99.9 ? 'FIXED' : `${engineHealth.toFixed(1)}%`}</span>
-                            </div>
-                            <div className="h-2 w-full bg-black/50 rounded-full overflow-hidden border border-emerald-500/30 relative">
-                                <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: `${engineHealth}%` }}></div>
-                                {engineHealth < 99.9 && (
-                                    <div className="absolute top-0 bottom-0 left-0 right-0 bg-gradient-to-r from-transparent via-white/50 to-transparent w-full animate-shimmer"></div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Rudder Repair Bar */}
-                        <div>
-                            <div className="flex justify-between text-[10px] uppercase font-bold text-emerald-200 mb-1">
-                                <span>Steering Linkages</span>
-                                <span>{rudderHealth >= 99.9 ? 'FIXED' : `${rudderHealth.toFixed(1)}%`}</span>
-                            </div>
-                            <div className="h-2 w-full bg-black/50 rounded-full overflow-hidden border border-emerald-500/30 relative">
-                                <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: `${rudderHealth}%` }}></div>
-                                {rudderHealth < 99.9 && (
-                                    <div className="absolute top-0 bottom-0 left-0 right-0 bg-gradient-to-r from-transparent via-white/50 to-transparent w-full animate-shimmer"></div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-        </div>
-        
-        {/* Right Environment Panel */}
-        <div className="bg-black/50 backdrop-blur-xl border border-white/10 rounded-2xl p-4 text-white shadow-2xl pointer-events-auto flex flex-col gap-3">
-            <h2 className="text-[10px] font-bold text-slate-400 tracking-widest uppercase flex items-center gap-2">
-                Environment
-            </h2>
-            <div className="flex flex-col gap-2">
-                <div className="flex gap-1 bg-white/5 p-1 rounded-lg">
-                    {[
-                        { label: 'Dawn', val: 6, icon: Sunrise },
-                        { label: 'Noon', val: 12, icon: Sun },
-                        { label: 'Dusk', val: 18, icon: Sunset },
-                        { label: 'Night', val: 0, icon: Moon },
-                    ].map(t => (
-                        <button 
-                            key={t.label} onClick={() => setTargetTime(t.val)}
-                            className={`p-2 rounded-md transition-all ${targetTime === t.val ? 'bg-amber-500 text-white shadow-lg' : 'hover:bg-white/10 text-slate-400'}`}
-                            title={t.label}
-                        >
-                            <t.icon className="w-4 h-4" />
-                        </button>
-                    ))}
-                </div>
-                <div className="flex gap-1 bg-white/5 p-1 rounded-lg">
-                    {[
-                        { label: 'Spring', val: 0, icon: Leaf },
-                        { label: 'Summer', val: 0.25, icon: Sun },
-                        { label: 'Fall', val: 0.5, icon: Wind },
-                        { label: 'Winter', val: 0.75, icon: Snowflake },
-                    ].map(s => (
-                        <button 
-                            key={s.label} onClick={() => setTargetSeason(s.val)}
-                            className={`p-2 rounded-md transition-all ${targetSeason === s.val ? 'bg-sky-500 text-white shadow-lg' : 'hover:bg-white/10 text-slate-400'}`}
-                            title={s.label}
-                        >
-                            <s.icon className="w-4 h-4" />
-                        </button>
-                    ))}
-                </div>
-            </div>
-        </div>
+    <div>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wide text-slate-400 sm:text-[10px]">
+          <Icon className="h-3 w-3" /> {label}
+        </span>
+        <span className="font-mono text-[9px] text-slate-200 sm:text-[10px]">
+          {display}
+        </span>
       </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+        <div
+          className={`h-full transition-[width] duration-300 ${barClass}`}
+          style={{ width: `${normalized}%` }}
+        />
+      </div>
+    </div>
+  );
+}
 
-      <div className="flex justify-between items-end">
-        {/* Left Panel: Telemetry Dashboard */}
-        <div className="bg-black/50 backdrop-blur-xl border border-white/10 rounded-2xl p-6 text-white w-64 shadow-2xl">
-          <h2 className="text-sm font-bold text-slate-400 tracking-widest uppercase flex items-center gap-2">
-            <Navigation className="w-4 h-4" /> Telemetry
-          </h2>
-          
-          {hullHealth <= 0 && (
-            <div className="mt-3 flex flex-col gap-1">
-                <div className="py-2 px-3 bg-red-600 border border-red-400 rounded flex items-center justify-center gap-2 animate-pulse shadow-[0_0_20px_rgba(220,38,38,0.6)]">
-                  <ShieldAlert className="w-5 h-5 text-white" />
-                  <span className="text-sm font-bold text-white uppercase tracking-widest">VESSEL SUNK</span>
-                </div>
-            </div>
-          )}
-          {hullHealth > 0 && engineHealth <= 0 && (
-            <div className="mt-3 flex flex-col gap-1">
-                <div className="py-2 px-3 bg-orange-600/50 border border-orange-500 rounded flex items-center justify-center gap-2 animate-pulse">
-                  <Activity className="w-5 h-5 text-orange-200" />
-                  <span className="text-sm font-bold text-orange-200 uppercase tracking-widest">ENGINE DEAD</span>
-                </div>
-            </div>
-          )}
-          {hullHealth > 0 && engineHealth > 0 && (engineHealth < 30 || rudderHealth < 30 || hullHealth < 30) && (
-            <div className="mt-3 py-1.5 px-3 bg-red-500/20 border border-red-500/50 rounded flex items-center gap-2 animate-pulse">
-              <ShieldAlert className="w-4 h-4 text-red-500" />
-              <span className="text-xs font-bold text-red-500 uppercase tracking-widest">Critical Damage</span>
-            </div>
-          )}
+interface RangeControlProps {
+  label: string;
+  valueLabel: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  accentClass: string;
+  onChange: (value: number) => void;
+}
 
-          <div className="mb-6 mt-6">
-            <div className="text-4xl font-mono tracking-tighter text-sky-400 mb-1 flex items-baseline gap-2">
-              {Math.abs(speedKnots).toFixed(1)} <span className="text-lg text-slate-400">kts</span>
-              {engineHealth < 40 && (
-                <span className="text-xs font-bold text-amber-500 uppercase tracking-widest animate-pulse ml-auto" title="Engine Misfiring">[MISFIRE]</span>
-              )}
+function RangeControl({
+  label,
+  valueLabel,
+  value,
+  min,
+  max,
+  step,
+  accentClass,
+  onChange,
+}: RangeControlProps) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 flex items-center justify-between gap-3 text-[10px] font-semibold uppercase tracking-wide text-slate-300 sm:text-xs">
+        <span>{label}</span>
+        <span className="font-mono text-sky-200">{valueLabel}</span>
+      </span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className={`h-5 w-full cursor-pointer ${accentClass}`}
+      />
+    </label>
+  );
+}
+
+interface EnvironmentControlsProps {
+  targetTime: number;
+  targetSeason: number;
+  setTargetTime: (value: number) => void;
+  setTargetSeason: (value: number) => void;
+}
+
+function EnvironmentControls({
+  targetTime,
+  targetSeason,
+  setTargetTime,
+  setTargetSeason,
+}: EnvironmentControlsProps) {
+  const times = [
+    { label: 'Dawn', value: 6, icon: Sunrise },
+    { label: 'Noon', value: 12, icon: Sun },
+    { label: 'Dusk', value: 18, icon: Sunset },
+    { label: 'Night', value: 0, icon: Moon },
+  ];
+  const seasons = [
+    { label: 'Spring', value: 0, icon: Leaf },
+    { label: 'Summer', value: 0.25, icon: Sun },
+    { label: 'Fall', value: 0.5, icon: Wind },
+    { label: 'Winter', value: 0.75, icon: Snowflake },
+  ];
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-4 gap-1 rounded-xl bg-white/5 p-1">
+        {times.map(({ label, value, icon: Icon }) => (
+          <button
+            key={label}
+            type="button"
+            title={label}
+            aria-label={label}
+            onClick={() => setTargetTime(value)}
+            className={`flex min-h-10 items-center justify-center rounded-lg transition ${
+              targetTime === value
+                ? 'bg-amber-500 text-white shadow-lg'
+                : 'text-slate-400 hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            <Icon className="h-4 w-4" />
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-4 gap-1 rounded-xl bg-white/5 p-1">
+        {seasons.map(({ label, value, icon: Icon }) => (
+          <button
+            key={label}
+            type="button"
+            title={label}
+            aria-label={label}
+            onClick={() => setTargetSeason(value)}
+            className={`flex min-h-10 items-center justify-center rounded-lg transition ${
+              targetSeason === value
+                ? 'bg-sky-500 text-white shadow-lg'
+                : 'text-slate-400 hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            <Icon className="h-4 w-4" />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface ForceControlsProps {
+  windSpeed: number;
+  windDir: number;
+  currentSpeed: number;
+  currentDir: number;
+  setWindSpeed: (value: number) => void;
+  setWindDir: (value: number) => void;
+  setCurrentSpeed: (value: number) => void;
+  setCurrentDir: (value: number) => void;
+}
+
+function ForceControls(props: ForceControlsProps) {
+  return (
+    <div className="space-y-4 sm:space-y-5">
+      <RangeControl
+        label="Wind speed"
+        valueLabel={`${props.windSpeed.toFixed(1)} m/s`}
+        value={props.windSpeed}
+        min={0}
+        max={60}
+        step={0.1}
+        accentClass="accent-sky-400"
+        onChange={props.setWindSpeed}
+      />
+      <RangeControl
+        label="Wind direction"
+        valueLabel={`${props.windDir.toFixed(0)}°`}
+        value={props.windDir}
+        min={0}
+        max={359}
+        step={1}
+        accentClass="accent-indigo-400"
+        onChange={props.setWindDir}
+      />
+      <div className="h-px bg-white/10" />
+      <RangeControl
+        label="Current speed"
+        valueLabel={`${props.currentSpeed.toFixed(1)} m/s`}
+        value={props.currentSpeed}
+        min={0}
+        max={10}
+        step={0.1}
+        accentClass="accent-teal-400"
+        onChange={props.setCurrentSpeed}
+      />
+      <RangeControl
+        label="Current direction"
+        valueLabel={`${props.currentDir.toFixed(0)}°`}
+        value={props.currentDir}
+        min={0}
+        max={359}
+        step={1}
+        accentClass="accent-teal-500"
+        onChange={props.setCurrentDir}
+      />
+    </div>
+  );
+}
+
+function holdKey(
+  event: ReactPointerEvent<HTMLButtonElement>,
+  key: HeldKey,
+  active: boolean,
+) {
+  event.preventDefault();
+  if (active) {
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+  useSimStore.getState().setKey(key, active);
+}
+
+export default function HUD() {
+  const debugEnabled = useDebugMode();
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>(null);
+
+  const state = useSimStore(
+    useShallow((store) => ({
+      windSpeed: store.windSpeed,
+      windDir: store.windDir,
+      currentSpeed: store.currentSpeed,
+      currentDir: store.currentDir,
+      engineThrust: store.engineThrust,
+      speedKnots: store.speedKnots,
+      heading: store.heading,
+      activeBoat: store.activeBoat,
+      hullHealth: store.hullHealth,
+      engineHealth: store.engineHealth,
+      engineTemperature: store.engineTemperature,
+      rudderHealth: store.rudderHealth,
+      targetTime: store.targetTime,
+      targetSeason: store.targetSeason,
+      keys: store.keys,
+      setTargetTime: store.setTargetTime,
+      setTargetSeason: store.setTargetSeason,
+      setWindSpeed: store.setWindSpeed,
+      setWindDir: store.setWindDir,
+      setCurrentSpeed: store.setCurrentSpeed,
+      setCurrentDir: store.setCurrentDir,
+      setEngineThrust: store.setEngineThrust,
+      setActiveBoat: store.setActiveBoat,
+    })),
+  );
+
+  const isRepairing =
+    state.keys.r &&
+    Math.abs(state.speedKnots) < 2 &&
+    state.engineThrust < 0.1 &&
+    !state.keys.w &&
+    !state.keys.s &&
+    !state.keys.arrowup &&
+    !state.keys.arrowdown;
+
+  const forceProps: ForceControlsProps = {
+    windSpeed: state.windSpeed,
+    windDir: state.windDir,
+    currentSpeed: state.currentSpeed,
+    currentDir: state.currentDir,
+    setWindSpeed: state.setWindSpeed,
+    setWindDir: state.setWindDir,
+    setCurrentSpeed: state.setCurrentSpeed,
+    setCurrentDir: state.setCurrentDir,
+  };
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-50 p-3 sm:p-4">
+      <div className="flex h-full flex-col justify-between gap-3">
+        <div className="flex items-start justify-between gap-2">
+          <section className="pointer-events-auto rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-white shadow-2xl backdrop-blur-xl sm:p-4">
+            <h2 className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400 sm:mb-3 sm:text-xs">
+              <Ship className="h-4 w-4" /> Vessel
+            </h2>
+            <div className="flex gap-1.5 sm:gap-2">
+              {(['trawler', 'speedboat'] as BoatType[]).map((boat) => (
+                <button
+                  key={boat}
+                  type="button"
+                  onClick={() => state.setActiveBoat(boat)}
+                  className={`rounded-lg px-3 py-2 text-xs font-semibold capitalize transition sm:px-4 sm:text-sm ${
+                    state.activeBoat === boat
+                      ? 'bg-sky-500 text-white shadow-lg shadow-sky-950/40'
+                      : 'bg-white/5 text-slate-300 hover:bg-white/10'
+                  }`}
+                >
+                  {boat}
+                </button>
+              ))}
             </div>
-            <div className="text-xs text-slate-500 uppercase font-semibold">Speed Over Ground</div>
+          </section>
+
+          <div className="pointer-events-auto hidden flex-col items-center gap-2 lg:flex">
+            <div className="flex items-center gap-3 rounded-full border border-white/10 bg-slate-950/55 px-5 py-2 font-mono text-xs tracking-wider text-white/80 backdrop-blur-md">
+              <span>[W/S] Throttle</span>
+              <span className="h-1.5 w-1.5 rounded-full bg-slate-500" />
+              <span>[A/D] Steer</span>
+              <span className="h-1.5 w-1.5 rounded-full bg-slate-500" />
+              <button
+                type="button"
+                onPointerDown={(event) => holdKey(event, 'r', true)}
+                onPointerUp={(event) => holdKey(event, 'r', false)}
+                onPointerCancel={(event) => holdKey(event, 'r', false)}
+                onPointerLeave={(event) => holdKey(event, 'r', false)}
+                className={
+                  state.keys.r
+                    ? 'font-bold text-emerald-400'
+                    : 'transition hover:text-emerald-300'
+                }
+              >
+                Hold [R] to repair
+              </button>
+            </div>
           </div>
-          
-          <div className="mb-6">
-            <div className="flex items-center gap-3 mb-1">
-              <Compass className="w-8 h-8 text-indigo-400" style={{ transform: `rotate(${-heading}deg)` }} />
-              <div className="text-3xl font-mono tracking-tighter text-indigo-300">
-                {heading.toFixed(0).padStart(3, '0')}°
-              </div>
-            </div>
-            <div className="text-xs text-slate-500 uppercase font-semibold">Compass Heading</div>
-          </div>
 
-          <div className="pt-4 border-t border-white/10 mb-4">
-            <div className="text-xs text-slate-500 uppercase font-semibold mb-2">Engine Thrust</div>
-            <input 
-              type="range" min="0" max="1" step="0.01" 
-              value={engineThrust} 
-              onChange={(e) => setEngineThrust(parseFloat(e.target.value))}
-              className="w-full cursor-pointer pointer-events-auto accent-sky-500"
+          <section className="pointer-events-auto hidden w-48 rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-white shadow-2xl backdrop-blur-xl md:block">
+            <h2 className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+              Environment
+            </h2>
+            <EnvironmentControls
+              targetTime={state.targetTime}
+              targetSeason={state.targetSeason}
+              setTargetTime={state.setTargetTime}
+              setTargetSeason={state.setTargetSeason}
             />
-          </div>
+          </section>
 
-          <div className="pt-4 border-t border-white/10 space-y-3">
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <span className="text-[10px] text-slate-400 uppercase font-semibold flex items-center gap-1"><ShieldAlert className="w-3 h-3"/> Hull Int.</span>
-                <span className="text-[10px] font-mono">{hullHealth.toFixed(0)}%</span>
-              </div>
-              <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                <div className={`h-full transition-all duration-300 ${hullHealth > 50 ? 'bg-emerald-400' : hullHealth > 20 ? 'bg-amber-400' : 'bg-red-500'}`} style={{ width: `${hullHealth}%` }}></div>
-              </div>
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <span className="text-[10px] text-slate-400 uppercase font-semibold flex items-center gap-1"><Activity className="w-3 h-3"/> Engine</span>
-                <span className="text-[10px] font-mono">{engineHealth.toFixed(0)}%</span>
-              </div>
-              <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                <div className={`h-full transition-all duration-300 ${engineHealth > 50 ? 'bg-emerald-400' : engineHealth > 20 ? 'bg-amber-400' : 'bg-red-500'}`} style={{ width: `${engineHealth}%` }}></div>
-              </div>
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <span className="text-[10px] text-slate-400 uppercase font-semibold flex items-center gap-1"><Thermometer className="w-3 h-3"/> Heat</span>
-                <span className="text-[10px] font-mono">{engineTemperature.toFixed(0)}°C</span>
-              </div>
-              <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                <div className={`h-full transition-all duration-300 ${engineTemperature < 80 ? 'bg-sky-400' : engineTemperature < 100 ? 'bg-amber-500' : 'bg-red-600'}`} style={{ width: `${Math.min(100, engineTemperature)}%` }}></div>
-              </div>
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <span className="text-[10px] text-slate-400 uppercase font-semibold flex items-center gap-1"><Navigation2 className="w-3 h-3"/> Rudder</span>
-                <span className="text-[10px] font-mono">{rudderHealth.toFixed(0)}%</span>
-              </div>
-              <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                <div className={`h-full transition-all duration-300 ${rudderHealth > 50 ? 'bg-emerald-400' : rudderHealth > 20 ? 'bg-amber-400' : 'bg-red-500'}`} style={{ width: `${rudderHealth}%` }}></div>
-              </div>
-            </div>
-            <button 
-              onClick={() => {
-                // Instantly heal the boat back to 100%
-                useSimStore.getState().fireInstantRepair();
-              }}
-              className="mt-6 w-full py-2 bg-emerald-500/20 hover:bg-emerald-500/40 border border-emerald-500/50 rounded text-emerald-400 text-[10px] font-bold uppercase tracking-wider transition-colors pointer-events-auto cursor-pointer"
+          <div className="pointer-events-auto flex gap-1.5 md:hidden">
+            <button
+              type="button"
+              aria-label="Toggle environment controls"
+              onClick={() =>
+                setMobilePanel((panel) =>
+                  panel === 'environment' ? null : 'environment',
+                )
+              }
+              className={`flex h-11 w-11 items-center justify-center rounded-xl border backdrop-blur-xl ${
+                mobilePanel === 'environment'
+                  ? 'border-sky-400/60 bg-sky-500 text-white'
+                  : 'border-white/10 bg-slate-950/70 text-slate-300'
+              }`}
             >
-              [DEV] Instant Repair
+              <Sun className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              aria-label="Toggle wind and current controls"
+              onClick={() =>
+                setMobilePanel((panel) => (panel === 'forces' ? null : 'forces'))
+              }
+              className={`flex h-11 w-11 items-center justify-center rounded-xl border backdrop-blur-xl ${
+                mobilePanel === 'forces'
+                  ? 'border-sky-400/60 bg-sky-500 text-white'
+                  : 'border-white/10 bg-slate-950/70 text-slate-300'
+              }`}
+            >
+              <Settings2 className="h-4 w-4" />
             </button>
           </div>
         </div>
 
-        {/* Right Panel: Force Overrides */}
-        <div className="bg-black/50 backdrop-blur-xl border border-white/10 rounded-2xl p-6 text-white w-72 shadow-2xl pointer-events-auto">
-          <h2 className="text-sm font-bold text-slate-400 tracking-widest uppercase mb-6 flex items-center gap-2">
-             <Wind className="w-4 h-4" /> Physics Engine
-          </h2>
-          
-          <div className="space-y-6">
-            {/* Wind Controls */}
-            <div>
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-xs text-slate-300 uppercase font-semibold">Wind Speed</span>
-                <span className="text-xs font-mono text-sky-300">{windSpeed.toFixed(1)} m/s</span>
-              </div>
-              <input 
-                type="range" min="0" max="60" step="0.1" 
-                value={windSpeed} onChange={(e) => setWindSpeed(parseFloat(e.target.value))}
-                className="w-full accent-sky-400"
-              />
-              
-              <div className="flex justify-between items-center mt-3 mb-2">
-                <span className="text-xs text-slate-300 uppercase font-semibold">Wind Dir</span>
-                <span className="text-xs font-mono text-indigo-300">{windDir.toFixed(0)}°</span>
-              </div>
-              <input 
-                type="range" min="0" max="359" step="1" 
-                value={windDir} onChange={(e) => setWindDir(parseFloat(e.target.value))}
-                className="w-full accent-indigo-400"
-              />
+        {mobilePanel && (
+          <section className="pointer-events-auto absolute inset-x-3 top-20 z-20 max-h-[55vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/90 p-4 text-white shadow-2xl backdrop-blur-xl md:hidden">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-300">
+                {mobilePanel === 'environment' ? (
+                  <>
+                    <Sun className="h-4 w-4" /> Environment
+                  </>
+                ) : (
+                  <>
+                    <Wind className="h-4 w-4" /> Physics engine
+                  </>
+                )}
+              </h2>
+              <button
+                type="button"
+                aria-label="Close controls"
+                onClick={() => setMobilePanel(null)}
+                className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/5 text-slate-300 hover:bg-white/10"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
-
-            <div className="h-px bg-white/10"></div>
-
-            {/* Current Controls */}
-            <div>
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-xs text-slate-300 uppercase font-semibold">Current Speed</span>
-                <span className="text-xs font-mono text-teal-300">{currentSpeed.toFixed(1)} m/s</span>
-              </div>
-              <input 
-                type="range" min="0" max="10" step="0.1" 
-                value={currentSpeed} onChange={(e) => setCurrentSpeed(parseFloat(e.target.value))}
-                className="w-full accent-teal-400"
+            {mobilePanel === 'environment' ? (
+              <EnvironmentControls
+                targetTime={state.targetTime}
+                targetSeason={state.targetSeason}
+                setTargetTime={state.setTargetTime}
+                setTargetSeason={state.setTargetSeason}
               />
-              
-              <div className="flex justify-between items-center mt-3 mb-2">
-                <span className="text-xs text-slate-300 uppercase font-semibold">Current Dir</span>
-                <span className="text-xs font-mono text-teal-300">{currentDir.toFixed(0)}°</span>
-              </div>
-              <input 
-                type="range" min="0" max="359" step="1" 
-                value={currentDir} onChange={(e) => setCurrentDir(parseFloat(e.target.value))}
-                className="w-full accent-teal-600"
-              />
+            ) : (
+              <ForceControls {...forceProps} />
+            )}
+          </section>
+        )}
+
+        {(state.keys.r || isRepairing) && (
+          <div className="pointer-events-none absolute left-1/2 top-24 -translate-x-1/2 md:top-20">
+            <div
+              className={`rounded-xl border px-3 py-2 text-center text-[10px] font-bold uppercase tracking-widest backdrop-blur-md sm:text-xs ${
+                isRepairing
+                  ? 'border-emerald-500/50 bg-emerald-950/85 text-emerald-300'
+                  : 'border-red-500/40 bg-red-950/80 text-red-300'
+              }`}
+            >
+              {isRepairing
+                ? 'Active field repair'
+                : 'Slow down and cut throttle to repair'}
             </div>
           </div>
-        </div>
+        )}
 
+        <div className="flex items-end justify-between gap-2 pb-12 sm:gap-4 sm:pb-0">
+          <section className="pointer-events-auto w-[min(15.5rem,calc(100vw-8rem))] max-h-[calc(100vh-8rem)] overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/72 p-3 text-white shadow-2xl backdrop-blur-xl sm:w-64 sm:p-5">
+            <h2 className="mb-3 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400 sm:text-sm">
+              <Navigation className="h-4 w-4" /> Telemetry
+            </h2>
+
+            {state.hullHealth <= 0 && (
+              <div className="mb-3 flex items-center justify-center gap-2 rounded-lg border border-red-400 bg-red-600 px-2 py-2 text-[10px] font-bold uppercase tracking-wider text-white sm:text-sm">
+                <ShieldAlert className="h-4 w-4" /> Vessel sunk
+              </div>
+            )}
+            {state.hullHealth > 0 && state.engineHealth <= 0 && (
+              <div className="mb-3 flex items-center justify-center gap-2 rounded-lg border border-orange-500 bg-orange-600/50 px-2 py-2 text-[10px] font-bold uppercase tracking-wider text-orange-100 sm:text-sm">
+                <Activity className="h-4 w-4" /> Engine dead
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="flex items-baseline gap-1 font-mono text-2xl tracking-tight text-sky-400 sm:text-4xl">
+                  {Math.abs(state.speedKnots).toFixed(1)}
+                  <span className="text-xs text-slate-400 sm:text-lg">kts</span>
+                </div>
+                <div className="mt-0.5 text-[8px] font-semibold uppercase tracking-wide text-slate-500 sm:text-xs">
+                  Speed over ground
+                </div>
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <Compass
+                    className="h-6 w-6 text-indigo-400 sm:h-8 sm:w-8"
+                    style={{ transform: `rotate(${-state.heading}deg)` }}
+                  />
+                  <div className="font-mono text-xl tracking-tight text-indigo-300 sm:text-3xl">
+                    {state.heading.toFixed(0).padStart(3, '0')}°
+                  </div>
+                </div>
+                <div className="mt-0.5 text-[8px] font-semibold uppercase tracking-wide text-slate-500 sm:text-xs">
+                  Heading
+                </div>
+              </div>
+            </div>
+
+            <div className="my-3 border-t border-white/10 pt-3 sm:my-4 sm:pt-4">
+              <RangeControl
+                label="Engine thrust"
+                valueLabel={`${Math.round(state.engineThrust * 100)}%`}
+                value={state.engineThrust}
+                min={0}
+                max={1}
+                step={0.01}
+                accentClass="accent-sky-500"
+                onChange={state.setEngineThrust}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 gap-2.5 sm:gap-3">
+              <HealthBar
+                icon={ShieldAlert}
+                label="Hull integrity"
+                value={state.hullHealth}
+                display={`${state.hullHealth.toFixed(0)}%`}
+                tone="health"
+              />
+              <HealthBar
+                icon={Activity}
+                label="Engine"
+                value={state.engineHealth}
+                display={`${state.engineHealth.toFixed(0)}%`}
+                tone="health"
+              />
+              <HealthBar
+                icon={Thermometer}
+                label="Heat"
+                value={state.engineTemperature}
+                display={`${state.engineTemperature.toFixed(0)}°C`}
+                tone="temperature"
+              />
+              <HealthBar
+                icon={Navigation2}
+                label="Rudder"
+                value={state.rudderHealth}
+                display={`${state.rudderHealth.toFixed(0)}%`}
+                tone="health"
+              />
+            </div>
+
+            {debugEnabled && (
+              <button
+                type="button"
+                onClick={() => useSimStore.getState().fireInstantRepair()}
+                className="mt-3 w-full rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-2 py-2 text-[9px] font-bold uppercase tracking-wider text-emerald-300 transition hover:bg-emerald-500/25 sm:mt-5 sm:text-[10px]"
+              >
+                Debug instant repair
+              </button>
+            )}
+          </section>
+
+          <section className="pointer-events-auto hidden w-72 rounded-2xl border border-white/10 bg-slate-950/72 p-5 text-white shadow-2xl backdrop-blur-xl md:block">
+            <h2 className="mb-5 flex items-center gap-2 text-sm font-bold uppercase tracking-[0.18em] text-slate-400">
+              <Gauge className="h-4 w-4" /> Physics engine
+            </h2>
+            <ForceControls {...forceProps} />
+          </section>
+
+          <div className="pointer-events-auto grid w-[6.75rem] grid-cols-3 gap-1.5 md:hidden">
+            <div />
+            <button
+              type="button"
+              aria-label="Throttle forward"
+              onPointerDown={(event) => holdKey(event, 'arrowup', true)}
+              onPointerUp={(event) => holdKey(event, 'arrowup', false)}
+              onPointerCancel={(event) => holdKey(event, 'arrowup', false)}
+              onPointerLeave={(event) => holdKey(event, 'arrowup', false)}
+              className="flex h-11 touch-none items-center justify-center rounded-xl border border-white/10 bg-slate-950/75 text-white shadow-xl backdrop-blur-xl active:bg-sky-500"
+            >
+              <ChevronUp className="h-5 w-5" />
+            </button>
+            <div />
+            <button
+              type="button"
+              aria-label="Steer left"
+              onPointerDown={(event) => holdKey(event, 'arrowleft', true)}
+              onPointerUp={(event) => holdKey(event, 'arrowleft', false)}
+              onPointerCancel={(event) => holdKey(event, 'arrowleft', false)}
+              onPointerLeave={(event) => holdKey(event, 'arrowleft', false)}
+              className="flex h-11 touch-none items-center justify-center rounded-xl border border-white/10 bg-slate-950/75 text-white shadow-xl backdrop-blur-xl active:bg-sky-500"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              aria-label="Repair vessel"
+              onPointerDown={(event) => holdKey(event, 'r', true)}
+              onPointerUp={(event) => holdKey(event, 'r', false)}
+              onPointerCancel={(event) => holdKey(event, 'r', false)}
+              onPointerLeave={(event) => holdKey(event, 'r', false)}
+              className="flex h-11 touch-none items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-950/75 text-emerald-300 shadow-xl backdrop-blur-xl active:bg-emerald-600 active:text-white"
+            >
+              <Wrench className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              aria-label="Steer right"
+              onPointerDown={(event) => holdKey(event, 'arrowright', true)}
+              onPointerUp={(event) => holdKey(event, 'arrowright', false)}
+              onPointerCancel={(event) => holdKey(event, 'arrowright', false)}
+              onPointerLeave={(event) => holdKey(event, 'arrowright', false)}
+              className="flex h-11 touch-none items-center justify-center rounded-xl border border-white/10 bg-slate-950/75 text-white shadow-xl backdrop-blur-xl active:bg-sky-500"
+            >
+              <ChevronRight className="h-5 w-5" />
+            </button>
+            <div />
+            <button
+              type="button"
+              aria-label="Throttle reverse"
+              onPointerDown={(event) => holdKey(event, 'arrowdown', true)}
+              onPointerUp={(event) => holdKey(event, 'arrowdown', false)}
+              onPointerCancel={(event) => holdKey(event, 'arrowdown', false)}
+              onPointerLeave={(event) => holdKey(event, 'arrowdown', false)}
+              className="flex h-11 touch-none items-center justify-center rounded-xl border border-white/10 bg-slate-950/75 text-white shadow-xl backdrop-blur-xl active:bg-sky-500"
+            >
+              <ChevronDown className="h-5 w-5" />
+            </button>
+            <div />
+          </div>
+        </div>
       </div>
     </div>
   );

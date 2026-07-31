@@ -1,75 +1,74 @@
 # 3D Boat Physics Simulator
 
-A high-fidelity 3D simulation of boat hydrodynamics and environmental interaction, built with **React Three Fiber** and **Next.js**.
+An interactive browser-based marine simulation built with Next.js, React Three Fiber, and Three.js. The project combines procedural water, weather, vessel handling, damage, and a responsive instrument HUD in a single local-first web application.
 
-## 🚤 Overview
+> **Project status:** this is a performance-optimized simulation prototype. The current vessel model uses custom approximations for buoyancy, drag, steering, and collisions. A fixed-timestep rigid-body and distributed-buoyancy system is planned for the next physics phase.
 
-This simulator provides a realistic experience of handling various watercraft in dynamic environments. It features a custom physics engine that accounts for buoyancy, wind force, current drag, and hydrodynamic resistance.
+## Features
 
-## ✨ Key Features
+- Procedural Gerstner-wave ocean with matching CPU water sampling.
+- GPU-generated wake field, rain, hurricane clouds, lightning, and storm effects.
+- Trawler and speedboat handling with wind, current, planing, damage, repair, and beaching behavior.
+- Procedural islands, seasonal terrain appearance, buoys, a whirlpool, and weather-gated tornado hazards.
+- Adaptive Low, Medium, High, and Ultra quality tiers with ocean, terrain, weather, wake, and shadow budgets.
+- Desktop keyboard controls and responsive touch controls for throttle, steering, repair, environment, wind, and current.
+- Optional FPS, draw-call, triangle, and Calm/Storm benchmark diagnostics.
+- Automated production build plus desktop and mobile Playwright smoke tests.
 
-- **Realistic Physics Engine**: 
-  - Hydrodynamic buoyancy and drag calculations.
-  - Wind interaction affecting boat handling and sail dynamics.
-  - Water current simulation that influences movement.
-- **Dynamic Environments**:
-  - **Ocean System**: Procedural waves with realistic lighting.
-  - **River System**: Directional currents and navigational challenges.
-  - **Islands & Buoys**: Interactive obstacles and navigation markers.
-- **Extreme Weather Simulation**:
-  - Dynamic cloud systems and hurricane simulations.
-  - Realistic tornadoes with integrated particle effects.
-  - Volumetric weather effects including rain and lightning.
-- **Advanced HUD & Telemetry**:
-  - Real-time engine status and speed tracking.
-  - Compass and navigation indicators.
-  - Environment controls (time of day, weather toggle).
-- **Multiple Boat Support**:
-  - Modular boat architecture allowing for different vessel types.
+## Tech stack
 
-## 🛠️ Tech Stack
+- Next.js 16 and React 19
+- React Three Fiber, Drei, and Three.js
+- Zustand
+- Tailwind CSS 4
+- TypeScript and ESLint
 
-- **Framework**: [Next.js 15+](https://nextjs.org/)
-- **3D Engine**: [React Three Fiber](https://r3f.docs.pmnd.rs/) & [Three.js](https://threejs.org/)
-- **State Management**: [Zustand](https://github.com/pmndrs/zustand)
-- **Physics/Math**: Simplex Noise for procedural waves and wind.
-- **Animations**: [Motion](https://motion.dev/)
-- **Styling**: [Tailwind CSS](https://tailwindcss.com/)
+## Getting started
 
-## 🚀 Getting Started
+### Requirements
 
-### Prerequisites
+- Node.js 22 recommended
+- npm 10 or newer
 
-- Node.js 18+
-- npm or yarn
+### Install and run
 
-### Installation
-
-1. Clone the repository
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-### Running the App
-
-Start the development server:
 ```bash
+npm ci
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser to view the simulator.
+Open `http://localhost:3000`.
 
-## 🏗️ Project Structure
+### Validation
 
-- `app/`: Next.js App Router and entry points.
-- `components/`: Core simulation logic and 3D components.
-  - `Boat.tsx`: Main boat physics and controller.
-  - `Ocean.tsx`: Water shader and interaction.
-  - `EnvironmentRig.tsx`: Lighting and skybox management.
-- `store/`: Zustand state for global simulation parameters (wind, time, weather).
-- `hooks/`: Custom hooks for physics calculations and input handling.
+```bash
+npm run lint
+npm run typecheck
+npm run build
+```
 
-## 📜 License
+## Controls
 
-MIT
+- `W` / `S` or arrow up/down: forward and reverse throttle
+- `A` / `D` or arrow left/right: steer
+- Hold `R` while nearly stopped with throttle cut: repair
+- On touch devices, use the on-screen directional and repair controls
+
+## Rendering quality and diagnostics
+
+The quality selector is available in production and its selection is remembered. Auto mode chooses a conservative initial tier from the device profile, then adapts using measured rendering performance.
+
+Append `?debug=1` to enable FPS metrics and Calm/Storm benchmark controls. Append `?debug=0` to clear the remembered debug preference.
+
+## Project structure
+
+- `app/`: App Router entry point and global styles
+- `components/`: simulation rendering, vessel behavior, HUD, weather, wake, and diagnostics
+- `components/boat/`: vessel audio and visual-damage subsystems
+- `lib/`: deterministic terrain and simulation helpers
+- `store/`: Zustand controls, telemetry, quality state, and shared high-frequency values
+- `.github/workflows/`: build and browser smoke validation
+
+## License
+
+MIT. See [LICENSE](LICENSE).
