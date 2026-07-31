@@ -13,4 +13,6 @@ For both the trawler and speedboat, the suite validates:
 - an angled glancing contact;
 - a higher-speed head-on impact.
 
-Collision scenarios use the Rapier compound-hull contact world while the custom six-degree-of-freedom body remains authoritative for momentum, buoyancy, hydrodynamics, and damage. The workflow rejects non-finite state, missing contact classification, excessive penetration, excessive roll or angular speed, unrealistic damage, and failure to slow or release from grounding.
+Collision scenarios use the Rapier compound-hull contact world while the custom six-degree-of-freedom body remains authoritative for momentum, buoyancy, hydrodynamics, and damage. A predictive contact skin begins impulse response before fast hulls build deep overlap, while penetration diagnostics report the residual overlap after the bounded correction applied to the authoritative body.
+
+The workflow rejects non-finite state, missing contact classification, excessive residual penetration, excessive roll or angular speed, unrealistic damage, and failure to slow or release from grounding.
