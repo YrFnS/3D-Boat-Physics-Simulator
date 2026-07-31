@@ -110,7 +110,7 @@ The quality selector is available in production and its selection is remembered.
 
 Append `?debug=1` to enable FPS metrics and Calm/Storm benchmark controls. Append `?debug=0` to clear the remembered debug preference.
 
-The browser smoke suite performs held propulsion and steering input at desktop and mobile sizes, plus an isolated Rapier contact-probe scenario. It validates finite and bounded position, linear and angular speed, quaternion normalization, direction normalization, submersion range, simulation-clock progress, observable vessel response, Rapier initialization, contact reporting, positive collision impulse, and bounded penetration.
+The browser smoke suite performs held propulsion and steering input at desktop and mobile sizes, plus an isolated Rapier contact-probe scenario. That scenario uses a short vessel-aligned wall so headless wind drift cannot bypass the fixture, while still requiring a real contact manifold, positive collision impulse, and bounded penetration. The suite also validates finite and bounded position, linear and angular speed, quaternion normalization, direction normalization, submersion range, simulation-clock progress, observable vessel response, and Rapier initialization.
 
 ## Project structure
 
