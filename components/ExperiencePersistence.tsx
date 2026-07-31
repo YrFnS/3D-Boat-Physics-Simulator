@@ -29,6 +29,9 @@ export default function ExperiencePersistence() {
   const cameraMode = useSimStore((state) => state.cameraMode);
   const hudVisible = useSimStore((state) => state.hudVisible);
   const sessionPhase = useSimStore((state) => state.sessionPhase);
+  const resetVesselTrigger = useSimStore(
+    (state) => state.resetVesselTrigger,
+  );
   const hydrateExperiencePreferences = useSimStore(
     (state) => state.hydrateExperiencePreferences,
   );
@@ -45,6 +48,7 @@ export default function ExperiencePersistence() {
     dataset.simCameraMode = cameraMode;
     dataset.simHudVisible = hudVisible ? '1' : '0';
     dataset.simActiveBoat = activeBoat;
+    dataset.simResetVesselTrigger = String(resetVesselTrigger);
 
     if (!hydrated) return;
 
@@ -69,6 +73,7 @@ export default function ExperiencePersistence() {
     cameraMode,
     hudVisible,
     hydrated,
+    resetVesselTrigger,
     sessionPhase,
   ]);
 
