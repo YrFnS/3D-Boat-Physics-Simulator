@@ -11,6 +11,7 @@ Phase 4 turns the merged simulator into a defensible release candidate. It does 
 - [x] Reject page errors, severe console messages, failed requests, unexpected external HTTP requests, and viewport overflow.
 - [x] Add accessible-name, dialog-label, and duplicate-ID checks for tested product states.
 - [x] Add central-viewport screenshot entropy, deviation, dynamic-range, and dominant-color checks to reject blank, uniform, or camera-obstructed 3D output.
+- [x] Add an automated production smoke test for the physical benchmark interface and JSON export.
 
 ## P4.2 — Simulation consistency
 
@@ -28,16 +29,21 @@ Phase 4 turns the merged simulator into a defensible release candidate. It does 
 - [x] Validate unsupported-WebGL and context-loss recovery states.
 - [x] Validate corrupted settings, experience, and gameplay storage does not prevent startup.
 - [x] Confirm clean install, lint, typecheck, production build, and full dependency audit.
-- [x] Document the Vercel build-rate-limit status separately from source-code validation.
+- [x] Document deployment-provider quota status separately from source-code validation.
 
 ## P4.4 — Physical-device sign-off
 
+- [x] Add a responsive `?benchmark=1` physical-device harness for desktop, integrated graphics, phones, and tablets.
+- [x] Record browser, OS, GPU renderer, CPU concurrency, reported memory, touch capability, viewport, DPR, and orientation automatically.
+- [x] Measure average, minimum, and fifth-percentile FPS, average and maximum frame time, draw calls, triangles, quality changes, and first-half versus second-half FPS drift.
+- [x] Invalidate hidden-tab runs and flag a 15% or greater second-half FPS drop for thermal/power review.
+- [x] Export machine-readable JSON evidence and release-checklist Markdown rows.
 - [ ] Run Calm and Storm benchmarks on the target desktop GPU.
 - [ ] Run the same matrix on integrated graphics.
 - [ ] Test a physical touch device in portrait and landscape.
 - [ ] Verify keyboard, mouse, touch, and any available gamepad behavior on real hardware.
 - [ ] Review wake visibility, storm readability, camera comfort, HUD scale, and thermal performance.
-- [ ] Record device, browser, quality tier, average FPS, minimum FPS, and visual observations in `RELEASE_CHECKLIST.md`.
+- [ ] Attach the exported reports and generated rows to `RELEASE_CHECKLIST.md` and the release PR.
 
 ## P4.5 — Release closeout
 
@@ -51,9 +57,9 @@ Phase 4 turns the merged simulator into a defensible release candidate. It does 
 
 ## Current automated result
 
-The permanent release matrix covers all three desktop engines, four cross-engine calibration comparisons, mobile touch, WebGL recovery, corrupted-storage recovery, source validation, deterministic physics calibration, product flows, and screenshot-integrity checks. Headless FPS is retained only as diagnostic data; it is not used as a physical-GPU performance claim.
+The permanent release matrix covers all three desktop engines, four cross-engine calibration comparisons, mobile touch, WebGL recovery, corrupted-storage recovery, source validation, deterministic physics calibration, product flows, screenshot-integrity checks, and the complete physical-benchmark export path. Headless FPS is retained only as diagnostic data; it is not used as a physical-GPU performance claim.
 
-The final source layout has one camera owner: `CameraRig.tsx`. `Boat.tsx` now publishes vessel state and updates vessel visuals/audio without moving the active camera or OrbitControls target.
+The final source layout has one camera owner: `CameraRig.tsx`. `Boat.tsx` publishes vessel state and updates vessel visuals/audio without moving the active camera or OrbitControls target.
 
 ## Exit criteria
 
