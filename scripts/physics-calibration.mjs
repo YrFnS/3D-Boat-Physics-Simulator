@@ -7,6 +7,7 @@ const outputDirectory = path.resolve('artifacts/physics-calibration');
 await fs.mkdir(outputDirectory, { recursive: true });
 
 const vessels = ['trawler', 'speedboat'];
+// Run handling and contact envelopes for both vessel configurations.
 const calibrationScenarios = [
   { scenario: 'rest', queryKey: 'calibration' },
   { scenario: 'stability', queryKey: 'calibration' },
