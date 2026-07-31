@@ -30,8 +30,8 @@ export interface VesselConfig {
   windPointLocal: readonly [number, number, number];
 }
 
-const VESSEL_CONFIGS: Readonly<Record<BoatType, Readonly<VesselConfig>>> = {
-  trawler: Object.freeze({
+const VESSEL_CONFIGS = {
+  trawler: {
     type: 'trawler',
     massKg: 1_500,
     // Box-derived starting values, tuned to keep the heavier trawler stable
@@ -61,8 +61,8 @@ const VESSEL_CONFIGS: Readonly<Record<BoatType, Readonly<VesselConfig>>> = {
     propellerPointLocal: [0, -0.45, 2.25],
     rudderPointLocal: [0, -0.35, 2.1],
     windPointLocal: [0, 1.65, 0.7],
-  }),
-  speedboat: Object.freeze({
+  },
+  speedboat: {
     type: 'speedboat',
     massKg: 800,
     principalInertiaKgM2: [1_150, 1_250, 250],
@@ -90,8 +90,8 @@ const VESSEL_CONFIGS: Readonly<Record<BoatType, Readonly<VesselConfig>>> = {
     propellerPointLocal: [0, -0.35, 1.95],
     rudderPointLocal: [0, -0.3, 1.8],
     windPointLocal: [0, 0.85, 0.35],
-  }),
-};
+  },
+} as const satisfies Readonly<Record<BoatType, VesselConfig>>;
 
 export function getVesselConfig(type: BoatType) {
   return VESSEL_CONFIGS[type];
