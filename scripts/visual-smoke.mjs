@@ -106,45 +106,40 @@ async function readPhysicsSnapshot(page) {
   });
 }
 
-async function exerciseVesselControls(page, scenarioName) {
-  const inputDurationMs = 1_800;
+async function holdPointer(page, locator, durationMs) {
+  await locator.scrollIntoViewIfNeeded();
+  const box = await locator.boundingBox();
+  if (!box) throw new Error('Unable to resolve mobile control bounds.');
 
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(durationMs);
+  await page.mouse.up();
+}
+
+async function exerciseVesselControls(page, scenarioName) {
   if (scenarioName === 'desktop') {
     await page.keyboard.down('w');
     await page.keyboard.down('a');
-    await page.waitForTimeout(inputDurationMs);
+    await page.waitForTimeout(1_800);
     await page.keyboard.up('a');
     await page.keyboard.up('w');
     return;
   }
 
-  const throttle = page.locator('[aria-label="Throttle forward"]');
-  const steering = page.locator('[aria-label="Steer left"]');
-  await throttle.dispatchEvent('pointerdown', {
-    pointerId: 1,
-    pointerType: 'touch',
-    isPrimary: true,
-    buttons: 1,
-  });
-  await steering.dispatchEvent('pointerdown', {
-    pointerId: 2,
-    pointerType: 'touch',
-    isPrimary: false,
-    buttons: 1,
-  });
-  await page.waitForTimeout(inputDurationMs);
-  await steering.dispatchEvent('pointerup', {
-    pointerId: 2,
-    pointerType: 'touch',
-    isPrimary: false,
-    buttons: 0,
-  });
-  await throttle.dispatchEvent('pointerup', {
-    pointerId: 1,
-    pointerType: 'touch',
-    isPrimary: true,
-    buttons: 0,
-  });
+  // Use a real held pointer so setPointerCapture sees an active pointer. A
+  // synthetic dispatchEvent does not create one in Chromium and can produce a
+  // false NotFoundError even though the application handler is correct.
+  await holdPointer(
+    page,
+    page.locator('[aria-label="Throttle forward"]'),
+    1_300,
+  );
+  await holdPointer(
+    page,
+    page.locator('[aria-label="Steer left"]'),
+    700,
+  );
 }
 
 try {
