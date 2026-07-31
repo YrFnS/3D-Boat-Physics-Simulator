@@ -11,6 +11,9 @@ on:
 permissions:
   contents: write
 
+env:
+  NEXT_TELEMETRY_DISABLED: 1
+
 concurrency:
   group: phase2-distributed-hull
   cancel-in-progress: false
