@@ -43,7 +43,9 @@ jobs:
           cache: npm
 
       - name: Apply guarded integration
-        run: node scripts/apply-distributed-hull.cjs
+        run: |
+          node scripts/apply-distributed-hull.cjs
+          rm -f scripts/apply-distributed-hull.cjs
 
       - name: Install dependencies
         run: npm ci
@@ -51,10 +53,9 @@ jobs:
       - name: Validate integrated application
         run: npm run validate
 
-      - name: Restore permanent CI and remove migration files
+      - name: Restore permanent CI and remove migration workflows
         run: |
           git show origin/main:.github/workflows/ci.yml > .github/workflows/ci.yml
-          rm -f scripts/apply-distributed-hull.cjs
           rm -f .github/workflows/phase2-distributed-hull.yml
           rm -f .github/workflows/dispatch-phase2-distributed-hull.yml
 
