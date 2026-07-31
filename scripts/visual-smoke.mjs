@@ -107,14 +107,18 @@ async function readPhysicsSnapshot(page) {
 }
 
 async function holdPointer(page, locator, durationMs) {
+  await locator.waitFor({ state: 'visible' });
   await locator.scrollIntoViewIfNeeded();
   const box = await locator.boundingBox();
   if (!box) throw new Error('Unable to resolve mobile control bounds.');
 
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
-  await page.waitForTimeout(durationMs);
-  await page.mouse.up();
+  try {
+    await page.waitForTimeout(durationMs);
+  } finally {
+    await page.mouse.up();
+  }
 }
 
 async function exerciseVesselControls(page, scenarioName) {
