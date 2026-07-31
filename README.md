@@ -2,7 +2,7 @@
 
 An interactive browser-based marine simulation built with Next.js, React Three Fiber, Three.js, and Rapier. The project combines procedural water, severe weather, calibrated six-degree vessel handling, route-based missions, free navigation, damage, recovery, and a responsive instrument suite in a local-first web application.
 
-> **Project status:** the rendering/performance foundation and calibrated physics foundation are complete. Vessel motion advances through a deterministic 60 Hz timestep using a custom six-degree-of-freedom body, distributed hull forces, and Rapier-backed compound-hull contacts. Phase 3 is building the complete player experience on top of that validated simulation without replacing the physics core.
+> **Project status:** release candidate. The rendering and performance foundation, calibrated six-degree vessel physics, Rapier contacts, mission gameplay, navigation, onboarding, accessibility, and product settings are complete. Automated Phase 4 validation covers Chromium, Firefox, WebKit, mobile touch, deterministic calibration, runtime recovery, screenshot integrity, and the production build. Representative physical-GPU and touch-device benchmarks remain the final manual sign-off before the first stable tag.
 
 ## Features
 
@@ -32,7 +32,7 @@ An interactive browser-based marine simulation built with Next.js, React Three F
 
 - Responsive launch briefing with scenario and vessel selection.
 - Open Water, Harbor Training, Storm Passage, and Winter Rescue missions.
-- Chase, helm, orbit, and cinematic cameras.
+- Chase, helm, orbit, and cinematic cameras with one authoritative camera owner.
 - Pause, resume, restart, safe vessel recovery, return-to-briefing, fullscreen, and collapsible HUD actions.
 - Marine chart with vessel heading, mission route, distance, bearing, timing, and progress.
 - Player-plotted free-navigation routes with up to eight safe-water marks, undo, clear, and restart.
@@ -88,6 +88,8 @@ An interactive browser-based marine simulation built with Next.js, React Three F
 - `useNavigationPlanner.ts` owns temporary player-plotted routes.
 - `useScenarioHistory.ts` owns persistent per-scenario records.
 
+`components/CameraRig.tsx` is the sole camera authority for chase, helm, orbit, and cinematic modes. Vessel rendering no longer contains a competing camera tracker.
+
 Simulation-affecting randomness comes from `sim/core/SeededRandom.ts`, not the browser frame loop. Vessel configuration and hull-force layouts live in `sim/vessels/VesselConfig.ts` rather than being scattered through React components.
 
 ## Tech stack
@@ -121,7 +123,17 @@ Open `http://localhost:3000`.
 npm run validate
 ```
 
-This runs lint, TypeScript checking, the production build, and the full dependency audit. GitHub Actions adds deterministic physics calibration, desktop/mobile/Rapier smoke testing, session/navigation flows, onboarding/settings coverage, and gameplay-system tests.
+This runs lint, TypeScript checking, the production build, and the full dependency audit. GitHub Actions additionally runs:
+
+- deterministic trawler and speedboat calibration;
+- desktop, mobile, and Rapier-contact smoke tests;
+- session, navigation, gameplay, onboarding, settings, and persistence flows;
+- Chromium, Firefox, and WebKit production-browser validation;
+- cross-engine deterministic metric comparison;
+- WebGL unsupported/context-loss and corrupted-storage recovery;
+- screenshot entropy, variation, dynamic-range, and dominant-color checks that reject blank or camera-obstructed 3D output.
+
+Software-rendered CI FPS is retained only as diagnostic data. Use the Calm and Storm benchmark panel on real hardware for release performance decisions.
 
 ## Controls
 
@@ -143,12 +155,28 @@ The quality selector is available in production and its selection is remembered.
 
 Append `?debug=1` to enable FPS metrics and Calm/Storm benchmark controls. Append `?debug=0` to clear the remembered debug preference.
 
-The browser suites validate held keyboard and touch input, finite and bounded vessel state, Rapier contact response, responsive layouts, launch/session actions, navigation values, mission outcomes, onboarding, settings persistence, free-route plotting, checkpoint recovery, and scenario-record persistence.
+The browser suites validate held keyboard and touch input, finite and bounded vessel state, Rapier contact response, responsive layouts, launch/session actions, navigation values, mission outcomes, onboarding, settings persistence, free-route plotting, checkpoint recovery, scenario-record persistence, and cross-browser camera presentation.
+
+## Release candidate status
+
+The automated release gate is designed to reject source, runtime, layout, accessibility, physics, calibration, recovery, and obvious 3D-rendering regressions before merge.
+
+The remaining manual sign-off is tracked in `RELEASE_CHECKLIST.md`:
+
+- Calm and Storm benchmarks on the target desktop GPU;
+- the same benchmark matrix on integrated graphics;
+- a physical touch device in portrait and landscape;
+- camera comfort, HUD scale, wake visibility, storm readability, and thermal behavior;
+- keyboard, mouse, touch, and any available gamepad observations.
+
+Deferred optional product expansion includes remappable keyboard controls, configurable touch layout/sensitivity, full gamepad mapping and vibration, independent audio-channel controls, configurable HUD modules, and additional river/harbor content. These are not blockers for the current agreed release scope.
+
+The Vercel integration may report a deployment-rate-limit failure when the linked account exceeds its daily build quota. Repository-owned production builds and browser workflows are the source-code validation authority.
 
 ## Project structure
 
 - `app/`: App Router entry point and global styles
-- `components/`: simulation rendering, product shell, HUD, mission systems, weather, wake, and diagnostics
+- `components/`: simulation rendering, product shell, HUD, mission systems, weather, wake, camera, recovery, and diagnostics
 - `components/boat/`: vessel audio and visual-damage subsystems
 - `sim/core/`: fixed-step timing, deterministic randomness, six-degree integration, and safe body spawning
 - `sim/vessels/`: typed vessel configuration and distributed marine-force models
@@ -156,12 +184,8 @@ The browser suites validate held keyboard and touch input, finite and bounded ve
 - `sim/scenarios/`: mission definitions plus route/entity/checkpoint water-safety resolution
 - `lib/`: deterministic terrain and water helpers
 - `store/`: simulation controls, product settings, navigation planning, records, telemetry, and shared high-frequency values
-- `scripts/`: browser smoke, gameplay, onboarding/settings, and deterministic calibration probes
-- `.github/workflows/`: repository validation and production browser testing
-
-## Remaining Phase 3 work
-
-The next product slice covers gamepad support, remappable keyboard controls, configurable touch controls, independent audio channels, configurable HUD modules, remaining mobile polish, and final integrated-GPU/physical-device review.
+- `scripts/`: smoke, gameplay, onboarding/settings, calibration, cross-browser release, and screenshot-integrity probes
+- `.github/workflows/`: source validation, production-browser testing, physics calibration, product flows, and release validation
 
 ## License
 
