@@ -10,6 +10,7 @@ await fs.mkdir(outputDirectory, { recursive: true });
 const scenarios = [
   {
     name: 'desktop',
+    path: '/?debug=1',
     context: {
       viewport: { width: 1440, height: 900 },
       deviceScaleFactor: 1,
@@ -19,11 +20,22 @@ const scenarios = [
   },
   {
     name: 'mobile',
+    path: '/?debug=1',
     context: {
       viewport: { width: 390, height: 844 },
       deviceScaleFactor: 1,
       isMobile: true,
       hasTouch: true,
+    },
+  },
+  {
+    name: 'collision',
+    path: '/?debug=1&collisionTest=1',
+    context: {
+      viewport: { width: 1280, height: 800 },
+      deviceScaleFactor: 1,
+      isMobile: false,
+      hasTouch: false,
     },
   },
 ];
@@ -45,6 +57,147 @@ const report = {
 };
 
 let hasFatalError = false;
+
+function allFinite(values) {
+  return values.every(Number.isFinite);
+}
+
+function physicsSnapshotIsBounded(snapshot) {
+  return (
+    snapshot.ready &&
+    allFinite([
+      snapshot.simulationTime,
+      snapshot.position.x,
+      snapshot.position.y,
+      snapshot.position.z,
+      snapshot.linearSpeed,
+      snapshot.angularSpeed,
+      snapshot.quaternionNorm,
+      snapshot.directionLength,
+      snapshot.submergedRatio,
+      snapshot.droppedTime,
+      snapshot.hullHealth,
+      snapshot.collision.sequence,
+      snapshot.collision.terrainSequence,
+      snapshot.collision.obstacleSequence,
+      snapshot.collision.debugProbeSequence,
+      snapshot.collision.maxImpactSpeed,
+      snapshot.collision.maxImpulse,
+      snapshot.collision.maxPenetration,
+    ]) &&
+    Math.abs(snapshot.position.x) < 1_000 &&
+    snapshot.position.y > -50 &&
+    snapshot.position.y < 100 &&
+    Math.abs(snapshot.position.z) < 1_000 &&
+    snapshot.linearSpeed >= 0 &&
+    snapshot.linearSpeed < 150 &&
+    snapshot.angularSpeed >= 0 &&
+    snapshot.angularSpeed < 13 &&
+    snapshot.quaternionNorm > 0.97 &&
+    snapshot.quaternionNorm < 1.03 &&
+    snapshot.directionLength > 0.9 &&
+    snapshot.directionLength < 1.1 &&
+    snapshot.submergedRatio >= 0 &&
+    snapshot.submergedRatio <= 1 &&
+    snapshot.droppedTime >= 0 &&
+    snapshot.hullHealth >= 0 &&
+    snapshot.hullHealth <= 100 &&
+    snapshot.collision.ready &&
+    snapshot.collision.sequence >= 0 &&
+    snapshot.collision.terrainSequence >= 0 &&
+    snapshot.collision.obstacleSequence >= 0 &&
+    snapshot.collision.debugProbeSequence >= 0 &&
+    snapshot.collision.maxImpactSpeed >= 0 &&
+    snapshot.collision.maxImpactSpeed < 80 &&
+    snapshot.collision.maxImpulse >= 0 &&
+    snapshot.collision.maxPenetration >= 0 &&
+    snapshot.collision.maxPenetration < 5
+  );
+}
+
+async function readPhysicsSnapshot(page) {
+  return page.evaluate(() => {
+    const dataset = document.documentElement.dataset;
+    const readNumber = (key) => Number(dataset[key]);
+
+    return {
+      ready: dataset.simReady === '1',
+      simulationTime: readNumber('simTime'),
+      position: {
+        x: readNumber('simBoatX'),
+        y: readNumber('simBoatY'),
+        z: readNumber('simBoatZ'),
+      },
+      linearSpeed: readNumber('simLinearSpeed'),
+      angularSpeed: readNumber('simAngularSpeed'),
+      quaternionNorm: readNumber('simQuaternionNorm'),
+      directionLength: readNumber('simDirectionLength'),
+      submergedRatio: readNumber('simSubmergedRatio'),
+      droppedTime: readNumber('simDroppedTime'),
+      hullHealth: readNumber('simHullHealth'),
+      collision: {
+        ready: dataset.simCollisionReady === '1',
+        sequence: readNumber('simCollisionSequence'),
+        terrainSequence: readNumber('simTerrainCollisionSequence'),
+        obstacleSequence: readNumber('simObstacleCollisionSequence'),
+        debugProbeSequence: readNumber('simDebugProbeCollisionSequence'),
+        maxImpactSpeed: readNumber('simCollisionMaxImpactSpeed'),
+        maxImpulse: readNumber('simCollisionMaxImpulse'),
+        maxPenetration: readNumber('simCollisionMaxPenetration'),
+      },
+    };
+  });
+}
+
+async function holdPointer(page, locator, durationMs) {
+  await locator.waitFor({ state: 'visible' });
+  await locator.scrollIntoViewIfNeeded();
+  const box = await locator.boundingBox();
+  if (!box) throw new Error('Unable to resolve mobile control bounds.');
+
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  try {
+    await page.waitForTimeout(durationMs);
+  } finally {
+    await page.mouse.up();
+  }
+}
+
+async function exerciseVesselControls(page, scenarioName) {
+  if (scenarioName === 'collision') {
+    await page.keyboard.down('w');
+    try {
+      await page.waitForTimeout(2_400);
+    } finally {
+      await page.keyboard.up('w');
+    }
+    return;
+  }
+
+  if (scenarioName === 'desktop') {
+    await page.keyboard.down('w');
+    await page.keyboard.down('a');
+    await page.waitForTimeout(1_800);
+    await page.keyboard.up('a');
+    await page.keyboard.up('w');
+    return;
+  }
+
+  // Use a real held pointer so setPointerCapture sees an active pointer. A
+  // synthetic dispatchEvent does not create one in Chromium and can produce a
+  // false NotFoundError even though the application handler is correct.
+  await holdPointer(
+    page,
+    page.locator('[aria-label="Throttle forward"]'),
+    1_300,
+  );
+  await holdPointer(
+    page,
+    page.locator('[aria-label="Steer left"]'),
+    700,
+  );
+}
 
 try {
   for (const scenario of scenarios) {
@@ -70,13 +223,66 @@ try {
       });
     });
 
-    const response = await page.goto(`${baseUrl}/?debug=1`, {
+    const response = await page.goto(`${baseUrl}${scenario.path}`, {
       waitUntil: 'domcontentloaded',
       timeout: 60_000,
     });
 
     await page.waitForSelector('canvas', { timeout: 60_000 });
-    await page.waitForTimeout(12_000);
+    await page.waitForSelector('select[aria-label="Rendering quality"]', {
+      timeout: 60_000,
+    });
+    await page.selectOption(
+      'select[aria-label="Rendering quality"]',
+      'low',
+    );
+    await page.waitForFunction(
+      () => document.documentElement.dataset.simReady === '1',
+      { timeout: 60_000 },
+    );
+    await page.waitForFunction(
+      () => document.documentElement.dataset.simCollisionReady === '1',
+      { timeout: 60_000 },
+    );
+    await page.waitForTimeout(4_000);
+
+    const physicsBefore = await readPhysicsSnapshot(page);
+    await exerciseVesselControls(page, scenario.name);
+    await page.waitForTimeout(1_500);
+    const physicsAfter = await readPhysicsSnapshot(page);
+
+    const displacement = Math.hypot(
+      physicsAfter.position.x - physicsBefore.position.x,
+      physicsAfter.position.y - physicsBefore.position.y,
+      physicsAfter.position.z - physicsBefore.position.z,
+    );
+    const simulationAdvance =
+      physicsAfter.simulationTime - physicsBefore.simulationTime;
+    const physicsChecks = {
+      beforeBounded: physicsSnapshotIsBounded(physicsBefore),
+      afterBounded: physicsSnapshotIsBounded(physicsAfter),
+      // Require at least 27 completed 60 Hz steps. Comparing against exactly
+      // 0.5 seconds is brittle because the accumulated value can be one ULP low.
+      simulationAdvanced: simulationAdvance >= 0.45,
+      vesselResponded:
+        displacement > 0.05 || physicsAfter.linearSpeed > 0.05,
+    };
+    const collisionChecks =
+      scenario.name === 'collision'
+        ? {
+            RapierReady: physicsBefore.collision.ready,
+            debugProbeContacted:
+              physicsAfter.collision.debugProbeSequence >
+              physicsBefore.collision.debugProbeSequence,
+            obstacleContactRecorded:
+              physicsAfter.collision.obstacleSequence >
+              physicsBefore.collision.obstacleSequence,
+            contactImpulseRecorded: physicsAfter.collision.maxImpulse > 0,
+            residualPenetrationBounded:
+              physicsAfter.collision.maxPenetration >= 0 &&
+              physicsAfter.collision.maxPenetration < 0.25,
+          }
+        : null;
 
     const runtime = await page.evaluate(() => {
       const canvas = document.querySelector('canvas');
@@ -137,6 +343,9 @@ try {
       scenario.name === 'mobile'
         ? runtime.hasTouchControls && !runtime.hasBenchmarkControls
         : runtime.hasBenchmarkControls;
+    const physicsChecksPass = Object.values(physicsChecks).every(Boolean);
+    const collisionChecksPass =
+      collisionChecks === null || Object.values(collisionChecks).every(Boolean);
     const scenarioFailed =
       !response?.ok() ||
       runtime.title !== expectedTitle ||
@@ -148,13 +357,23 @@ try {
       runtime.verticalOverflow ||
       !runtime.qualityMode ||
       !runtime.hasFpsReadout ||
-      !responsiveChecksPass;
+      !responsiveChecksPass ||
+      !physicsChecksPass ||
+      !collisionChecksPass;
 
     hasFatalError ||= scenarioFailed;
     report.scenarios.push({
       name: scenario.name,
       responseStatus: response?.status() ?? null,
       runtime,
+      physics: {
+        before: physicsBefore,
+        after: physicsAfter,
+        displacement,
+        simulationAdvance,
+        checks: physicsChecks,
+        collisionChecks,
+      },
       consoleEntries,
       pageErrors,
       failedRequests,

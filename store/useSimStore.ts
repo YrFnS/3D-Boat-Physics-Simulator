@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Vector3 } from 'three';
+import { Quaternion, Vector3 } from 'three';
 
 export type BoatType = 'trawler' | 'speedboat';
 export type RenderQuality = 'low' | 'medium' | 'high' | 'ultra';
@@ -19,7 +19,30 @@ export const MAX_OBSTACLES = 250;
 export const sharedPhysics = {
   boatPos: new Vector3(0, 0, 0),
   boatDir: new Vector3(0, 0, -1),
+  boatQuaternion: new Quaternion(),
+  boatLinearVelocity: new Vector3(),
+  boatAngularVelocity: new Vector3(),
   boatSpeed: 0,
+  submergedRatio: 0,
+  simulationTime: 0,
+  renderTime: 0,
+  fixedStepAlpha: 0,
+  fixedStepCount: 0,
+  droppedSimulationTime: 0,
+  collisionReady: 0,
+  collisionSequence: 0,
+  terrainCollisionSequence: 0,
+  obstacleCollisionSequence: 0,
+  debugProbeCollisionSequence: 0,
+  collisionMaxImpactSpeed: 0,
+  collisionMaxImpulse: 0,
+  collisionMaxPenetration: 0,
+  calibrationReady: 0,
+  calibrationPassed: 0,
+  calibrationProgress: 0,
+  calibrationScenario: '',
+  calibrationVessel: '',
+  calibrationResult: '',
   lightningFlash: 0,
   obstacles: new Float32Array(MAX_OBSTACLES * 4), // x, y, z, radius
   worldTime: 12.0,
