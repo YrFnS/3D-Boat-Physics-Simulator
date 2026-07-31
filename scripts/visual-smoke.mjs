@@ -46,6 +46,107 @@ const report = {
 
 let hasFatalError = false;
 
+function allFinite(values) {
+  return values.every(Number.isFinite);
+}
+
+function physicsSnapshotIsBounded(snapshot) {
+  return (
+    snapshot.ready &&
+    allFinite([
+      snapshot.simulationTime,
+      snapshot.position.x,
+      snapshot.position.y,
+      snapshot.position.z,
+      snapshot.linearSpeed,
+      snapshot.angularSpeed,
+      snapshot.quaternionNorm,
+      snapshot.directionLength,
+      snapshot.submergedRatio,
+      snapshot.droppedTime,
+    ]) &&
+    Math.abs(snapshot.position.x) < 1_000 &&
+    snapshot.position.y > -50 &&
+    snapshot.position.y < 100 &&
+    Math.abs(snapshot.position.z) < 1_000 &&
+    snapshot.linearSpeed >= 0 &&
+    snapshot.linearSpeed < 150 &&
+    snapshot.angularSpeed >= 0 &&
+    snapshot.angularSpeed < 13 &&
+    snapshot.quaternionNorm > 0.97 &&
+    snapshot.quaternionNorm < 1.03 &&
+    snapshot.directionLength > 0.9 &&
+    snapshot.directionLength < 1.1 &&
+    snapshot.submergedRatio >= 0 &&
+    snapshot.submergedRatio <= 1 &&
+    snapshot.droppedTime >= 0
+  );
+}
+
+async function readPhysicsSnapshot(page) {
+  return page.evaluate(() => {
+    const dataset = document.documentElement.dataset;
+    const readNumber = (key) => Number(dataset[key]);
+
+    return {
+      ready: dataset.simReady === '1',
+      simulationTime: readNumber('simTime'),
+      position: {
+        x: readNumber('simBoatX'),
+        y: readNumber('simBoatY'),
+        z: readNumber('simBoatZ'),
+      },
+      linearSpeed: readNumber('simLinearSpeed'),
+      angularSpeed: readNumber('simAngularSpeed'),
+      quaternionNorm: readNumber('simQuaternionNorm'),
+      directionLength: readNumber('simDirectionLength'),
+      submergedRatio: readNumber('simSubmergedRatio'),
+      droppedTime: readNumber('simDroppedTime'),
+    };
+  });
+}
+
+async function exerciseVesselControls(page, scenarioName) {
+  const inputDurationMs = 1_800;
+
+  if (scenarioName === 'desktop') {
+    await page.keyboard.down('w');
+    await page.keyboard.down('a');
+    await page.waitForTimeout(inputDurationMs);
+    await page.keyboard.up('a');
+    await page.keyboard.up('w');
+    return;
+  }
+
+  const throttle = page.locator('[aria-label="Throttle forward"]');
+  const steering = page.locator('[aria-label="Steer left"]');
+  await throttle.dispatchEvent('pointerdown', {
+    pointerId: 1,
+    pointerType: 'touch',
+    isPrimary: true,
+    buttons: 1,
+  });
+  await steering.dispatchEvent('pointerdown', {
+    pointerId: 2,
+    pointerType: 'touch',
+    isPrimary: false,
+    buttons: 1,
+  });
+  await page.waitForTimeout(inputDurationMs);
+  await steering.dispatchEvent('pointerup', {
+    pointerId: 2,
+    pointerType: 'touch',
+    isPrimary: false,
+    buttons: 0,
+  });
+  await throttle.dispatchEvent('pointerup', {
+    pointerId: 1,
+    pointerType: 'touch',
+    isPrimary: true,
+    buttons: 0,
+  });
+}
+
 try {
   for (const scenario of scenarios) {
     const context = await browser.newContext(scenario.context);
@@ -76,7 +177,38 @@ try {
     });
 
     await page.waitForSelector('canvas', { timeout: 60_000 });
-    await page.waitForTimeout(12_000);
+    await page.waitForSelector('select[aria-label="Rendering quality"]', {
+      timeout: 60_000,
+    });
+    await page.selectOption(
+      'select[aria-label="Rendering quality"]',
+      'low',
+    );
+    await page.waitForFunction(
+      () => document.documentElement.dataset.simReady === '1',
+      { timeout: 60_000 },
+    );
+    await page.waitForTimeout(4_000);
+
+    const physicsBefore = await readPhysicsSnapshot(page);
+    await exerciseVesselControls(page, scenario.name);
+    await page.waitForTimeout(1_500);
+    const physicsAfter = await readPhysicsSnapshot(page);
+
+    const displacement = Math.hypot(
+      physicsAfter.position.x - physicsBefore.position.x,
+      physicsAfter.position.y - physicsBefore.position.y,
+      physicsAfter.position.z - physicsBefore.position.z,
+    );
+    const simulationAdvance =
+      physicsAfter.simulationTime - physicsBefore.simulationTime;
+    const physicsChecks = {
+      beforeBounded: physicsSnapshotIsBounded(physicsBefore),
+      afterBounded: physicsSnapshotIsBounded(physicsAfter),
+      simulationAdvanced: simulationAdvance > 0.5,
+      vesselResponded:
+        displacement > 0.05 || physicsAfter.linearSpeed > 0.05,
+    };
 
     const runtime = await page.evaluate(() => {
       const canvas = document.querySelector('canvas');
@@ -137,6 +269,7 @@ try {
       scenario.name === 'mobile'
         ? runtime.hasTouchControls && !runtime.hasBenchmarkControls
         : runtime.hasBenchmarkControls;
+    const physicsChecksPass = Object.values(physicsChecks).every(Boolean);
     const scenarioFailed =
       !response?.ok() ||
       runtime.title !== expectedTitle ||
@@ -148,13 +281,21 @@ try {
       runtime.verticalOverflow ||
       !runtime.qualityMode ||
       !runtime.hasFpsReadout ||
-      !responsiveChecksPass;
+      !responsiveChecksPass ||
+      !physicsChecksPass;
 
     hasFatalError ||= scenarioFailed;
     report.scenarios.push({
       name: scenario.name,
       responseStatus: response?.status() ?? null,
       runtime,
+      physics: {
+        before: physicsBefore,
+        after: physicsAfter,
+        displacement,
+        simulationAdvance,
+        checks: physicsChecks,
+      },
       consoleEntries,
       pageErrors,
       failedRequests,
