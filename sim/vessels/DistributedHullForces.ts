@@ -77,12 +77,22 @@ export class DistributedHullForces {
   }: ApplyDistributedHullForcesOptions): DistributedHullForceResult {
     this.forwardAxis
       .set(0, 0, -1)
-      .applyQuaternion(body.quaternion)
-      .normalize();
+      .applyQuaternion(body.quaternion);
+    this.forwardAxis.y = 0;
+    if (this.forwardAxis.lengthSq() > EPSILON) {
+      this.forwardAxis.normalize();
+    } else {
+      this.forwardAxis.set(0, 0, -1);
+    }
     this.rightAxis
       .set(-1, 0, 0)
-      .applyQuaternion(body.quaternion)
-      .normalize();
+      .applyQuaternion(body.quaternion);
+    this.rightAxis.y = 0;
+    if (this.rightAxis.lengthSq() > EPSILON) {
+      this.rightAxis.normalize();
+    } else {
+      this.rightAxis.set(-1, 0, 0);
+    }
     this.upAxis
       .set(0, 1, 0)
       .applyQuaternion(body.quaternion)

@@ -602,8 +602,8 @@ export default function Boat() {
       .set(0, 1, 0)
       .applyQuaternion(body.quaternion).y;
     const uprightSteeringAuthority = MathUtils.smoothstep(
-      Math.abs(uprightY),
-      0.18,
+      uprightY,
+      0.08,
       0.78,
     );
     const rudderForceMagnitude =
@@ -620,13 +620,19 @@ export default function Boat() {
     );
 
     if (vessel.planingCapable && speedRatio > 0.15) {
-      // The component of current-up × world-up along the vessel's forward
-      // axis gives a signed roll error without depending on Euler angles or a
-      // horizontalized body axis. This remains valid through large banks.
-      const signedRollError = scratch.rollStabilityTorque
+      // atan2(sin, cos) provides a signed roll error through the full
+      // orientation range. Unlike a sine-only term, it does not lose all
+      // righting authority when the hull approaches an inverted attitude.
+      const rollSin = scratch.rollStabilityTorque
         .copy(scratch.boatUp)
         .cross(scratch.worldUp)
         .dot(forwardDir);
+      const rollCos = MathUtils.clamp(
+        scratch.boatUp.dot(scratch.worldUp),
+        -1,
+        1,
+      );
+      const signedRollRadians = Math.atan2(rollSin, rollCos);
       const rollRateRadPerSecond =
         body.angularVelocity.dot(forwardDir);
       const stabilityBlend = MathUtils.smoothstep(
@@ -635,10 +641,10 @@ export default function Boat() {
         0.65,
       );
       const rollStabilityTorqueNm = MathUtils.clamp(
-        signedRollError * mass * 18 -
-          rollRateRadPerSecond * mass * 6.5,
-        -mass * 28,
-        mass * 28,
+        signedRollRadians * mass * 24 -
+          rollRateRadPerSecond * mass * 8,
+        -mass * 45,
+        mass * 45,
       );
       body.addTorque(
         scratch.rollStabilityTorque
