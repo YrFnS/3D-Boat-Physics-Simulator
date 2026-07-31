@@ -97,6 +97,8 @@ The quality selector is available in production and its selection is remembered.
 
 Append `?debug=1` to enable FPS metrics and Calm/Storm benchmark controls. Append `?debug=0` to clear the remembered debug preference.
 
+The browser smoke test performs held propulsion and steering input at desktop and mobile sizes. It validates finite and bounded position, linear and angular speed, quaternion normalization, direction normalization, submersion range, simulation-clock progress, and observable vessel response.
+
 ## Project structure
 
 - `app/`: App Router entry point and global styles
