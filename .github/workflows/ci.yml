@@ -6,9 +6,11 @@ on:
       - agent/phase-2-fixed-timestep-physics
     paths:
       - .github/workflows/ci.yml
+      - scripts/run-vessel-calibration-patched.mjs
   pull_request:
     paths:
       - .github/workflows/ci.yml
+      - scripts/run-vessel-calibration-patched.mjs
 
 permissions:
   contents: write
@@ -41,11 +43,12 @@ jobs:
           cache: npm
 
       - name: Apply guarded calibration integration
-        run: node scripts/apply-vessel-calibration.mjs
+        run: node scripts/run-vessel-calibration-patched.mjs
 
       - name: Remove one-time integration tooling
         run: |
           rm -f scripts/apply-vessel-calibration.mjs
+          rm -f scripts/run-vessel-calibration-patched.mjs
           rm -f .github/workflows/apply-vessel-calibration.yml
 
       - name: Restore permanent read-only CI
