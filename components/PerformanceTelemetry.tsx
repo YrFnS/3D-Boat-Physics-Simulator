@@ -26,6 +26,11 @@ const PHYSICS_DATASET_KEYS = [
   'simCollisionMaxImpulse',
   'simCollisionMaxPenetration',
   'simHullHealth',
+  'simFps',
+  'simFrameTimeMs',
+  'simDrawCalls',
+  'simTriangles',
+  'simRenderQuality',
   'simCalibrationReady',
   'simCalibrationPassed',
   'simCalibrationProgress',
@@ -37,7 +42,7 @@ const PHYSICS_DATASET_KEYS = [
 function publishPhysicsDiagnostics() {
   const root = document.documentElement;
   const quaternion = sharedPhysics.boatQuaternion;
-  const { hullHealth } = useSimStore.getState();
+  const simulator = useSimStore.getState();
 
   root.dataset.simReady = '1';
   root.dataset.simTime = String(sharedPhysics.simulationTime);
@@ -81,7 +86,12 @@ function publishPhysicsDiagnostics() {
   root.dataset.simCollisionMaxPenetration = String(
     sharedPhysics.collisionMaxPenetration,
   );
-  root.dataset.simHullHealth = String(hullHealth);
+  root.dataset.simHullHealth = String(simulator.hullHealth);
+  root.dataset.simFps = String(simulator.fps);
+  root.dataset.simFrameTimeMs = String(simulator.frameTimeMs);
+  root.dataset.simDrawCalls = String(simulator.drawCalls);
+  root.dataset.simTriangles = String(simulator.triangles);
+  root.dataset.simRenderQuality = simulator.renderQuality;
   root.dataset.simCalibrationReady = String(sharedPhysics.calibrationReady);
   root.dataset.simCalibrationPassed = String(sharedPhysics.calibrationPassed);
   root.dataset.simCalibrationProgress = String(
