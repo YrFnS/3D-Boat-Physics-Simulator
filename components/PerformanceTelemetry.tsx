@@ -17,11 +17,21 @@ const PHYSICS_DATASET_KEYS = [
   'simDirectionLength',
   'simSubmergedRatio',
   'simDroppedTime',
+  'simCollisionReady',
+  'simCollisionSequence',
+  'simTerrainCollisionSequence',
+  'simObstacleCollisionSequence',
+  'simDebugProbeCollisionSequence',
+  'simCollisionMaxImpactSpeed',
+  'simCollisionMaxImpulse',
+  'simCollisionMaxPenetration',
+  'simHullHealth',
 ] as const;
 
 function publishPhysicsDiagnostics() {
   const root = document.documentElement;
   const quaternion = sharedPhysics.boatQuaternion;
+  const { hullHealth } = useSimStore.getState();
 
   root.dataset.simReady = '1';
   root.dataset.simTime = String(sharedPhysics.simulationTime);
@@ -45,6 +55,27 @@ function publishPhysicsDiagnostics() {
   root.dataset.simDirectionLength = String(sharedPhysics.boatDir.length());
   root.dataset.simSubmergedRatio = String(sharedPhysics.submergedRatio);
   root.dataset.simDroppedTime = String(sharedPhysics.droppedSimulationTime);
+  root.dataset.simCollisionReady = String(sharedPhysics.collisionReady);
+  root.dataset.simCollisionSequence = String(sharedPhysics.collisionSequence);
+  root.dataset.simTerrainCollisionSequence = String(
+    sharedPhysics.terrainCollisionSequence,
+  );
+  root.dataset.simObstacleCollisionSequence = String(
+    sharedPhysics.obstacleCollisionSequence,
+  );
+  root.dataset.simDebugProbeCollisionSequence = String(
+    sharedPhysics.debugProbeCollisionSequence,
+  );
+  root.dataset.simCollisionMaxImpactSpeed = String(
+    sharedPhysics.collisionMaxImpactSpeed,
+  );
+  root.dataset.simCollisionMaxImpulse = String(
+    sharedPhysics.collisionMaxImpulse,
+  );
+  root.dataset.simCollisionMaxPenetration = String(
+    sharedPhysics.collisionMaxPenetration,
+  );
+  root.dataset.simHullHealth = String(hullHealth);
 }
 
 export default function PerformanceTelemetry() {
