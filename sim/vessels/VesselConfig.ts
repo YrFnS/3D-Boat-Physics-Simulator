@@ -3,6 +3,9 @@ import type { BoatType } from '@/store/useSimStore';
 export interface VesselConfig {
   type: BoatType;
   massKg: number;
+  principalInertiaKgM2: readonly [number, number, number];
+  angularDampingPerSecond: readonly [number, number, number];
+  centerOfMassLocal: readonly [number, number, number];
   engineForceMaxN: number;
   forwardDragCoefficient: number;
   keelDragMultiplier: number;
@@ -22,12 +25,20 @@ export interface VesselConfig {
   rotationResponse: number;
   planingCapable: boolean;
   planingReferenceSpeedMps: number;
+  propellerPointLocal: readonly [number, number, number];
+  rudderPointLocal: readonly [number, number, number];
+  windPointLocal: readonly [number, number, number];
 }
 
 const VESSEL_CONFIGS: Readonly<Record<BoatType, Readonly<VesselConfig>>> = {
   trawler: Object.freeze({
     type: 'trawler',
     massKg: 1_500,
+    // Box-derived starting values, tuned to keep the heavier trawler stable
+    // while still allowing visible pitch, roll, and yaw response.
+    principalInertiaKgM2: [3_300, 3_800, 1_050],
+    angularDampingPerSecond: [3.8, 2.8, 4.2],
+    centerOfMassLocal: [0, -0.15, 0.2],
     engineForceMaxN: 12_000,
     forwardDragCoefficient: 250,
     keelDragMultiplier: 6,
@@ -47,10 +58,16 @@ const VESSEL_CONFIGS: Readonly<Record<BoatType, Readonly<VesselConfig>>> = {
     rotationResponse: 3,
     planingCapable: false,
     planingReferenceSpeedMps: 15,
+    propellerPointLocal: [0, -0.45, 2.25],
+    rudderPointLocal: [0, -0.35, 2.1],
+    windPointLocal: [0, 1.65, 0.7],
   }),
   speedboat: Object.freeze({
     type: 'speedboat',
     massKg: 800,
+    principalInertiaKgM2: [1_150, 1_250, 250],
+    angularDampingPerSecond: [3.2, 2.2, 3.6],
+    centerOfMassLocal: [0, -0.1, 0.35],
     engineForceMaxN: 25_000,
     forwardDragCoefficient: 180,
     keelDragMultiplier: 3,
@@ -70,6 +87,9 @@ const VESSEL_CONFIGS: Readonly<Record<BoatType, Readonly<VesselConfig>>> = {
     rotationResponse: 5,
     planingCapable: true,
     planingReferenceSpeedMps: 15,
+    propellerPointLocal: [0, -0.35, 1.95],
+    rudderPointLocal: [0, -0.3, 1.8],
+    windPointLocal: [0, 0.85, 0.35],
   }),
 };
 
