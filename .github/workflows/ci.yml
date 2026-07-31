@@ -41,7 +41,7 @@ jobs:
           cache: npm
 
       - name: Apply guarded contact integration
-        run: node scripts/apply-phase2-contact-scenarios.mjs
+        run: node scripts/run-phase2-contact-scenarios-patched.mjs
 
       - name: Check calibration runner syntax
         run: node --check scripts/physics-calibration.mjs
