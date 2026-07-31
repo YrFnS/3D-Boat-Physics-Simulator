@@ -1,0 +1,304 @@
+name: Apply Phase 4 release validation fix
+
+on:
+  push:
+    branches:
+      - agent/phase-4-release-validation
+    paths:
+      - .github/workflows/p4-apply-release-fix.yml
+
+permissions:
+  contents: write
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  apply:
+    name: Apply guarded release-test changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out Phase 4 branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-4-release-validation
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply guarded source changes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          script_path = Path('scripts/release-validation.mjs')
+          script = script_path.read_text(encoding='utf-8')
+
+          replacements = [
+              (
+                  "import { chromium, firefox, webkit } from 'playwright';\n",
+                  "import { chromium, firefox, webkit } from 'playwright';\nimport sharp from 'sharp';\n",
+              ),
+              (
+                  """  {
+              name: 'firefox',
+              browserType: firefox,
+              launchOptions: {
+                headless: true,
+                firefoxUserPrefs: {
+                  'webgl.disabled': false,
+                  'webgl.force-enabled': true,
+                  'gfx.webrender.all': true,
+                },
+              },
+            },
+          """,
+                  """  {
+              name: 'firefox',
+              browserType: firefox,
+              launchOptions: {
+                headless: process.env.P4_FIREFOX_HEADED !== '1',
+                env: {
+                  ...process.env,
+                  LIBGL_ALWAYS_SOFTWARE: '1',
+                  MOZ_WEBRENDER: '1',
+                },
+                firefoxUserPrefs: {
+                  'webgl.disabled': false,
+                  'webgl.force-enabled': true,
+                  'gfx.webrender.all': true,
+                },
+              },
+            },
+          """,
+              ),
+              (
+                  """function runtimeIsValid(runtime) {
+            return (
+              runtime.title === '3D Boat Physics Simulator' &&
+              runtime.canvas !== null &&
+              runtime.canvas.width > 0 &&
+              runtime.canvas.height > 0 &&
+              runtime.canvas.clientWidth === runtime.viewport.width &&
+              runtime.canvas.clientHeight === runtime.viewport.height &&
+              !runtime.horizontalOverflow &&
+              !runtime.verticalOverflow
+            );
+          }
+
+          async function auditAccessibility(page) {
+          """,
+                  """function runtimeIsValid(runtime) {
+            return (
+              runtime.title === '3D Boat Physics Simulator' &&
+              runtime.canvas !== null &&
+              runtime.canvas.width > 0 &&
+              runtime.canvas.height > 0 &&
+              runtime.canvas.clientWidth === runtime.viewport.width &&
+              runtime.canvas.clientHeight === runtime.viewport.height &&
+              !runtime.horizontalOverflow &&
+              !runtime.verticalOverflow
+            );
+          }
+
+          async function captureVisualSnapshot(page, fileName) {
+            const screenshotPath = path.join(outputDirectory, fileName);
+            await page.screenshot({ path: screenshotPath, fullPage: false });
+
+            const metadata = await sharp(screenshotPath).metadata();
+            const width = metadata.width ?? 0;
+            const height = metadata.height ?? 0;
+            if (width < 16 || height < 16) {
+              return {
+                fileName,
+                width,
+                height,
+                entropy: 0,
+                meanDeviation: 0,
+                dynamicRange: 0,
+                passed: false,
+              };
+            }
+
+            const left = Math.floor(width * 0.28);
+            const top = Math.floor(height * 0.22);
+            const cropWidth = Math.max(1, Math.floor(width * 0.44));
+            const cropHeight = Math.max(1, Math.floor(height * 0.56));
+            const stats = await sharp(screenshotPath)
+              .extract({ left, top, width: cropWidth, height: cropHeight })
+              .removeAlpha()
+              .stats();
+            const channels = stats.channels.slice(0, 3);
+            const meanDeviation =
+              channels.reduce((total, channel) => total + channel.stdev, 0) /
+              Math.max(1, channels.length);
+            const dynamicRange = Math.max(
+              ...channels.map((channel) => channel.max - channel.min),
+            );
+
+            return {
+              fileName,
+              width,
+              height,
+              entropy: stats.entropy,
+              meanDeviation,
+              dynamicRange,
+              passed:
+                Number.isFinite(stats.entropy) &&
+                stats.entropy > 0.75 &&
+                meanDeviation > 2.5 &&
+                dynamicRange > 20,
+            };
+          }
+
+          async function auditAccessibility(page) {
+          """,
+              ),
+              (
+                  """  let flowError = null;
+            let menuAccessibility = null;
+            let pauseAccessibility = null;
+            let settingsAccessibility = null;
+          """,
+                  """  let flowError = null;
+            let visual = null;
+            let menuAccessibility = null;
+            let pauseAccessibility = null;
+            let settingsAccessibility = null;
+          """,
+              ),
+              (
+                  """    await page.screenshot({
+              path: path.join(outputDirectory, `${engineName}-product.png`),
+              fullPage: false,
+            });
+          """,
+                  """    visual = await captureVisualSnapshot(
+              page,
+              `${engineName}-product.png`,
+            );
+          """,
+              ),
+              (
+                  """    recorder.failedRequests.length === 0 &&
+              recorder.externalRequests.length === 0;
+
+            const result = {
+              responseStatus,
+              runtime,
+              checks,
+          """,
+                  """    recorder.failedRequests.length === 0 &&
+              recorder.externalRequests.length === 0 &&
+              visual?.passed === true;
+
+            const result = {
+              responseStatus,
+              runtime,
+              visual,
+              checks,
+          """,
+              ),
+              (
+                  """  let after = null;
+            let displacement = null;
+            let flowError = null;
+          """,
+                  """  let after = null;
+            let displacement = null;
+            let visual = null;
+            let flowError = null;
+          """,
+              ),
+              (
+                  """    await page.screenshot({
+              path: path.join(outputDirectory, `${engineName}-physics.png`),
+              fullPage: false,
+            });
+          """,
+                  """    visual = await captureVisualSnapshot(
+              page,
+              `${engineName}-physics.png`,
+            );
+          """,
+              ),
+              (
+                  """    recorder.failedRequests.length === 0 &&
+              recorder.externalRequests.length === 0;
+
+            const result = {
+              responseStatus,
+              before,
+              after,
+              displacement,
+          """,
+                  """    recorder.failedRequests.length === 0 &&
+              recorder.externalRequests.length === 0 &&
+              visual?.passed === true;
+
+            const result = {
+              responseStatus,
+              before,
+              after,
+              displacement,
+              visual,
+          """,
+              ),
+          ]
+
+          for old, new in replacements:
+              count = script.count(old)
+              if count != 1:
+                  raise SystemExit(
+                      f'Guarded replacement expected exactly once, found {count}: {old[:80]!r}'
+                  )
+              script = script.replace(old, new, 1)
+
+          script_path.write_text(script, encoding='utf-8')
+
+          workflow_path = Path('.github/workflows/release-validation.yml')
+          workflow = workflow_path.read_text(encoding='utf-8')
+          old = """      - name: Run cross-browser release validation
+                id: release_validation
+                continue-on-error: true
+                run: node scripts/release-validation.mjs
+          """
+          new = """      - name: Run cross-browser release validation
+                id: release_validation
+                continue-on-error: true
+                env:
+                  P4_FIREFOX_HEADED: '1'
+                run: >-
+                  xvfb-run --auto-servernum
+                  --server-args='-screen 0 1600x1200x24'
+                  node scripts/release-validation.mjs
+          """
+          count = workflow.count(old)
+          if count != 1:
+              raise SystemExit(f'Workflow replacement expected exactly once, found {count}')
+          workflow_path.write_text(workflow.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate modified release harness
+        run: |
+          npm run lint
+          npm run typecheck
+
+      - name: Commit guarded changes and remove this one-time workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/p4-apply-release-fix.yml
+          git add scripts/release-validation.mjs .github/workflows/release-validation.yml
+          git commit -m 'test: run Firefox release validation under Xvfb'
+          git push origin HEAD:agent/phase-4-release-validation
