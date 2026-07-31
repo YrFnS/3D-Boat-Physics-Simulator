@@ -22,6 +22,8 @@ import ContextualControlHints from './ContextualControlHints';
 import EnvironmentRig from './EnvironmentRig';
 import ExperienceChrome from './ExperienceChrome';
 import ExperiencePersistence from './ExperiencePersistence';
+import FreeNavigationDirector from './FreeNavigationDirector';
+import GameplayPersistence from './GameplayPersistence';
 import HUD from './HUD';
 import HurricaneClouds from './HurricaneClouds';
 import InputModeTracker from './InputModeTracker';
@@ -33,6 +35,7 @@ import PerformanceHUD from './PerformanceHUD';
 import PerformanceTelemetry from './PerformanceTelemetry';
 import QualityPersistence from './QualityPersistence';
 import ScenarioDirector from './ScenarioDirector';
+import ScenarioEntities from './ScenarioEntities';
 import ScenarioResultOverlay from './ScenarioResultOverlay';
 import ScenarioWaypoints from './ScenarioWaypoints';
 import SessionOverlay from './SessionOverlay';
@@ -233,6 +236,7 @@ export default function Simulator() {
     <div className="relative h-screen w-full select-none overflow-hidden bg-slate-900">
       <QualityPersistence />
       <ExperiencePersistence automationMode={automationMode} />
+      <GameplayPersistence automationMode={automationMode} />
       <SettingsPersistence automationMode={automationMode} />
       <InputModeTracker />
       <Canvas
@@ -265,7 +269,9 @@ export default function Simulator() {
           <EnvironmentRig />
           <Boat key={`${activeBoat}-${resetVesselTrigger}`} />
           <ScenarioDirector enabled={!automationMode} />
+          <FreeNavigationDirector enabled={!automationMode} />
           <ScenarioWaypoints enabled={!automationMode} />
+          <ScenarioEntities enabled={!automationMode} />
           <CameraRig />
           <HurricaneClouds />
           <Tornado />
