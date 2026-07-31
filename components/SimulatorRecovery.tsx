@@ -17,8 +17,7 @@ export function detectWebGLSupport() {
   try {
     const canvas = document.createElement('canvas');
     return Boolean(
-      canvas.getContext('webgl2', { failIfMajorPerformanceCaveat: true }) ||
-        canvas.getContext('webgl', { failIfMajorPerformanceCaveat: true }),
+      canvas.getContext('webgl2') || canvas.getContext('webgl'),
     );
   } catch {
     return false;
