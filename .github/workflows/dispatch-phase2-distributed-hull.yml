@@ -1,5 +1,6 @@
 name: Dispatch distributed hull integration
 
+# Updating this file triggers the dispatcher after the workflow exists on the branch.
 on:
   push:
     branches:
