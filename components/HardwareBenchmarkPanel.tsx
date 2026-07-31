@@ -99,13 +99,6 @@ const RELEASE_TIMING: BenchmarkTiming = {
   sampleIntervalMs: 500,
 };
 
-const QUICK_TIMING: BenchmarkTiming = {
-  warmupSteps: 4,
-  warmupStepMs: 250,
-  sampleCount: 4,
-  sampleIntervalMs: 500,
-};
-
 const PRESETS: Record<
   BenchmarkPreset,
   {
@@ -145,14 +138,6 @@ function wait(duration: number) {
   return new Promise<void>((resolve) => {
     window.setTimeout(resolve, duration);
   });
-}
-
-function readTiming(): BenchmarkTiming {
-  if (typeof window === 'undefined') return RELEASE_TIMING;
-  const params = new URLSearchParams(window.location.search);
-  return params.get('benchmarkQuick') === '1'
-    ? QUICK_TIMING
-    : RELEASE_TIMING;
 }
 
 function average(values: number[]) {
@@ -348,7 +333,7 @@ function toChecklistRow(result: HardwareBenchmarkResult) {
 }
 
 export default function HardwareBenchmarkPanel() {
-  const [timing] = useState(readTiming);
+  const timing = RELEASE_TIMING;
   const [phase, setPhase] = useState<BenchmarkPhase>('idle');
   const [progress, setProgress] = useState(0);
   const [activePreset, setActivePreset] =
@@ -357,8 +342,6 @@ export default function HardwareBenchmarkPanel() {
     useState<HardwareBenchmarkResult[]>(loadStoredResults);
   const [deviceLabel, setDeviceLabel] = useState(loadDeviceLabel);
   const [notes, setNotes] = useState('');
-  const [deviceProfile, setDeviceProfile] =
-    useState<DeviceProfile | null>(null);
   const [copyStatus, setCopyStatus] = useState('');
   const qualityMode = useSimStore((state) => state.qualityMode);
   const renderQuality = useSimStore((state) => state.renderQuality);
@@ -369,16 +352,12 @@ export default function HardwareBenchmarkPanel() {
 
   useEffect(() => {
     mountedRef.current = true;
-    const timer = window.setTimeout(() => {
-      setDeviceProfile(collectDeviceProfile(deviceLabel));
-    }, 500);
 
     return () => {
       mountedRef.current = false;
       cancelledRef.current = true;
-      window.clearTimeout(timer);
     };
-  }, [deviceLabel]);
+  }, []);
 
   const persistResults = (nextResults: HardwareBenchmarkResult[]) => {
     try {
@@ -545,7 +524,6 @@ export default function HardwareBenchmarkPanel() {
         device: collectDeviceProfile(deviceLabel),
       };
 
-      setDeviceProfile(result.device);
       setResults((previousResults) => {
         const nextResults = [result, ...previousResults].slice(
           0,
@@ -607,6 +585,7 @@ export default function HardwareBenchmarkPanel() {
 
   const isRunning = phase !== 'idle';
   const lastResult = results[0] ?? null;
+  const profile = lastResult?.device ?? null;
   const warmupSeconds =
     (timing.warmupSteps * timing.warmupStepMs) / 1000;
   const measurementSeconds =
@@ -683,19 +662,24 @@ export default function HardwareBenchmarkPanel() {
       </label>
 
       <div className="mt-3 rounded-xl border border-white/8 bg-white/[0.035] p-3 text-[10px] leading-4 text-slate-400">
-        <div className="font-semibold text-slate-200">
-          {deviceProfile?.browser ?? 'Detecting browser'} ·{' '}
-          {deviceProfile?.operatingSystem ?? 'Detecting OS'} ·{' '}
-          {renderQuality.toUpperCase()} active
-        </div>
-        <div className="mt-1 break-words">
-          GPU: {deviceProfile?.gpuRenderer ?? 'Detecting WebGL renderer'}
-        </div>
-        <div>
-          Viewport: {window.innerWidth}×{window.innerHeight} · DPR{' '}
-          {window.devicePixelRatio.toFixed(2)} ·{' '}
-          {deviceProfile?.orientation ?? 'unknown orientation'}
-        </div>
+        {profile ? (
+          <>
+            <div className="font-semibold text-slate-200">
+              {profile.browser} · {profile.operatingSystem} ·{' '}
+              {renderQuality.toUpperCase()} active
+            </div>
+            <div className="mt-1 break-words">GPU: {profile.gpuRenderer}</div>
+            <div>
+              Viewport: {profile.viewportWidth}×{profile.viewportHeight} · DPR{' '}
+              {profile.devicePixelRatio.toFixed(2)} · {profile.orientation}
+            </div>
+          </>
+        ) : (
+          <div>
+            Browser, GPU, viewport, orientation, CPU, memory, and touch details
+            are captured when the first run starts.
+          </div>
+        )}
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2">
