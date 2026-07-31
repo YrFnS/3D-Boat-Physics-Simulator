@@ -52,118 +52,116 @@ function createTelemetry(): FreeNavigationTelemetry {
   };
 }
 
-export const useNavigationPlanner = create<NavigationPlannerState>(
-  (set, get) => ({
-    mode: 'mission',
-    status: 'idle',
-    waypoints: [],
-    activeWaypointIndex: 0,
-    ...createTelemetry(),
+export const useNavigationPlanner = create<NavigationPlannerState>((set) => ({
+  mode: 'mission',
+  status: 'idle',
+  waypoints: [],
+  activeWaypointIndex: 0,
+  ...createTelemetry(),
 
-    setMode: (mode) =>
-      set((state) => ({
-        mode,
-        status:
-          mode === 'free'
-            ? state.waypoints.length > 0
-              ? state.status === 'completed'
-                ? 'completed'
-                : 'active'
-              : 'idle'
-            : state.status,
-      })),
+  setMode: (mode) =>
+    set((state) => ({
+      mode,
+      status:
+        mode === 'free'
+          ? state.waypoints.length > 0
+            ? state.status === 'completed'
+              ? 'completed'
+              : 'active'
+            : 'idle'
+          : state.status,
+    })),
 
-    addWaypoint: (sourceX, sourceZ) =>
-      set((state) => {
-        if (state.waypoints.length >= MAX_FREE_NAVIGATION_WAYPOINTS) {
-          return { mode: 'free' };
-        }
+  addWaypoint: (sourceX, sourceZ) =>
+    set((state) => {
+      if (state.waypoints.length >= MAX_FREE_NAVIGATION_WAYPOINTS) {
+        return { mode: 'free' };
+      }
 
-        const index = state.waypoints.length;
-        const resolved = resolveNavigablePosition(
-          sourceX,
-          sourceZ,
-          500 + index,
-        );
-        const waypoint: FreeNavigationWaypoint = {
-          id: `free-waypoint-${index + 1}`,
-          label: `Plotted mark ${index + 1}`,
-          radiusM: 20,
-          ...resolved,
-        };
-        const waypoints = [...state.waypoints, waypoint];
-        const activeWaypointIndex =
-          state.status === 'completed'
-            ? waypoints.length - 1
-            : Math.min(state.activeWaypointIndex, waypoints.length - 1);
+      const index = state.waypoints.length;
+      const resolved = resolveNavigablePosition(
+        sourceX,
+        sourceZ,
+        500 + index,
+      );
+      const waypoint: FreeNavigationWaypoint = {
+        id: `free-waypoint-${index + 1}`,
+        label: `Plotted mark ${index + 1}`,
+        radiusM: 20,
+        ...resolved,
+      };
+      const waypoints = [...state.waypoints, waypoint];
+      const activeWaypointIndex =
+        state.status === 'completed'
+          ? waypoints.length - 1
+          : Math.min(state.activeWaypointIndex, waypoints.length - 1);
 
-        return {
-          mode: 'free',
-          status: 'active',
-          waypoints,
-          activeWaypointIndex,
-          progress:
-            state.status === 'completed'
-              ? Math.max(0, (waypoints.length - 1) / waypoints.length)
-              : state.progress,
-        };
-      }),
-
-    undoWaypoint: () =>
-      set((state) => {
-        if (state.waypoints.length === 0) return {};
-        const waypoints = state.waypoints.slice(0, -1);
-        const activeWaypointIndex = Math.min(
-          state.activeWaypointIndex,
-          Math.max(0, waypoints.length - 1),
-        );
-
-        return {
-          waypoints,
-          activeWaypointIndex,
-          status: waypoints.length > 0 ? 'active' : 'idle',
-          ...createTelemetry(),
-        };
-      }),
-
-    clearWaypoints: () =>
-      set({
-        waypoints: [],
-        activeWaypointIndex: 0,
-        status: 'idle',
-        ...createTelemetry(),
-      }),
-
-    restartFreeRoute: () =>
-      set((state) => ({
+      return {
         mode: 'free',
-        activeWaypointIndex: 0,
-        status: state.waypoints.length > 0 ? 'active' : 'idle',
+        status: 'active',
+        waypoints,
+        activeWaypointIndex,
+        progress:
+          state.status === 'completed'
+            ? Math.max(0, (waypoints.length - 1) / waypoints.length)
+            : state.progress,
+      };
+    }),
+
+  undoWaypoint: () =>
+    set((state) => {
+      if (state.waypoints.length === 0) return {};
+      const waypoints = state.waypoints.slice(0, -1);
+      const activeWaypointIndex = Math.min(
+        state.activeWaypointIndex,
+        Math.max(0, waypoints.length - 1),
+      );
+
+      return {
+        waypoints,
+        activeWaypointIndex,
+        status: waypoints.length > 0 ? 'active' : 'idle',
         ...createTelemetry(),
-      })),
+      };
+    }),
 
-    setTelemetry: (telemetry) => set(telemetry),
+  clearWaypoints: () =>
+    set({
+      waypoints: [],
+      activeWaypointIndex: 0,
+      status: 'idle',
+      ...createTelemetry(),
+    }),
 
-    setActiveWaypointIndex: (activeWaypointIndex) =>
-      set({ activeWaypointIndex }),
+  restartFreeRoute: () =>
+    set((state) => ({
+      mode: 'free',
+      activeWaypointIndex: 0,
+      status: state.waypoints.length > 0 ? 'active' : 'idle',
+      ...createTelemetry(),
+    })),
 
-    completeFreeRoute: () =>
-      set({
-        status: 'completed',
-        progress: 1,
-        distanceM: 0,
-      }),
+  setTelemetry: (telemetry) => set(telemetry),
 
-    resetForScenario: () =>
-      set({
-        mode: 'mission',
-        status: 'idle',
-        waypoints: [],
-        activeWaypointIndex: 0,
-        ...createTelemetry(),
-      }),
-  }),
-);
+  setActiveWaypointIndex: (activeWaypointIndex) =>
+    set({ activeWaypointIndex }),
+
+  completeFreeRoute: () =>
+    set({
+      status: 'completed',
+      progress: 1,
+      distanceM: 0,
+    }),
+
+  resetForScenario: () =>
+    set({
+      mode: 'mission',
+      status: 'idle',
+      waypoints: [],
+      activeWaypointIndex: 0,
+      ...createTelemetry(),
+    }),
+}));
 
 export function getActiveFreeNavigationWaypoint() {
   const state = useNavigationPlanner.getState();
