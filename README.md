@@ -2,7 +2,7 @@
 
 An interactive browser-based marine simulation built with Next.js, React Three Fiber, and Three.js. The project combines procedural water, weather, vessel handling, damage, and a responsive instrument HUD in a single local-first web application.
 
-> **Project status:** the rendering and performance foundation is complete. Vessel motion now advances through a deterministic 60 Hz fixed timestep with interpolated rendering and typed per-vessel dynamics configuration. The current force model still uses custom buoyancy, drag, steering, and collision approximations; a rigid body with distributed point forces is the next physics milestone.
+> **Project status:** the rendering and performance foundation is complete. Vessel motion advances through a deterministic 60 Hz fixed timestep and now uses a custom six-degree-of-freedom body with center-of-mass integration, principal-axis inertia, gyroscopic coupling, and distributed hull forces. Collision contacts remain approximate; compound Rapier colliders and calibrated contact impulses are the next physics milestone.
 
 ## Features
 
@@ -10,7 +10,11 @@ An interactive browser-based marine simulation built with Next.js, React Three F
 - Deterministic 60 Hz vessel simulation separated from the display refresh rate.
 - Interpolated vessel rendering between completed physics states.
 - Seeded simulation-only randomness for repeatable damage and hazard behavior.
-- Typed trawler and speedboat dynamics configurations.
+- Six-degree-of-freedom vessel motion with world-space linear and angular velocity.
+- Center-of-mass-correct transform integration and principal-axis inertia.
+- Twelve-point vessel-specific hull lattices for buoyancy and hydrodynamic resistance.
+- Point-applied propeller, rudder, wind, planing, buoyancy, and drag forces.
+- Typed trawler and speedboat mass, hull, engine, inertia, damping, and force configurations.
 - GPU-generated wake field, rain, hurricane clouds, lightning, and storm effects.
 - Trawler and speedboat handling with wind, current, planing, damage, repair, and beaching behavior.
 - Procedural islands, seasonal terrain appearance, buoys, a whirlpool, and weather-gated tornado hazards.
@@ -19,7 +23,7 @@ An interactive browser-based marine simulation built with Next.js, React Three F
 - Optional FPS, draw-call, triangle, and Calm/Storm benchmark diagnostics.
 - Automated lint, type checking, dependency audit, production build, and desktop/mobile browser smoke tests.
 
-## Simulation timing
+## Simulation architecture
 
 `sim/core/FixedStepRunner.ts` owns the accumulator-based simulation clock:
 
@@ -29,7 +33,24 @@ An interactive browser-based marine simulation built with Next.js, React Three F
 - Rendering interpolates between the previous and current physics transforms.
 - Ocean and buoy visuals use interpolated simulation time, keeping water rendering aligned with vessel sampling.
 
-Simulation-affecting randomness comes from `sim/core/SeededRandom.ts`, not the browser frame loop. Vessel-specific values live in `sim/vessels/VesselConfig.ts` rather than being scattered through the React component.
+`sim/core/SixDofBody.ts` owns the authoritative vessel transform and momentum state:
+
+- Linear velocity represents the world-space velocity of the center of mass.
+- Angular velocity is exposed in world space for velocity-at-point calculations.
+- Torque is transformed into principal body axes for inertia and damping.
+- Euler's rigid-body equation includes the gyroscopic `ω × Iω` term.
+- An offset center of mass is integrated without making the visual origin orbit during pitch and roll.
+- Finite-state guards and vessel-specific angular limits prevent one invalid force from poisoning later steps.
+
+`sim/vessels/DistributedHullForces.ts` evaluates the water interaction:
+
+- Each vessel defines four longitudinal hull stations with port, center, and starboard samples.
+- Every sample follows the vessel's full quaternion and queries the same Gerstner surface rendered by the ocean shader.
+- Buoyancy is proportional to local immersion and damped by that point's vertical velocity.
+- Forward and lateral water resistance use local point velocity relative to current, so angular motion naturally creates damping torque.
+- The resulting forces are applied at their actual world positions, producing heave, pitch, roll, and yaw instead of directly assigning visual angles.
+
+Simulation-affecting randomness comes from `sim/core/SeededRandom.ts`, not the browser frame loop. Vessel-specific values and hull-force layouts live in `sim/vessels/VesselConfig.ts` rather than being scattered through the React component.
 
 ## Tech stack
 
@@ -81,15 +102,15 @@ Append `?debug=1` to enable FPS metrics and Calm/Storm benchmark controls. Appen
 - `app/`: App Router entry point and global styles
 - `components/`: simulation rendering, vessel presentation, HUD, weather, wake, and diagnostics
 - `components/boat/`: vessel audio and visual-damage subsystems
-- `sim/core/`: fixed-step timing and deterministic simulation utilities
-- `sim/vessels/`: typed vessel dynamics configuration
+- `sim/core/`: fixed-step timing, deterministic randomness, and six-degree-of-freedom integration
+- `sim/vessels/`: typed vessel configuration and distributed marine-force models
 - `lib/`: deterministic terrain and water helpers
 - `store/`: Zustand controls, telemetry, quality state, and shared high-frequency values
 - `.github/workflows/`: validation and browser smoke testing
 
 ## Next physics milestone
 
-The next Phase 2 slice will replace the scalar yaw and visual pitch/roll approximation with a six-degree-of-freedom rigid body. Buoyancy, propeller thrust, rudder forces, hydrodynamic resistance, and collision response will then be applied at physical points around a simplified hull.
+The next Phase 2 slice will replace circular obstacle response with Rapier-backed compound or convex hull contacts. Collision impulses will then drive contact response and damage, followed by calibration of draft, stability, turning circle, stopping distance, and maximum speed for each vessel.
 
 ## License
 
