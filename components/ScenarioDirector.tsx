@@ -27,6 +27,8 @@ interface RuntimeStatistics {
   collisionSequenceAtStart: number;
 }
 
+type MissionTestMode = 'complete' | 'fail' | null;
+
 const NAVIGATION_UPDATE_INTERVAL_SECONDS = 0.1;
 const MAX_OPERATIONAL_RADIUS_M = 1_500;
 const MAX_VALID_SAMPLE_DISTANCE_M = 60;
@@ -37,6 +39,14 @@ function normalizeBearing(degrees: number) {
 
 function normalizeSignedBearing(degrees: number) {
   return ((degrees + 540) % 360) - 180;
+}
+
+function readMissionTestMode(): MissionTestMode {
+  if (typeof window === 'undefined') return null;
+  const value = new URLSearchParams(window.location.search).get(
+    'missionTest',
+  );
+  return value === 'complete' || value === 'fail' ? value : null;
 }
 
 function calculateScore(
@@ -77,6 +87,8 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
     () => getResolvedScenarioRoute(activeScenario),
     [activeScenario],
   );
+  const missionTestMode = useRef<MissionTestMode>(readMissionTestMode());
+  const missionTestRunId = useRef(-1);
   const updateAccumulator = useRef(0);
   const runtime = useRef<RuntimeStatistics>({
     elapsedSeconds: 0,
@@ -222,6 +234,24 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
       };
       store.finishScenario(result);
     };
+
+    if (
+      missionTestMode.current &&
+      missionTestRunId.current !== scenarioRunId &&
+      statistics.elapsedSeconds >= 0.75
+    ) {
+      missionTestRunId.current = scenarioRunId;
+      if (missionTestMode.current === 'complete') {
+        finish(
+          'completed',
+          'Automated mission completion probe passed.',
+          route.length,
+        );
+      } else {
+        finish('failed', 'Automated mission failure probe passed.', 0);
+      }
+      return;
+    }
 
     if (store.hullHealth <= scenario.mission.failureHullHealth) {
       finish(
