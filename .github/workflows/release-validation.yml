@@ -14,6 +14,9 @@ on:
       - package.json
       - package-lock.json
       - next.config.ts
+      - README.md
+      - RELEASE_CHECKLIST.md
+      - P4_RELEASE_VALIDATION_PLAN.md
       - .github/workflows/release-validation.yml
   push:
     branches:
@@ -30,6 +33,9 @@ on:
       - package.json
       - package-lock.json
       - next.config.ts
+      - README.md
+      - RELEASE_CHECKLIST.md
+      - P4_RELEASE_VALIDATION_PLAN.md
       - .github/workflows/release-validation.yml
   workflow_dispatch:
 
