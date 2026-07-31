@@ -1,9 +1,30 @@
 import { create } from 'zustand';
 import { Quaternion, Vector3 } from 'three';
+import { queueNextSixDofBodySpawn } from '@/sim/core/SixDofBody';
+import {
+  DEFAULT_SCENARIO_ID,
+  getScenarioDefinition,
+  SCENARIOS,
+  type ScenarioId,
+} from '@/sim/scenarios/ScenarioCatalog';
 
 export type BoatType = 'trawler' | 'speedboat';
 export type RenderQuality = 'low' | 'medium' | 'high' | 'ultra';
 export type QualityMode = 'auto' | RenderQuality;
+export type SessionPhase = 'menu' | 'running' | 'paused';
+export type CameraMode = 'chase' | 'helm' | 'orbit' | 'cinematic';
+export type ScenarioRunStatus =
+  | 'inactive'
+  | 'active'
+  | 'completed'
+  | 'failed';
+
+export const CAMERA_MODES: readonly CameraMode[] = [
+  'chase',
+  'helm',
+  'orbit',
+  'cinematic',
+] as const;
 
 export interface PerformanceTelemetry {
   fps: number;
@@ -12,7 +33,129 @@ export interface PerformanceTelemetry {
   triangles: number;
 }
 
+export interface ControlState {
+  w: boolean;
+  s: boolean;
+  a: boolean;
+  d: boolean;
+  r: boolean;
+  arrowup: boolean;
+  arrowdown: boolean;
+  arrowleft: boolean;
+  arrowright: boolean;
+}
+
+export interface ExperiencePreferences {
+  activeBoat: BoatType;
+  activeScenario: ScenarioId;
+  cameraMode: CameraMode;
+  hudVisible: boolean;
+}
+
+export interface ScenarioNavigationTelemetry {
+  elapsedSeconds: number;
+  progress: number;
+  distanceM: number;
+  bearingDeg: number;
+  relativeBearingDeg: number;
+  boatX: number;
+  boatZ: number;
+}
+
+export interface ScenarioCheckpointState {
+  id: string;
+  label: string;
+  waypointIndex: number;
+  x: number;
+  z: number;
+  headingDeg: number;
+}
+
+export interface ScenarioResult {
+  outcome: 'completed' | 'failed';
+  reason: string;
+  elapsedSeconds: number;
+  score: number;
+  waypointsCompleted: number;
+  totalWaypoints: number;
+  entitiesCompleted: number;
+  totalEntities: number;
+  hullHealth: number;
+  engineHealth: number;
+  rudderHealth: number;
+  collisionCount: number;
+  resetCount: number;
+  maximumSpeedKnots: number;
+  distanceTravelledM: number;
+  checkpointLabel: string;
+}
+
 export const MAX_OBSTACLES = 250;
+
+function createEmptyKeys(): ControlState {
+  return {
+    w: false,
+    s: false,
+    a: false,
+    d: false,
+    r: false,
+    arrowup: false,
+    arrowdown: false,
+    arrowleft: false,
+    arrowright: false,
+  };
+}
+
+function queueScenarioSpawn(
+  x: number,
+  z: number,
+  headingDeg: number,
+) {
+  queueNextSixDofBodySpawn({
+    x,
+    y: 0,
+    z,
+    headingDeg,
+  });
+}
+
+function createScenarioGameplayState(
+  scenarioRunStatus: ScenarioRunStatus,
+) {
+  return {
+    scenarioRunStatus,
+    activeWaypointIndex: 0,
+    scenarioElapsedSeconds: 0,
+    scenarioProgress: 0,
+    navigationDistanceM: 0,
+    navigationBearingDeg: 0,
+    navigationRelativeBearingDeg: 0,
+    navigationBoatX: 0,
+    navigationBoatZ: 0,
+    scenarioResult: null as ScenarioResult | null,
+    scenarioResetCount: 0,
+    completedScenarioEntityIds: [] as string[],
+    scenarioEventMessage: '',
+    scenarioCheckpointId: null as string | null,
+    scenarioCheckpointLabel: 'Departure point',
+    scenarioCheckpointWaypointIndex: -1,
+    scenarioSpawnX: 0,
+    scenarioSpawnZ: 0,
+    scenarioSpawnHeadingDeg: 0,
+  };
+}
+
+function isBoatType(value: unknown): value is BoatType {
+  return value === 'trawler' || value === 'speedboat';
+}
+
+function isCameraMode(value: unknown): value is CameraMode {
+  return CAMERA_MODES.includes(value as CameraMode);
+}
+
+function isScenarioId(value: unknown): value is ScenarioId {
+  return SCENARIOS.some((scenario) => scenario.id === value);
+}
 
 // Shared high-frequency state skips React completely so the render loop can
 // update simulation and shader inputs without forcing component renders.
@@ -52,14 +195,40 @@ export const sharedPhysics = {
 };
 
 export interface SimState {
-  windSpeed: number; // m/s
-  windDir: number; // degrees
-  currentSpeed: number; // m/s
-  currentDir: number; // degrees
-  engineThrust: number; // 0 to 1
+  windSpeed: number;
+  windDir: number;
+  currentSpeed: number;
+  currentDir: number;
+  engineThrust: number;
   activeBoat: BoatType;
 
-  // Telemetry (updated by physics)
+  sessionPhase: SessionPhase;
+  activeScenario: ScenarioId;
+  cameraMode: CameraMode;
+  hudVisible: boolean;
+  resetVesselTrigger: number;
+
+  scenarioRunStatus: ScenarioRunStatus;
+  scenarioRunId: number;
+  activeWaypointIndex: number;
+  scenarioElapsedSeconds: number;
+  scenarioProgress: number;
+  navigationDistanceM: number;
+  navigationBearingDeg: number;
+  navigationRelativeBearingDeg: number;
+  navigationBoatX: number;
+  navigationBoatZ: number;
+  scenarioResult: ScenarioResult | null;
+  scenarioResetCount: number;
+  completedScenarioEntityIds: string[];
+  scenarioEventMessage: string;
+  scenarioCheckpointId: string | null;
+  scenarioCheckpointLabel: string;
+  scenarioCheckpointWaypointIndex: number;
+  scenarioSpawnX: number;
+  scenarioSpawnZ: number;
+  scenarioSpawnHeadingDeg: number;
+
   speedKnots: number;
   heading: number;
   hullHealth: number;
@@ -67,11 +236,9 @@ export interface SimState {
   engineTemperature: number;
   rudderHealth: number;
 
-  // Environment targets
-  targetTime: number; // 0 to 24
-  targetSeason: number; // 0 to 1
+  targetTime: number;
+  targetSeason: number;
 
-  // Rendering and performance
   qualityMode: QualityMode;
   renderQuality: RenderQuality;
   fps: number;
@@ -79,20 +246,8 @@ export interface SimState {
   drawCalls: number;
   triangles: number;
 
-  // Controls
-  keys: {
-    w: boolean;
-    s: boolean;
-    a: boolean;
-    d: boolean;
-    r: boolean;
-    arrowup: boolean;
-    arrowdown: boolean;
-    arrowleft: boolean;
-    arrowright: boolean;
-  };
+  keys: ControlState;
 
-  // Actions
   setWindSpeed: (value: number) => void;
   setWindDir: (value: number) => void;
   setCurrentSpeed: (value: number) => void;
@@ -108,44 +263,77 @@ export interface SimState {
     rudder: number,
   ) => void;
   setKey: (key: string, value: boolean) => void;
+  clearKeys: () => void;
   setTargetTime: (value: number) => void;
   setTargetSeason: (value: number) => void;
   setQualityMode: (mode: QualityMode) => void;
   setRenderQuality: (quality: RenderQuality) => void;
   setPerformanceTelemetry: (telemetry: PerformanceTelemetry) => void;
+  previewScenario: (scenarioId: ScenarioId) => void;
+  startScenario: (scenarioId?: ScenarioId, boat?: BoatType) => void;
+  pauseSession: () => void;
+  resumeSession: () => void;
+  togglePause: () => void;
+  restartScenario: () => void;
+  returnToMenu: () => void;
+  setCameraMode: (mode: CameraMode) => void;
+  cycleCameraMode: () => void;
+  setHudVisible: (visible: boolean) => void;
+  toggleHud: () => void;
+  hydrateExperiencePreferences: (
+    preferences: Partial<ExperiencePreferences>,
+  ) => void;
+  setScenarioNavigation: (
+    telemetry: ScenarioNavigationTelemetry,
+  ) => void;
+  setActiveWaypointIndex: (index: number) => void;
+  completeScenarioEntities: (
+    entityIds: readonly string[],
+    message: string,
+  ) => void;
+  setScenarioCheckpoint: (
+    checkpoint: ScenarioCheckpointState,
+  ) => void;
+  finishScenario: (result: ScenarioResult) => void;
+  resetVessel: () => void;
   instantRepairTrigger: number;
   fireInstantRepair: () => void;
 }
 
-export const useSimStore = create<SimState>((set) => ({
+function resetTelemetry() {
+  return {
+    speedKnots: 0,
+    heading: 0,
+    hullHealth: 100,
+    engineHealth: 100,
+    engineTemperature: 20,
+    rudderHealth: 100,
+  };
+}
+
+export const useSimStore = create<SimState>((set, get) => ({
   windSpeed: 8,
   windDir: 90,
-  currentSpeed: 3,
-  currentDir: 0,
+  currentSpeed: 1.5,
+  currentDir: 15,
   engineThrust: 0,
   activeBoat: 'trawler',
 
-  speedKnots: 0,
-  heading: 0,
-  hullHealth: 100,
-  engineHealth: 100,
-  engineTemperature: 20,
-  rudderHealth: 100,
+  sessionPhase: 'menu',
+  activeScenario: DEFAULT_SCENARIO_ID,
+  cameraMode: 'chase',
+  hudVisible: true,
+  resetVesselTrigger: 0,
 
-  keys: {
-    w: false,
-    s: false,
-    a: false,
-    d: false,
-    r: false,
-    arrowup: false,
-    arrowdown: false,
-    arrowleft: false,
-    arrowright: false,
-  },
+  ...createScenarioGameplayState('inactive'),
+  scenarioRunId: 0,
+
+  ...resetTelemetry(),
+
+  keys: createEmptyKeys(),
 
   targetTime: 12,
-  targetSeason: 0,
+  targetSeason: 0.25,
 
   qualityMode: 'auto',
   renderQuality: 'high',
@@ -160,8 +348,28 @@ export const useSimStore = create<SimState>((set) => ({
   setWindDir: (windDir) => set({ windDir }),
   setCurrentSpeed: (currentSpeed) => set({ currentSpeed }),
   setCurrentDir: (currentDir) => set({ currentDir }),
-  setEngineThrust: (engineThrust) => set({ engineThrust }),
-  setActiveBoat: (activeBoat) => set({ activeBoat }),
+  setEngineThrust: (engineThrust) =>
+    set({ engineThrust: Math.max(-1, Math.min(1, engineThrust)) }),
+  setActiveBoat: (activeBoat) => {
+    const state = get();
+    if (state.activeBoat === activeBoat) return;
+
+    if (state.sessionPhase === 'menu') {
+      set({ activeBoat });
+      return;
+    }
+
+    queueScenarioSpawn(0, 0, 0);
+    set({
+      activeBoat,
+      engineThrust: 0,
+      keys: createEmptyKeys(),
+      resetVesselTrigger: state.resetVesselTrigger + 1,
+      scenarioRunId: state.scenarioRunId + 1,
+      ...createScenarioGameplayState('active'),
+      ...resetTelemetry(),
+    });
+  },
   setTelemetry: (
     speedKnots,
     heading,
@@ -179,7 +387,16 @@ export const useSimStore = create<SimState>((set) => ({
       rudderHealth,
     }),
   setKey: (key, value) =>
-    set((state) => ({ keys: { ...state.keys, [key]: value } })),
+    set((state) => {
+      if (!(key in state.keys)) return state;
+      return {
+        keys: {
+          ...state.keys,
+          [key]: value,
+        },
+      };
+    }),
+  clearKeys: () => set({ keys: createEmptyKeys() }),
   setTargetTime: (targetTime) => set({ targetTime }),
   setTargetSeason: (targetSeason) => set({ targetSeason }),
   setQualityMode: (qualityMode) =>
@@ -190,6 +407,206 @@ export const useSimStore = create<SimState>((set) => ({
     })),
   setRenderQuality: (renderQuality) => set({ renderQuality }),
   setPerformanceTelemetry: (telemetry) => set(telemetry),
+
+  previewScenario: (activeScenario) => {
+    const scenario = getScenarioDefinition(activeScenario);
+    set({
+      activeScenario,
+      windSpeed: scenario.windSpeed,
+      windDir: scenario.windDir,
+      currentSpeed: scenario.currentSpeed,
+      currentDir: scenario.currentDir,
+      targetTime: scenario.targetTime,
+      targetSeason: scenario.targetSeason,
+      ...createScenarioGameplayState('inactive'),
+    });
+  },
+  startScenario: (scenarioId, requestedBoat) => {
+    const state = get();
+    const activeScenario = scenarioId ?? state.activeScenario;
+    const scenario = getScenarioDefinition(activeScenario);
+    queueScenarioSpawn(0, 0, 0);
+    set({
+      activeScenario,
+      activeBoat: requestedBoat ?? state.activeBoat,
+      sessionPhase: 'running',
+      windSpeed: scenario.windSpeed,
+      windDir: scenario.windDir,
+      currentSpeed: scenario.currentSpeed,
+      currentDir: scenario.currentDir,
+      targetTime: scenario.targetTime,
+      targetSeason: scenario.targetSeason,
+      engineThrust: 0,
+      keys: createEmptyKeys(),
+      resetVesselTrigger: state.resetVesselTrigger + 1,
+      scenarioRunId: state.scenarioRunId + 1,
+      ...createScenarioGameplayState('active'),
+      ...resetTelemetry(),
+    });
+  },
+  pauseSession: () =>
+    set((state) =>
+      state.sessionPhase !== 'running' ||
+      state.scenarioRunStatus !== 'active'
+        ? {}
+        : {
+            sessionPhase: 'paused',
+            engineThrust: 0,
+            keys: createEmptyKeys(),
+          },
+    ),
+  resumeSession: () =>
+    set((state) =>
+      state.sessionPhase === 'paused' &&
+      state.scenarioRunStatus === 'active'
+        ? { sessionPhase: 'running', keys: createEmptyKeys() }
+        : state.sessionPhase === 'menu'
+          ? { sessionPhase: 'running', keys: createEmptyKeys() }
+          : {},
+    ),
+  togglePause: () =>
+    set((state) => {
+      if (
+        state.sessionPhase === 'running' &&
+        state.scenarioRunStatus === 'active'
+      ) {
+        return {
+          sessionPhase: 'paused',
+          engineThrust: 0,
+          keys: createEmptyKeys(),
+        };
+      }
+      if (
+        state.sessionPhase === 'paused' &&
+        state.scenarioRunStatus === 'active'
+      ) {
+        return { sessionPhase: 'running', keys: createEmptyKeys() };
+      }
+      return {};
+    }),
+  restartScenario: () => {
+    const state = get();
+    const scenario = getScenarioDefinition(state.activeScenario);
+    queueScenarioSpawn(0, 0, 0);
+    set({
+      sessionPhase: 'running',
+      windSpeed: scenario.windSpeed,
+      windDir: scenario.windDir,
+      currentSpeed: scenario.currentSpeed,
+      currentDir: scenario.currentDir,
+      targetTime: scenario.targetTime,
+      targetSeason: scenario.targetSeason,
+      engineThrust: 0,
+      keys: createEmptyKeys(),
+      resetVesselTrigger: state.resetVesselTrigger + 1,
+      scenarioRunId: state.scenarioRunId + 1,
+      ...createScenarioGameplayState('active'),
+      ...resetTelemetry(),
+    });
+  },
+  returnToMenu: () =>
+    set({
+      sessionPhase: 'menu',
+      engineThrust: 0,
+      keys: createEmptyKeys(),
+      ...createScenarioGameplayState('inactive'),
+    }),
+  setCameraMode: (cameraMode) => set({ cameraMode }),
+  cycleCameraMode: () =>
+    set((state) => {
+      const currentIndex = CAMERA_MODES.indexOf(state.cameraMode);
+      return {
+        cameraMode:
+          CAMERA_MODES[(currentIndex + 1) % CAMERA_MODES.length],
+      };
+    }),
+  setHudVisible: (hudVisible) => set({ hudVisible }),
+  toggleHud: () => set((state) => ({ hudVisible: !state.hudVisible })),
+  hydrateExperiencePreferences: (preferences) =>
+    set((state) => {
+      const activeScenario = isScenarioId(preferences.activeScenario)
+        ? preferences.activeScenario
+        : state.activeScenario;
+      const scenario = getScenarioDefinition(activeScenario);
+
+      return {
+        activeScenario,
+        activeBoat: isBoatType(preferences.activeBoat)
+          ? preferences.activeBoat
+          : state.activeBoat,
+        cameraMode: isCameraMode(preferences.cameraMode)
+          ? preferences.cameraMode
+          : state.cameraMode,
+        hudVisible:
+          typeof preferences.hudVisible === 'boolean'
+            ? preferences.hudVisible
+            : state.hudVisible,
+        windSpeed: scenario.windSpeed,
+        windDir: scenario.windDir,
+        currentSpeed: scenario.currentSpeed,
+        currentDir: scenario.currentDir,
+        targetTime: scenario.targetTime,
+        targetSeason: scenario.targetSeason,
+      };
+    }),
+  setScenarioNavigation: (telemetry) =>
+    set({
+      scenarioElapsedSeconds: telemetry.elapsedSeconds,
+      scenarioProgress: telemetry.progress,
+      navigationDistanceM: telemetry.distanceM,
+      navigationBearingDeg: telemetry.bearingDeg,
+      navigationRelativeBearingDeg: telemetry.relativeBearingDeg,
+      navigationBoatX: telemetry.boatX,
+      navigationBoatZ: telemetry.boatZ,
+    }),
+  setActiveWaypointIndex: (activeWaypointIndex) =>
+    set({ activeWaypointIndex }),
+  completeScenarioEntities: (entityIds, scenarioEventMessage) =>
+    set((state) => ({
+      completedScenarioEntityIds: Array.from(
+        new Set([...state.completedScenarioEntityIds, ...entityIds]),
+      ),
+      scenarioEventMessage,
+    })),
+  setScenarioCheckpoint: (checkpoint) =>
+    set({
+      scenarioCheckpointId: checkpoint.id,
+      scenarioCheckpointLabel: checkpoint.label,
+      scenarioCheckpointWaypointIndex: checkpoint.waypointIndex,
+      scenarioSpawnX: checkpoint.x,
+      scenarioSpawnZ: checkpoint.z,
+      scenarioSpawnHeadingDeg: checkpoint.headingDeg,
+      scenarioEventMessage: `Recovery checkpoint updated: ${checkpoint.label}.`,
+    }),
+  finishScenario: (scenarioResult) =>
+    set({
+      scenarioRunStatus: scenarioResult.outcome,
+      scenarioResult,
+      scenarioProgress:
+        scenarioResult.outcome === 'completed' ? 1 : get().scenarioProgress,
+      sessionPhase: 'paused',
+      engineThrust: 0,
+      keys: createEmptyKeys(),
+    }),
+  resetVessel: () => {
+    const state = get();
+    queueScenarioSpawn(
+      state.scenarioSpawnX,
+      state.scenarioSpawnZ,
+      state.scenarioSpawnHeadingDeg,
+    );
+    set({
+      engineThrust: 0,
+      keys: createEmptyKeys(),
+      resetVesselTrigger: state.resetVesselTrigger + 1,
+      scenarioResetCount:
+        state.scenarioRunStatus === 'active'
+          ? state.scenarioResetCount + 1
+          : state.scenarioResetCount,
+      scenarioEventMessage: `Vessel recovered at ${state.scenarioCheckpointLabel}.`,
+      ...resetTelemetry(),
+    });
+  },
   fireInstantRepair: () =>
     set((state) => ({
       instantRepairTrigger: state.instantRepairTrigger + 1,

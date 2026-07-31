@@ -8,10 +8,12 @@ import tseslint from 'typescript-eslint';
 const sourceFiles = ['**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}'];
 const typescriptFiles = ['**/*.{ts,tsx,mts,cts}'];
 const imperativeThreeFiles = [
+  'components/CameraRig.tsx',
   'components/EnvironmentRig.tsx',
   'components/Islands.tsx',
   'components/Ocean.tsx',
   'components/PerformanceTelemetry.tsx',
+  'components/ScenarioDirector.tsx',
   'components/WakeField.tsx',
   'components/WeatherEffects.tsx',
   'components/boat/useBoatVisualDamage.ts',

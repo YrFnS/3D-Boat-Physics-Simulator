@@ -2,6 +2,36 @@ import { Object3D, Quaternion, Vector3 } from 'three';
 
 const EPSILON = 1e-8;
 const MAX_ANGULAR_SPEED_RAD_PER_SECOND = Math.PI * 4;
+const WORLD_UP = new Vector3(0, 1, 0);
+
+export interface SixDofBodySpawn {
+  x: number;
+  y: number;
+  z: number;
+  headingDeg: number;
+}
+
+let queuedBodySpawn: SixDofBodySpawn | null = null;
+
+export function queueNextSixDofBodySpawn(spawn: SixDofBodySpawn) {
+  if (
+    !Number.isFinite(spawn.x) ||
+    !Number.isFinite(spawn.y) ||
+    !Number.isFinite(spawn.z) ||
+    !Number.isFinite(spawn.headingDeg)
+  ) {
+    queuedBodySpawn = null;
+    return;
+  }
+
+  queuedBodySpawn = { ...spawn };
+}
+
+function consumeQueuedBodySpawn() {
+  const spawn = queuedBodySpawn;
+  queuedBodySpawn = null;
+  return spawn;
+}
 
 function vectorIsFinite(value: Vector3) {
   return (
@@ -58,6 +88,18 @@ export class SixDofBody extends Object3D {
   private readonly pointOffset = new Vector3();
 
   private inverseMass = 1;
+
+  constructor() {
+    super();
+    const spawn = consumeQueuedBodySpawn();
+    if (!spawn) return;
+
+    this.position.set(spawn.x, spawn.y, spawn.z);
+    this.quaternion.setFromAxisAngle(
+      WORLD_UP,
+      (-spawn.headingDeg * Math.PI) / 180,
+    );
+  }
 
   setMassProperties(
     massKg: number,

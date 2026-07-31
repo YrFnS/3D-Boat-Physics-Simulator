@@ -149,6 +149,20 @@ async function readPhysicsSnapshot(page) {
   });
 }
 
+async function waitForSimulationAdvance(page, initialTime, requiredAdvance) {
+  await page.waitForFunction(
+    ({ startTime, minimumAdvance }) => {
+      const currentTime = Number(document.documentElement.dataset.simTime);
+      return (
+        Number.isFinite(currentTime) &&
+        currentTime - startTime >= minimumAdvance
+      );
+    },
+    { startTime: initialTime, minimumAdvance: requiredAdvance },
+    { timeout: 60_000 },
+  );
+}
+
 async function holdPointer(page, locator, durationMs) {
   await locator.waitFor({ state: 'visible' });
   await locator.scrollIntoViewIfNeeded();
@@ -248,7 +262,12 @@ try {
 
     const physicsBefore = await readPhysicsSnapshot(page);
     await exerciseVesselControls(page, scenario.name);
-    await page.waitForTimeout(1_500);
+    await waitForSimulationAdvance(
+      page,
+      physicsBefore.simulationTime,
+      scenario.name === 'collision' ? 0.75 : 0.45,
+    );
+    await page.waitForTimeout(250);
     const physicsAfter = await readPhysicsSnapshot(page);
 
     const displacement = Math.hypot(
@@ -261,8 +280,8 @@ try {
     const physicsChecks = {
       beforeBounded: physicsSnapshotIsBounded(physicsBefore),
       afterBounded: physicsSnapshotIsBounded(physicsAfter),
-      // Require at least 27 completed 60 Hz steps. Comparing against exactly
-      // 0.5 seconds is brittle because the accumulated value can be one ULP low.
+      // Require at least 27 completed 60 Hz steps, but wait on simulation time
+      // rather than assuming a loaded software renderer matches wall-clock time.
       simulationAdvanced: simulationAdvance >= 0.45,
       vesselResponded:
         displacement > 0.05 || physicsAfter.linearSpeed > 0.05,

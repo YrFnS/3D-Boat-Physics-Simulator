@@ -7,3 +7,52 @@
     100% { transform: translateX(100%); }
   }
 }
+
+:root {
+  color-scheme: dark;
+  --sim-panel-opacity: 1;
+}
+
+html[data-sim-interface-scale="compact"] {
+  font-size: 15px;
+}
+
+html[data-sim-interface-scale="default"] {
+  font-size: 16px;
+}
+
+html[data-sim-interface-scale="large"] {
+  font-size: 17.5px;
+}
+
+html[data-sim-high-contrast="1"] {
+  --sim-panel-opacity: 1.18;
+}
+
+html[data-sim-high-contrast="1"] .sim-ui-layer {
+  filter: contrast(1.12) saturate(1.05);
+}
+
+html[data-sim-high-contrast="1"] .sim-ui-layer [class*="bg-slate-950/"] {
+  background-color: rgb(2 6 23 / 0.94) !important;
+}
+
+html[data-sim-reduced-motion="1"] *,
+html[data-sim-reduced-motion="1"] *::before,
+html[data-sim-reduced-motion="1"] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
