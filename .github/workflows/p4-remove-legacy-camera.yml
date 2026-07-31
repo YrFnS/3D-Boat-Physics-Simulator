@@ -1,0 +1,113 @@
+name: Remove legacy boat camera tracker
+
+on:
+  push:
+    branches:
+      - agent/phase-4-release-validation
+    paths:
+      - .github/workflows/p4-remove-legacy-camera.yml
+
+permissions:
+  contents: write
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  cleanup:
+    name: Move all camera ownership into CameraRig
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out Phase 4 branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-4-release-validation
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Remove the obsolete Boat camera owner
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('components/Boat.tsx')
+          source = path.read_text(encoding='utf-8')
+
+          interface_block = """interface OrbitControlsLike {
+            target: Vector3;
+            update: () => void;
+          }
+
+          """
+          scratch_block = """      boatPosition: new Vector3(),
+                cameraTarget: new Vector3(),
+                cameraDelta: new Vector3(),
+                cameraOffset: new Vector3(),
+                cameraDesired: new Vector3(),
+                cameraLookAt: new Vector3(),
+          """
+          start_marker = '    // --- Camera Tracking (Orbit Controls) ---\n'
+          end_marker = '    if (!calibration) {\n'
+
+          already_clean = (
+              'interface OrbitControlsLike' not in source
+              and start_marker not in source
+              and 'cameraTarget: new Vector3()' not in source
+          )
+          if already_clean:
+              print('Legacy camera tracker is already absent.')
+          else:
+              if source.count(interface_block) != 1:
+                  raise SystemExit('Expected the OrbitControlsLike block exactly once.')
+              if source.count(scratch_block) != 1:
+                  raise SystemExit('Expected the legacy camera scratch block exactly once.')
+              start = source.find(start_marker)
+              end = source.find(end_marker, start)
+              if start < 0 or end < 0 or end <= start:
+                  raise SystemExit('Unable to isolate the legacy camera tracking block.')
+
+              source = source.replace(interface_block, '', 1)
+              source = source.replace(scratch_block, '', 1)
+              source = source[:start] + source[end:]
+
+              forbidden = [
+                  'interface OrbitControlsLike',
+                  'cameraTarget: new Vector3()',
+                  'Camera Tracking (Orbit Controls)',
+                  'state.controls',
+              ]
+              remaining = [token for token in forbidden if token in source]
+              if remaining:
+                  raise SystemExit(f'Legacy camera tokens remain: {remaining}')
+
+              path.write_text(source, encoding='utf-8')
+          PY
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate camera ownership cleanup
+        run: |
+          npm run lint
+          npm run typecheck
+
+      - name: Commit cleanup and remove this one-time workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/p4-remove-legacy-camera.yml || true
+          git add components/Boat.tsx
+          if git diff --cached --quiet; then
+            echo 'No camera cleanup changes remain to commit.'
+            exit 0
+          fi
+          git commit -m 'refactor: remove legacy boat camera tracker'
+          git push origin HEAD:agent/phase-4-release-validation
