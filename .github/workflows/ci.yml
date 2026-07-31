@@ -1,4 +1,4 @@
-name: Apply remaining Phase 2 fixes through CI
+name: Apply speedboat hydrodynamic stability through CI
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: apply-remaining-phase2-fixes
+  group: apply-speedboat-hydrodynamic-stability
   cancel-in-progress: false
 
 env:
@@ -22,7 +22,7 @@ env:
 
 jobs:
   apply:
-    name: Apply, validate, and push remaining Phase 2 fixes
+    name: Apply, validate, and push hydrodynamic stability
     if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -40,8 +40,8 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Apply guarded remaining fixes
-        run: node scripts/apply-phase2-remaining-fixes.mjs
+      - name: Apply guarded hydrodynamic stability
+        run: node scripts/apply-speedboat-hydrodynamic-stability.mjs
 
       - name: Install exact dependencies
         run: npm ci
@@ -55,12 +55,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
-            components/Boat.tsx \
-            sim/calibration/VesselCalibration.ts \
-            sim/collision/RapierCollisionWorld.ts
+            sim/vessels/VesselConfig.ts \
+            sim/vessels/DistributedHullForces.ts \
+            sim/calibration/VesselCalibration.ts
           if git diff --cached --quiet; then
-            echo "No remaining physics changes to commit."
+            echo "No hydrodynamic stability changes to commit."
             exit 0
           fi
-          git commit -m "physics: fix planing righting and predictive contacts"
+          git commit -m "physics: stabilize planing lateral resistance"
           git push origin "HEAD:agent/phase-2-fixed-timestep-physics"
