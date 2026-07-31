@@ -67,6 +67,8 @@ This document tracks the work required to turn the calibrated marine simulation 
 - [x] Validate mission-task completion and persistent scenario records.
 - [x] Preserve the deterministic vessel calibration and Rapier contact suites.
 
+Exact validated gameplay checkpoint: `82d45d3b0e5682638c92dafce1deeb2065c3745e`.
+
 ## Phase 3 exit criteria
 
 Phase 3 is complete when a first-time user can select a vessel and scenario, understand the controls, navigate an objective, pause or recover safely, use keyboard/touch/gamepad input, adjust persistent settings, and complete a scenario without developer knowledge or debug controls.
