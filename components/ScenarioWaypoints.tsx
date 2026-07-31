@@ -3,6 +3,7 @@
 import { Float, Line } from '@react-three/drei';
 import { useMemo } from 'react';
 import { getResolvedScenarioRoute } from '@/sim/scenarios/ScenarioRoute';
+import { useNavigationPlanner } from '@/store/useNavigationPlanner';
 import { useSimStore } from '@/store/useSimStore';
 
 interface ScenarioWaypointsProps {
@@ -14,26 +15,29 @@ interface WaypointBeaconProps {
   z: number;
   radiusM: number;
   state: 'completed' | 'active' | 'future';
+  activeColor: string;
 }
-
-const BEACON_COLORS = {
-  completed: '#34d399',
-  active: '#38bdf8',
-  future: '#94a3b8',
-} as const;
 
 function WaypointBeacon({
   x,
   z,
   radiusM,
   state,
+  activeColor,
 }: WaypointBeaconProps) {
-  const color = BEACON_COLORS[state];
+  const color =
+    state === 'completed'
+      ? '#34d399'
+      : state === 'active'
+        ? activeColor
+        : '#94a3b8';
   const ringRadius = Math.max(6, Math.min(radiusM, 14));
   const marker = (
     <group position={[x, 2.4, z]}>
       <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[ringRadius, state === 'active' ? 0.55 : 0.3, 10, 48]} />
+        <torusGeometry
+          args={[ringRadius, state === 'active' ? 0.55 : 0.3, 10, 48]}
+        />
         <meshBasicMaterial
           color={color}
           transparent
@@ -70,16 +74,28 @@ export default function ScenarioWaypoints({
   enabled,
 }: ScenarioWaypointsProps) {
   const activeScenario = useSimStore((state) => state.activeScenario);
-  const activeWaypointIndex = useSimStore(
+  const missionWaypointIndex = useSimStore(
     (state) => state.activeWaypointIndex,
   );
   const scenarioRunStatus = useSimStore(
     (state) => state.scenarioRunStatus,
   );
-  const route = useMemo(
+  const planner = useNavigationPlanner((state) => ({
+    mode: state.mode,
+    status: state.status,
+    waypoints: state.waypoints,
+    activeWaypointIndex: state.activeWaypointIndex,
+  }));
+  const missionRoute = useMemo(
     () => getResolvedScenarioRoute(activeScenario),
     [activeScenario],
   );
+  const route =
+    planner.mode === 'free' ? planner.waypoints : missionRoute;
+  const activeWaypointIndex =
+    planner.mode === 'free'
+      ? planner.activeWaypointIndex
+      : missionWaypointIndex;
   const routePoints = useMemo(
     () =>
       route.map(
@@ -88,30 +104,36 @@ export default function ScenarioWaypoints({
       ),
     [route],
   );
+  const routeActive =
+    planner.mode === 'mission'
+      ? scenarioRunStatus === 'active'
+      : planner.status !== 'idle';
+  const activeColor = planner.mode === 'free' ? '#fbbf24' : '#38bdf8';
 
-  if (!enabled || scenarioRunStatus !== 'active' || route.length === 0) {
-    return null;
-  }
+  if (!enabled || !routeActive || route.length === 0) return null;
 
   return (
     <group>
-      <Line
-        points={routePoints}
-        color="#7dd3fc"
-        lineWidth={1.4}
-        transparent
-        opacity={0.42}
-        dashed
-        dashSize={7}
-        gapSize={5}
-        depthWrite={false}
-      />
+      {routePoints.length > 1 && (
+        <Line
+          points={routePoints}
+          color={activeColor}
+          lineWidth={1.4}
+          transparent
+          opacity={0.42}
+          dashed
+          dashSize={7}
+          gapSize={5}
+          depthWrite={false}
+        />
+      )}
       {route.map((waypoint, index) => (
         <WaypointBeacon
           key={waypoint.id}
           x={waypoint.x}
           z={waypoint.z}
           radiusM={waypoint.radiusM}
+          activeColor={activeColor}
           state={
             index < activeWaypointIndex
               ? 'completed'
