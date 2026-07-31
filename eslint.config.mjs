@@ -1,7 +1,12 @@
+import js from '@eslint/js';
+import nextPlugin from '@next/eslint-plugin-next';
 import { defineConfig, globalIgnores } from 'eslint/config';
-import nextVitals from 'eslint-config-next/core-web-vitals';
-import nextTypeScript from 'eslint-config-next/typescript';
+import reactHooks from 'eslint-plugin-react-hooks';
+import globals from 'globals';
+import tseslint from 'typescript-eslint';
 
+const sourceFiles = ['**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}'];
+const typescriptFiles = ['**/*.{ts,tsx,mts,cts}'];
 const imperativeThreeFiles = [
   'components/EnvironmentRig.tsx',
   'components/Islands.tsx',
@@ -13,8 +18,38 @@ const imperativeThreeFiles = [
 ];
 
 export default defineConfig([
-  ...nextVitals,
-  ...nextTypeScript,
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  nextPlugin.configs['core-web-vitals'],
+  {
+    files: sourceFiles,
+    plugins: {
+      'react-hooks': reactHooks,
+    },
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+      },
+      parserOptions: {
+        ecmaFeatures: {
+jsx: true,
+        },
+      },
+    },
+    rules: {
+      ...reactHooks.configs.recommended.rules,
+    },
+  },
+  {
+    files: typescriptFiles,
+    rules: {
+      'no-undef': 'off',
+      'no-unused-vars': 'off',
+    },
+  },
   {
     files: imperativeThreeFiles,
     rules: {

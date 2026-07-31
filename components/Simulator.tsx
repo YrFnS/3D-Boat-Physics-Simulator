@@ -135,7 +135,7 @@ export default function Simulator() {
       <Canvas
         camera={{ position: [0, 15, -25], fov: 60, near: 0.1, far: 3000 }}
         dpr={DPR_BY_QUALITY[renderQuality]}
-        shadows={renderQuality !== 'low'}
+        shadows={renderQuality !== 'low' ? 'basic' : false}
         gl={{
           antialias: renderQuality !== 'low',
           alpha: false,
