@@ -9,6 +9,7 @@ import {
   useState,
 } from 'react';
 import { useAutomationMode } from '@/hooks/useAutomationMode';
+import { useBenchmarkMode } from '@/hooks/useBenchmarkMode';
 import { useDebugMode } from '@/hooks/useDebugMode';
 import {
   type RenderQuality,
@@ -24,6 +25,7 @@ import ExperienceChrome from './ExperienceChrome';
 import ExperiencePersistence from './ExperiencePersistence';
 import FreeNavigationDirector from './FreeNavigationDirector';
 import GameplayPersistence from './GameplayPersistence';
+import HardwareBenchmarkPanel from './HardwareBenchmarkPanel';
 import HUD from './HUD';
 import HurricaneClouds from './HurricaneClouds';
 import InputModeTracker from './InputModeTracker';
@@ -127,7 +129,9 @@ export default function Simulator() {
     (state) => state.resetVesselTrigger,
   );
   const debugEnabled = useDebugMode();
+  const benchmarkMode = useBenchmarkMode();
   const automationMode = useAutomationMode();
+  const diagnosticsEnabled = debugEnabled || benchmarkMode;
 
   const lowerAutomaticQuality = useCallback(() => {
     const state = useSimStore.getState();
@@ -262,7 +266,7 @@ export default function Simulator() {
           onIncline={raiseAutomaticQuality}
           onFallback={useFallbackQuality}
         />
-        {debugEnabled && <PerformanceTelemetry />}
+        {diagnosticsEnabled && <PerformanceTelemetry />}
         <ShadowBudget />
 
         <Suspense fallback={<LoadingFallback />}>
@@ -286,12 +290,16 @@ export default function Simulator() {
       <div className="sim-ui-layer pointer-events-none absolute inset-0">
         {showHud && <HUD />}
         {showHud && !automationMode && <NavigationHUD />}
-        {debugEnabled && (
-          <div className="hidden sm:block">
-            <BenchmarkPanel />
-          </div>
+        {benchmarkMode ? (
+          <HardwareBenchmarkPanel />
+        ) : (
+          debugEnabled && (
+            <div className="hidden sm:block">
+              <BenchmarkPanel />
+            </div>
+          )
         )}
-        <PerformanceHUD showMetrics={debugEnabled} />
+        <PerformanceHUD showMetrics={diagnosticsEnabled} />
         {showSessionOverlay && (
           <SessionOverlay automationMode={automationMode} />
         )}
