@@ -56,6 +56,10 @@ jobs:
           packageJson.devDependencies.globals = '16.4.0';
           packageJson.devDependencies['typescript-eslint'] = '8.58.2';
           delete packageJson.devDependencies['eslint-config-next'];
+          packageJson.overrides = {
+            ...(packageJson.overrides ?? {}),
+            minimatch: '10.2.6',
+          };
 
           fs.writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
 
