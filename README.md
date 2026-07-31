@@ -2,7 +2,7 @@
 
 An interactive browser-based marine simulation built with Next.js, React Three Fiber, and Three.js. The project combines procedural water, weather, vessel handling, damage, and a responsive instrument HUD in a single local-first web application.
 
-> **Project status:** the rendering and performance foundation is complete. Vessel motion advances through a deterministic 60 Hz fixed timestep and now uses a custom six-degree-of-freedom body with center-of-mass integration, principal-axis inertia, gyroscopic coupling, and distributed hull forces. Collision contacts remain approximate; compound Rapier colliders and calibrated contact impulses are the next physics milestone.
+> **Project status:** the rendering and performance foundation is complete. Vessel motion advances through a deterministic 60 Hz fixed timestep and uses a custom six-degree-of-freedom body with center-of-mass integration, principal-axis inertia, gyroscopic coupling, distributed hull forces, and Rapier-backed compound-hull contacts. The next physics work is calibration and broader collision-scenario coverage.
 
 ## Features
 
@@ -14,6 +14,8 @@ An interactive browser-based marine simulation built with Next.js, React Three F
 - Center-of-mass-correct transform integration and principal-axis inertia.
 - Twelve-point vessel-specific hull lattices for buoyancy and hydrodynamic resistance.
 - Point-applied propeller, rudder, wind, planing, buoyancy, and drag forces.
+- Rapier terrain and obstacle manifolds with compound vessel hull proxies.
+- Off-center collision impulses, bounded penetration correction, contact friction, and impact-driven damage.
 - Typed trawler and speedboat mass, hull, engine, inertia, damping, and force configurations.
 - GPU-generated wake field, rain, hurricane clouds, lightning, and storm effects.
 - Trawler and speedboat handling with wind, current, planing, damage, repair, and beaching behavior.
@@ -21,7 +23,7 @@ An interactive browser-based marine simulation built with Next.js, React Three F
 - Adaptive Low, Medium, High, and Ultra quality tiers with ocean, terrain, weather, wake, and shadow budgets.
 - Desktop keyboard controls and responsive touch controls for throttle, steering, repair, environment, wind, and current.
 - Optional FPS, draw-call, triangle, and Calm/Storm benchmark diagnostics.
-- Automated lint, type checking, dependency audit, production build, and desktop/mobile browser smoke tests.
+- Automated lint, type checking, dependency audit, production build, and desktop/mobile/collision browser smoke tests.
 
 ## Simulation architecture
 
@@ -40,6 +42,7 @@ An interactive browser-based marine simulation built with Next.js, React Three F
 - Torque is transformed into principal body axes for inertia and damping.
 - Euler's rigid-body equation includes the gyroscopic `ω × Iω` term.
 - An offset center of mass is integrated without making the visual origin orbit during pitch and roll.
+- Contact impulses can be applied at world positions, producing linear and angular velocity changes through the configured mass and principal inertia.
 - Finite-state guards and vessel-specific angular limits prevent one invalid force from poisoning later steps.
 
 `sim/vessels/DistributedHullForces.ts` evaluates the water interaction:
@@ -50,12 +53,22 @@ An interactive browser-based marine simulation built with Next.js, React Three F
 - Forward and lateral water resistance use local point velocity relative to current, so angular motion naturally creates damping torque.
 - The resulting forces are applied at their actual world positions, producing heave, pitch, roll, and yaw instead of directly assigning visual angles.
 
+`sim/collision/RapierCollisionWorld.ts` owns contact geometry and manifold generation:
+
+- The custom marine body remains authoritative for motion and hydrodynamics.
+- A kinematic three-piece rounded hull proxy follows the completed fixed-step vessel transform.
+- Procedural terrain is represented by a fixed triangle mesh, while navigation obstacles use updated sphere colliders.
+- Rapier manifold normals, penetration, and contact points are converted into bounded normal and tangential impulses on `SixDofBody`.
+- Terrain and obstacle impacts are classified independently so their response, audio, and damage thresholds can be tuned separately.
+- Debug diagnostics expose contact sequence, impact speed, impulse, and penetration for automated browser validation.
+
 Simulation-affecting randomness comes from `sim/core/SeededRandom.ts`, not the browser frame loop. Vessel-specific values and hull-force layouts live in `sim/vessels/VesselConfig.ts` rather than being scattered through the React component.
 
 ## Tech stack
 
 - Next.js 16 and React 19
 - React Three Fiber, Drei, and Three.js
+- Rapier 3D
 - Zustand
 - Tailwind CSS 4
 - TypeScript and ESLint
@@ -97,7 +110,7 @@ The quality selector is available in production and its selection is remembered.
 
 Append `?debug=1` to enable FPS metrics and Calm/Storm benchmark controls. Append `?debug=0` to clear the remembered debug preference.
 
-The browser smoke test performs held propulsion and steering input at desktop and mobile sizes. It validates finite and bounded position, linear and angular speed, quaternion normalization, direction normalization, submersion range, simulation-clock progress, and observable vessel response.
+The browser smoke suite performs held propulsion and steering input at desktop and mobile sizes, plus an isolated Rapier contact-probe scenario. It validates finite and bounded position, linear and angular speed, quaternion normalization, direction normalization, submersion range, simulation-clock progress, observable vessel response, Rapier initialization, contact reporting, positive collision impulse, and bounded penetration.
 
 ## Project structure
 
@@ -106,13 +119,14 @@ The browser smoke test performs held propulsion and steering input at desktop an
 - `components/boat/`: vessel audio and visual-damage subsystems
 - `sim/core/`: fixed-step timing, deterministic randomness, and six-degree-of-freedom integration
 - `sim/vessels/`: typed vessel configuration and distributed marine-force models
+- `sim/collision/`: Rapier geometry, contact manifolds, and custom-body collision response
 - `lib/`: deterministic terrain and water helpers
 - `store/`: Zustand controls, telemetry, quality state, and shared high-frequency values
 - `.github/workflows/`: validation and browser smoke testing
 
 ## Next physics milestone
 
-The next Phase 2 slice will replace circular obstacle response with Rapier-backed compound or convex hull contacts. Collision impulses will then drive contact response and damage, followed by calibration of draft, stability, turning circle, stopping distance, and maximum speed for each vessel.
+The next Phase 2 slice will calibrate draft, transverse stability, turning circle, stopping distance, maximum speed, grounding friction, and collision damage for both vessels. It will also add repeatable shoreline, glancing-obstacle, and higher-speed impact scenarios before Phase 2 is closed.
 
 ## License
 
