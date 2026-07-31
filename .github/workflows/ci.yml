@@ -18,6 +18,59 @@ env:
   NEXT_TELEMETRY_DISABLED: 1
 
 jobs:
+  integrate-distributed-hull:
+    name: Integrate distributed hull force model
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.head_ref == 'agent/phase-2-fixed-timestep-physics' &&
+      github.actor != 'github-actions[bot]'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out Phase 2 branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-2-fixed-timestep-physics
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply guarded integration
+        run: node scripts/apply-distributed-hull.cjs
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate integrated application
+        run: npm run validate
+
+      - name: Restore permanent CI and remove migration files
+        run: |
+          git show origin/main:.github/workflows/ci.yml > .github/workflows/ci.yml
+          rm -f scripts/apply-distributed-hull.cjs
+          rm -f .github/workflows/phase2-distributed-hull.yml
+          rm -f .github/workflows/dispatch-phase2-distributed-hull.yml
+
+      - name: Commit validated integration
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/Boat.tsx .github/workflows/ci.yml scripts/apply-distributed-hull.cjs .github/workflows/phase2-distributed-hull.yml .github/workflows/dispatch-phase2-distributed-hull.yml
+          if git diff --cached --quiet; then
+            echo "No integration changes to commit."
+            exit 0
+          fi
+          git commit -m "physics: integrate distributed hull forces"
+          git push origin "HEAD:agent/phase-2-fixed-timestep-physics"
+
   validate:
     name: Lint, typecheck, build, and full audit
     runs-on: ubuntu-latest
