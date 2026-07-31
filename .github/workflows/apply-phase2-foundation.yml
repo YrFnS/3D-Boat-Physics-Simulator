@@ -1,9 +1,9 @@
 name: Apply Phase 2 simulation foundation
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/phase-2-fixed-timestep-physics
+      - main
     paths:
       - scripts/apply-phase2-foundation.mjs
       - .github/workflows/apply-phase2-foundation.yml
@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: apply-phase-2-simulation-foundation
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   NEXT_TELEMETRY_DISABLED: 1
