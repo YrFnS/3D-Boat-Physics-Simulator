@@ -1,0 +1,94 @@
+name: Fix remaining Phase 1 issues
+
+on:
+  push:
+    branches:
+      - agent/phase-1-performance-foundation
+    paths:
+      - '.github/workflows/fix-remaining-phase1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fix-remaining-phase1
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    name: Upgrade tooling, remove warnings, and validate
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out performance branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-1-performance-foundation
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply compatible dependency and renderer fixes
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const packagePath = 'package.json';
+          const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+          packageJson.dependencies['@react-three/fiber'] = '9.6.1';
+          packageJson.dependencies.three = '0.182.0';
+          packageJson.devDependencies['@types/three'] = '0.182.0';
+          packageJson.devDependencies.eslint = '10.4.0';
+          fs.writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+
+          const simulatorPath = 'components/Simulator.tsx';
+          let simulator = fs.readFileSync(simulatorPath, 'utf8');
+          const oldShadowProp = "shadows={renderQuality !== 'low'}";
+          const newShadowProp = "shadows={renderQuality !== 'low' ? 'basic' : false}";
+          if (!simulator.includes(oldShadowProp) && !simulator.includes(newShadowProp)) {
+            throw new Error('Expected Canvas shadow configuration was not found.');
+          }
+          simulator = simulator.replace(oldShadowProp, newShadowProp);
+          fs.writeFileSync(simulatorPath, simulator);
+          NODE
+
+      - name: Regenerate lockfile
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install candidate dependency graph
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Require a clean full dependency audit
+        run: npm audit --audit-level=low
+
+      - name: Remove one-time workflow
+        run: rm -f .github/workflows/fix-remaining-phase1.yml
+
+      - name: Commit validated fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json components/Simulator.tsx .github/workflows/fix-remaining-phase1.yml
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "fix: remove remaining Phase 1 warnings and advisories"
+          git push origin "HEAD:agent/phase-1-performance-foundation"
