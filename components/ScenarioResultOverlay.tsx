@@ -6,6 +6,8 @@ import {
   Clock3,
   Gauge,
   Home,
+  MapPinned,
+  PackageCheck,
   RefreshCcw,
   Route,
   ShieldCheck,
@@ -17,6 +19,7 @@ import {
   getNextScenarioId,
   getScenarioDefinition,
 } from '@/sim/scenarios/ScenarioCatalog';
+import { useScenarioHistory } from '@/store/useScenarioHistory';
 import { useSimStore } from '@/store/useSimStore';
 
 interface ScenarioResultOverlayProps {
@@ -50,6 +53,9 @@ export default function ScenarioResultOverlay({
       startScenario: store.startScenario,
     })),
   );
+  const history = useScenarioHistory(
+    (store) => store.records[state.activeScenario],
+  );
 
   if (
     automationMode ||
@@ -65,6 +71,11 @@ export default function ScenarioResultOverlay({
   const nextScenarioId = getNextScenarioId(state.activeScenario);
   const nextScenario = getScenarioDefinition(nextScenarioId);
   const completed = result.outcome === 'completed';
+  const matchedBestScore = completed && result.score >= history.bestScore;
+  const matchedBestTime =
+    completed &&
+    history.bestTimeSeconds !== null &&
+    Math.abs(result.elapsedSeconds - history.bestTimeSeconds) < 0.11;
 
   const startNextScenario = () => {
     state.previewScenario(nextScenarioId);
@@ -76,7 +87,7 @@ export default function ScenarioResultOverlay({
 
   return (
     <div className="pointer-events-auto absolute inset-0 z-[110] flex items-center justify-center overflow-y-auto bg-slate-950/72 p-4 text-white backdrop-blur-lg">
-      <section className="w-full max-w-2xl rounded-3xl border border-white/10 bg-slate-950/94 p-5 shadow-2xl sm:p-7">
+      <section className="w-full max-w-3xl rounded-3xl border border-white/10 bg-slate-950/94 p-5 shadow-2xl sm:p-7">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-4">
             <div
@@ -123,10 +134,15 @@ export default function ScenarioResultOverlay({
               {result.score}
             </div>
             <div className="text-[9px] text-slate-500">out of 1000</div>
+            {matchedBestScore && (
+              <div className="mt-1 rounded-full bg-emerald-300/10 px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider text-emerald-200">
+                Personal best
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-5">
           <div className="rounded-xl border border-white/8 bg-white/[0.035] p-3">
             <div className="flex items-center gap-1.5 text-[8px] font-bold uppercase tracking-wider text-slate-500">
               <Clock3 className="h-3 w-3" /> Time
@@ -134,6 +150,9 @@ export default function ScenarioResultOverlay({
             <div className="mt-1 font-mono text-base text-slate-100">
               {formatDuration(result.elapsedSeconds)}
             </div>
+            {matchedBestTime && (
+              <div className="mt-0.5 text-[8px] text-emerald-300">Best time</div>
+            )}
           </div>
           <div className="rounded-xl border border-white/8 bg-white/[0.035] p-3">
             <div className="flex items-center gap-1.5 text-[8px] font-bold uppercase tracking-wider text-slate-500">
@@ -141,6 +160,14 @@ export default function ScenarioResultOverlay({
             </div>
             <div className="mt-1 font-mono text-base text-slate-100">
               {result.waypointsCompleted}/{result.totalWaypoints}
+            </div>
+          </div>
+          <div className="rounded-xl border border-white/8 bg-white/[0.035] p-3">
+            <div className="flex items-center gap-1.5 text-[8px] font-bold uppercase tracking-wider text-slate-500">
+              <PackageCheck className="h-3 w-3" /> Tasks
+            </div>
+            <div className="mt-1 font-mono text-base text-slate-100">
+              {result.entitiesCompleted}/{result.totalEntities}
             </div>
           </div>
           <div className="rounded-xl border border-white/8 bg-white/[0.035] p-3">
@@ -161,7 +188,7 @@ export default function ScenarioResultOverlay({
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
           <div className="rounded-xl bg-black/20 px-3 py-2">
             <div className="text-[8px] uppercase tracking-wider text-slate-500">
               Distance
@@ -180,10 +207,19 @@ export default function ScenarioResultOverlay({
           </div>
           <div className="rounded-xl bg-black/20 px-3 py-2">
             <div className="text-[8px] uppercase tracking-wider text-slate-500">
-              Resets
+              Recoveries
             </div>
             <div className="mt-0.5 font-mono text-xs text-slate-300">
               {result.resetCount}
+            </div>
+          </div>
+          <div className="rounded-xl bg-black/20 px-3 py-2">
+            <div className="text-[8px] uppercase tracking-wider text-slate-500">
+              Last checkpoint
+            </div>
+            <div className="mt-0.5 flex items-center gap-1 truncate text-xs text-slate-300">
+              <MapPinned className="h-3 w-3 shrink-0" />
+              {result.checkpointLabel}
             </div>
           </div>
           <div className="rounded-xl bg-black/20 px-3 py-2">
@@ -193,6 +229,21 @@ export default function ScenarioResultOverlay({
             <div className="mt-0.5 flex items-center gap-1 font-mono text-xs capitalize text-slate-300">
               <Ship className="h-3 w-3" /> {state.activeBoat}
             </div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-2 rounded-2xl border border-white/8 bg-white/[0.025] px-4 py-3 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <span className="font-semibold text-slate-200">Scenario record:</span>{' '}
+            {history.completions} completed from {history.attempts} attempts
+          </div>
+          <div className="flex items-center gap-3 font-mono text-[11px]">
+            <span>Best {history.bestScore}/1000</span>
+            <span>
+              {history.bestTimeSeconds === null
+                ? 'No best time'
+                : `Best ${formatDuration(history.bestTimeSeconds)}`}
+            </span>
           </div>
         </div>
 
