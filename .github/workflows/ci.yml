@@ -1,4 +1,4 @@
-name: Apply final vessel speed trim through CI
+name: Apply final turn and smoke fixes through CI
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: apply-final-vessel-speed-trim-through-ci
+  group: apply-final-turn-and-smoke-fixes
   cancel-in-progress: false
 
 env:
@@ -22,7 +22,7 @@ env:
 
 jobs:
   apply:
-    name: Apply, validate, and push final speed trim
+    name: Apply, validate, and push final turn and smoke fixes
     if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -40,8 +40,8 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Apply guarded final calibration trim
-        run: node scripts/apply-final-speed-trim.mjs
+      - name: Apply guarded final fixes
+        run: node scripts/apply-final-turn-smoke-fix.mjs
 
       - name: Install exact dependencies
         run: npm ci
@@ -49,17 +49,18 @@ jobs:
       - name: Validate repository
         run: npm run validate
 
-      - name: Commit validated calibration changes
+      - name: Commit validated source and test changes
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
-            sim/vessels/VesselConfig.ts \
-            sim/calibration/VesselCalibration.ts
+            components/Boat.tsx \
+            sim/calibration/VesselCalibration.ts \
+            scripts/visual-smoke.mjs
           if git diff --cached --quiet; then
-            echo "No final speed-trim changes to commit."
+            echo "No final turn or smoke changes to commit."
             exit 0
           fi
-          git commit -m "physics: finalize speedboat calibration"
+          git commit -m "physics: finalize speedboat turn envelope"
           git push origin "HEAD:agent/phase-2-fixed-timestep-physics"
