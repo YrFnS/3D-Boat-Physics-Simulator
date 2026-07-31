@@ -51,6 +51,11 @@ async function waitForDataset(key, value) {
   );
 }
 
+async function clickSettingToggle(label) {
+  const input = page.getByLabel(label);
+  await input.locator('xpath=ancestor::label').click();
+}
+
 async function readState() {
   return page.evaluate(() => {
     const dataset = document.documentElement.dataset;
@@ -127,8 +132,8 @@ try {
   await page.getByRole('dialog', { name: 'Settings' }).waitFor();
   checks.settingsPausedSimulation = true;
 
-  await page.getByLabel('Reduced motion').check();
-  await page.getByLabel('Higher contrast').check();
+  await clickSettingToggle('Reduced motion');
+  await clickSettingToggle('Higher contrast');
   await page.getByRole('button', { name: 'Large', exact: true }).click();
   await page.getByLabel('Field of view').fill('72');
   await page.getByLabel('Follow smoothing').fill('0.25');
