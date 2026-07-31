@@ -1,0 +1,22 @@
+name: Dispatch distributed hull integration
+
+on:
+  push:
+    branches:
+      - agent/phase-2-fixed-timestep-physics
+    paths:
+      - '.github/workflows/dispatch-phase2-distributed-hull.yml'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch integration workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run phase2-distributed-hull.yml --repo "$GITHUB_REPOSITORY" --ref agent/phase-2-fixed-timestep-physics
