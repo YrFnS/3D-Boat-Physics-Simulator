@@ -10,6 +10,7 @@ on:
       - sim/**
       - store/**
       - scripts/release-validation.mjs
+      - scripts/release-visual-audit.mjs
       - package.json
       - package-lock.json
       - next.config.ts
@@ -25,6 +26,7 @@ on:
       - sim/**
       - store/**
       - scripts/release-validation.mjs
+      - scripts/release-visual-audit.mjs
       - package.json
       - package-lock.json
       - next.config.ts
@@ -65,6 +67,37 @@ jobs:
           npm install --no-save --package-lock=false playwright@1.55.0
           npx playwright install --with-deps chromium firefox webkit
 
+      - name: Prepare headed Firefox for software-rendered CI
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/release-validation.mjs')
+          source = path.read_text(encoding='utf-8')
+          marker = "name: 'firefox'"
+          marker_index = source.find(marker)
+          if marker_index < 0:
+              raise SystemExit('Firefox launch definition was not found.')
+
+          next_engine_index = source.find("name: 'webkit'", marker_index)
+          if next_engine_index < 0:
+              raise SystemExit('WebKit launch definition was not found.')
+
+          firefox_block = source[marker_index:next_engine_index]
+          if firefox_block.count('headless: true') != 1:
+              raise SystemExit('Expected one headless Firefox launch option.')
+
+          updated_block = firefox_block.replace(
+              'headless: true',
+              'headless: false',
+              1,
+          )
+          path.write_text(
+              source[:marker_index] + updated_block + source[next_engine_index:],
+              encoding='utf-8',
+          )
+          PY
+
       - name: Prepare standalone production server
         run: |
           if [ -d public ]; then
@@ -89,7 +122,19 @@ jobs:
       - name: Run cross-browser release validation
         id: release_validation
         continue-on-error: true
-        run: node scripts/release-validation.mjs
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          MOZ_WEBRENDER: '1'
+        run: >-
+          xvfb-run --auto-servernum
+          --server-args='-screen 0 1600x1200x24'
+          node scripts/release-validation.mjs
+
+      - name: Reject blank or uniform 3D screenshots
+        id: visual_audit
+        if: always()
+        continue-on-error: true
+        run: node scripts/release-visual-audit.mjs
 
       - name: Collect production server log
         if: always()
@@ -107,5 +152,7 @@ jobs:
           retention-days: 21
 
       - name: Enforce release-validation result
-        if: steps.release_validation.outcome != 'success'
+        if: >-
+          steps.release_validation.outcome != 'success' ||
+          steps.visual_audit.outcome != 'success'
         run: exit 1
