@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - scripts/apply-phase2-foundation.mjs
+      - scripts/fix-phase2-foundation.mjs
       - .github/workflows/apply-phase2-foundation.yml
   workflow_dispatch:
 
@@ -43,7 +44,9 @@ jobs:
         run: npm ci
 
       - name: Apply fixed-timestep refactor
-        run: node scripts/apply-phase2-foundation.mjs
+        run: |
+          node scripts/apply-phase2-foundation.mjs
+          node scripts/fix-phase2-foundation.mjs
 
       - name: Validate repository
         run: npm run validate
@@ -51,6 +54,7 @@ jobs:
       - name: Remove one-time migration tooling
         run: |
           rm -f scripts/apply-phase2-foundation.mjs
+          rm -f scripts/fix-phase2-foundation.mjs
           rm -f .github/workflows/apply-phase2-foundation.yml
 
       - name: Commit validated foundation
