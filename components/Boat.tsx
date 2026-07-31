@@ -14,6 +14,11 @@ import { SeededRandom } from '@/sim/core/SeededRandom';
 import { getVesselConfig } from '@/sim/vessels/VesselConfig';
 import { DistributedHullForces } from '@/sim/vessels/DistributedHullForces';
 import { RapierCollisionWorld } from '@/sim/collision/RapierCollisionWorld';
+import {
+  parseCalibrationRequest,
+  sampleFlatCalibrationWater,
+  VesselCalibrationRunner,
+} from '@/sim/calibration/VesselCalibration';
 
 interface OrbitControlsLike {
   target: Vector3;
@@ -41,6 +46,8 @@ export default function Boat() {
   const speedboatEngineLRef = useRef<Group>(null);
   const speedboatEngineRRef = useRef<Group>(null);
   const telemetryAccumulator = useRef(0);
+  const calibrationRunner = useRef<VesselCalibrationRunner | null>(null);
+  const calibrationSimulationTime = useRef(0);
 
   const scratch = useMemo(
     () => ({
@@ -101,6 +108,65 @@ export default function Boat() {
       engineTemperature.current = 20;
     }
   }, [instantRepairTrigger]);
+
+  useEffect(() => {
+    const request = parseCalibrationRequest(window.location.search);
+    if (!request) return undefined;
+
+    const store = useSimStore.getState();
+    const vessel = getVesselConfig(request.vessel);
+    const runner = new VesselCalibrationRunner(request);
+    const body = physicsBody.current;
+
+    calibrationRunner.current = runner;
+    calibrationSimulationTime.current = 0;
+    fixedStepRunner.current.reset(0);
+    store.setActiveBoat(request.vessel);
+    store.setWindSpeed(0);
+    store.setCurrentSpeed(0);
+    store.setEngineThrust(0);
+    store.setTargetTime(12);
+    store.setTargetSeason(0.25);
+    store.setQualityMode('low');
+    sharedPhysics.season = 0.25;
+    sharedPhysics.tornadoPos.set(10_000, 0, 10_000);
+    sharedPhysics.whirlpoolPos.set(-10_000, 0, -10_000);
+
+    hullHealth.current = 100;
+    engineHealth.current = 100;
+    rudderHealth.current = 100;
+    engineTemperature.current = 20;
+    engineRPM.current = vessel.idleRpm;
+    rudderAngle.current = 0;
+    prevVelocityY.current = 0;
+    prevSubmergedRatio.current = 1;
+    telemetryAccumulator.current = 0;
+
+    runner.initialize(body, vessel);
+    previousPosition.current.copy(body.position);
+    currentPosition.current.copy(body.position);
+    previousQuaternion.current.copy(body.quaternion);
+    currentQuaternion.current.copy(body.quaternion);
+
+    sharedPhysics.calibrationReady = 0;
+    sharedPhysics.calibrationPassed = 0;
+    sharedPhysics.calibrationProgress = 0;
+    sharedPhysics.calibrationScenario = request.scenario;
+    sharedPhysics.calibrationVessel = request.vessel;
+    sharedPhysics.calibrationResult = '';
+    sharedPhysics.boatPos.copy(body.position);
+    sharedPhysics.boatQuaternion.copy(body.quaternion);
+    sharedPhysics.boatLinearVelocity.set(0, 0, 0);
+    sharedPhysics.boatAngularVelocity.set(0, 0, 0);
+    sharedPhysics.simulationTime = 0;
+    sharedPhysics.renderTime = 0;
+    store.setTelemetry(0, 0, 100, 100, 20, 100);
+
+    return () => {
+      calibrationRunner.current = null;
+      sharedPhysics.calibrationReady = 0;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -170,14 +236,20 @@ export default function Boat() {
       scratch.gravityForce.set(0, -vessel.massKg * 9.81, 0),
     );
 
+    const calibration = calibrationRunner.current;
+    const calibrationControls = calibration?.controls(time);
     const keyboardThrottle =
       (keys.w || keys.arrowup ? 1 : 0) -
       (keys.s || keys.arrowdown ? 1 : 0);
     const thrustRaw =
-      keyboardThrottle !== 0
+      calibrationControls?.throttle ??
+      (keyboardThrottle !== 0
         ? keyboardThrottle
-        : MathUtils.clamp(engineThrust, -1, 1);
-    const steerRaw = (keys.a || keys.arrowleft ? 1 : 0) - (keys.d || keys.arrowright ? 1 : 0);
+        : MathUtils.clamp(engineThrust, -1, 1));
+    const steerRaw =
+      calibrationControls?.steer ??
+      ((keys.a || keys.arrowleft ? 1 : 0) -
+        (keys.d || keys.arrowright ? 1 : 0));
 
     // --- Vessel Dynamics Configuration ---
     const mass = vessel.massKg;
@@ -204,15 +276,22 @@ export default function Boat() {
     const pos = body.position;
     const halfL = vessel.halfLengthM;
 
-    const windRad = MathUtils.degToRad(windDir);
-    const windVelocity = scratch.windVelocity
-      .set(Math.sin(windRad), 0, Math.cos(windRad))
-      .multiplyScalar(windSpeed);
+    const windVelocity = scratch.windVelocity;
+    const waterVelocity = scratch.waterVelocity;
+    if (calibration) {
+      windVelocity.set(0, 0, 0);
+      waterVelocity.set(0, 0, 0);
+    } else {
+      const windRad = MathUtils.degToRad(windDir);
+      windVelocity
+        .set(Math.sin(windRad), 0, Math.cos(windRad))
+        .multiplyScalar(windSpeed);
 
-    const currentRad = MathUtils.degToRad(currentDir);
-    const waterVelocity = scratch.waterVelocity
-      .set(Math.sin(currentRad), 0, Math.cos(currentRad))
-      .multiplyScalar(currentSpeed);
+      const currentRad = MathUtils.degToRad(currentDir);
+      waterVelocity
+        .set(Math.sin(currentRad), 0, Math.cos(currentRad))
+        .multiplyScalar(currentSpeed);
+    }
 
     // Recreate the localized ice field used by the ocean shader.
     const isWinter = Math.max(
@@ -225,13 +304,15 @@ export default function Boat() {
     const iceNoise =
       Math.sin(pos.x * 0.01) * Math.cos(pos.z * 0.01) +
       Math.sin(pos.x * 0.05 + pos.z * 0.04) * 0.5;
-    const currentIceFactor = Math.max(
-      0,
-      Math.min(
-        1,
-        (iceNoise * 0.3 + isWinter * 1.5 - 1) * 2,
-      ),
-    );
+    const currentIceFactor = calibration
+      ? 0
+      : Math.max(
+          0,
+          Math.min(
+            1,
+            (iceNoise * 0.3 + isWinter * 1.5 - 1) * 2,
+          ),
+        );
 
     let hullDamageSinkOffset =
       hullHealth.current < 50
@@ -271,7 +352,9 @@ export default function Boat() {
       forwardDragMultiplier:
         planingDragReduction * hullDragPenalty,
       lateralDragMultiplier: hullDragPenalty,
-      sampleWater: getWaveHeight,
+      sampleWater: calibration
+        ? sampleFlatCalibrationWater
+        : getWaveHeight,
     });
     const submergedRatio = hullForceResult.submergedRatio;
 
@@ -279,7 +362,7 @@ export default function Boat() {
     // A sudden transition from air to water with high downward velocity
     const isSlam = prevSubmergedRatio.current < 0.3 && submergedRatio > 0.4 && prevVelocityY.current < -2.0;
     
-    if (isSlam && time > 2.0) {
+    if (!calibration && isSlam && time > 2.0) {
         const slamSeverity = Math.abs(prevVelocityY.current) - 2.0; 
         
         // Damage scaling based on severity
@@ -516,13 +599,15 @@ export default function Boat() {
     // --- Integrate the accumulated six-degree-of-freedom forces ---
     body.integrate(dt);
 
-    const collisionSummary = rapierCollisionWorld.current?.step(
-      body,
-      vessel,
-      dt,
-      sharedPhysics.obstacles,
-      collisionTestEnabled.current && Math.abs(thrustRaw) > 0.1,
-    );
+    const collisionSummary = calibration
+      ? undefined
+      : rapierCollisionWorld.current?.step(
+          body,
+          vessel,
+          dt,
+          sharedPhysics.obstacles,
+          collisionTestEnabled.current && Math.abs(thrustRaw) > 0.1,
+        );
 
     if (collisionSummary) {
       sharedPhysics.collisionReady = 1;
@@ -619,6 +704,7 @@ export default function Boat() {
     const speed2D = Math.hypot(body.linearVelocity.x, body.linearVelocity.z);
     sharedPhysics.boatSpeed = Math.min(speed2D, 35.0);
 
+    if (!calibration) {
     // --- PHASE 5: TORNADO / WATERSPOUT PHYSICS ---
     // Tornado and Whirlpool are now independent hazards wandering the sea.
     
@@ -716,6 +802,8 @@ export default function Boat() {
         }
     }
 
+    }
+
     // --- Update Telemetry UI & Health Degradation ---
     // 1 knot = 0.514444 m/s
     const speedKnots = speed2D / 0.514444;
@@ -724,7 +812,29 @@ export default function Boat() {
         Math.atan2(forwardDir.x, -forwardDir.z),
       ) % 360;
     if (headingDeg < 0) headingDeg += 360;
-    
+
+    const calibrationResult = calibration?.recordStep(time, {
+      body,
+      submergedRatio,
+      speedMps: speed2D,
+      headingRadians: MathUtils.degToRad(headingDeg),
+      hullHealth: hullHealth.current,
+    });
+    sharedPhysics.calibrationProgress = calibration?.progress ?? 0;
+    if (calibrationResult) {
+      sharedPhysics.calibrationReady = 1;
+      sharedPhysics.calibrationPassed = calibrationResult.passed ? 1 : 0;
+      sharedPhysics.calibrationResult = JSON.stringify(calibrationResult);
+      setTelemetry(
+        speedKnots,
+        headingDeg,
+        hullHealth.current,
+        engineHealth.current,
+        engineTemperature.current,
+        rudderHealth.current,
+      );
+    }
+
     // --- Phase 1: Health Math ---
     
     // Engine Temperature: Coils up based on RPM over 2800, cools down otherwise
@@ -788,17 +898,19 @@ export default function Boat() {
     }
 
     // Publish telemetry at a deterministic 10 Hz, independent of render FPS.
-    telemetryAccumulator.current += dt;
-    if (telemetryAccumulator.current >= 0.1) {
-      telemetryAccumulator.current %= 0.1;
-      setTelemetry(
-        speedKnots,
-        headingDeg,
-        hullHealth.current,
-        engineHealth.current,
-        engineTemperature.current,
-        rudderHealth.current,
-      );
+    if (!calibration) {
+      telemetryAccumulator.current += dt;
+      if (telemetryAccumulator.current >= 0.1) {
+        telemetryAccumulator.current %= 0.1;
+        setTelemetry(
+          speedKnots,
+          headingDeg,
+          hullHealth.current,
+          engineHealth.current,
+          engineTemperature.current,
+          rudderHealth.current,
+        );
+      }
     }
 
     sharedPhysics.boatPos.copy(body.position);
@@ -820,12 +932,39 @@ export default function Boat() {
     const boat = boatRef.current;
     if (!boat) return;
 
-    const stepResult = fixedStepRunner.current.advance(
-      delta,
-      (stepSeconds, simulationTimeSeconds) => {
-        stepSimulation(stepSeconds, simulationTimeSeconds);
-      },
-    );
+    const calibration = calibrationRunner.current;
+    let stepResult;
+
+    if (calibration) {
+      const stepSeconds = fixedStepRunner.current.stepSeconds;
+      let steps = 0;
+
+      while (
+        !calibration.isComplete &&
+        steps < calibration.stepsPerRenderFrame
+      ) {
+        calibrationSimulationTime.current += stepSeconds;
+        stepSimulation(
+          stepSeconds,
+          calibrationSimulationTime.current,
+        );
+        steps += 1;
+      }
+
+      stepResult = {
+        steps,
+        alpha: 1,
+        simulationTimeSeconds: calibrationSimulationTime.current,
+        droppedTimeSeconds: 0,
+      };
+    } else {
+      stepResult = fixedStepRunner.current.advance(
+        delta,
+        (stepSeconds, simulationTimeSeconds) => {
+          stepSimulation(stepSeconds, simulationTimeSeconds);
+        },
+      );
+    }
 
     sharedPhysics.renderTime =
       stepResult.simulationTimeSeconds +
@@ -922,16 +1061,18 @@ export default function Boat() {
       state.camera.lookAt(lookAt);
     }
 
-    audio.updateFrame(
-      pos,
-      forwardDir,
-      state.camera.position,
-      state.camera.quaternion,
-      engineRPM.current,
-      isSpeedboat,
-      speed2D,
-      submergedRatio,
-    );
+    if (!calibration) {
+      audio.updateFrame(
+        pos,
+        forwardDir,
+        state.camera.position,
+        state.camera.quaternion,
+        engineRPM.current,
+        isSpeedboat,
+        speed2D,
+        submergedRatio,
+      );
+    }
   });
 
   return (

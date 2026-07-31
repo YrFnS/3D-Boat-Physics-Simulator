@@ -26,6 +26,12 @@ const PHYSICS_DATASET_KEYS = [
   'simCollisionMaxImpulse',
   'simCollisionMaxPenetration',
   'simHullHealth',
+  'simCalibrationReady',
+  'simCalibrationPassed',
+  'simCalibrationProgress',
+  'simCalibrationScenario',
+  'simCalibrationVessel',
+  'simCalibrationResult',
 ] as const;
 
 function publishPhysicsDiagnostics() {
@@ -76,6 +82,14 @@ function publishPhysicsDiagnostics() {
     sharedPhysics.collisionMaxPenetration,
   );
   root.dataset.simHullHealth = String(hullHealth);
+  root.dataset.simCalibrationReady = String(sharedPhysics.calibrationReady);
+  root.dataset.simCalibrationPassed = String(sharedPhysics.calibrationPassed);
+  root.dataset.simCalibrationProgress = String(
+    sharedPhysics.calibrationProgress,
+  );
+  root.dataset.simCalibrationScenario = sharedPhysics.calibrationScenario;
+  root.dataset.simCalibrationVessel = sharedPhysics.calibrationVessel;
+  root.dataset.simCalibrationResult = sharedPhysics.calibrationResult;
 }
 
 export default function PerformanceTelemetry() {

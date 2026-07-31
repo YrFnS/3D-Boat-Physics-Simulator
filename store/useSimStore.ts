@@ -37,6 +37,12 @@ export const sharedPhysics = {
   collisionMaxImpactSpeed: 0,
   collisionMaxImpulse: 0,
   collisionMaxPenetration: 0,
+  calibrationReady: 0,
+  calibrationPassed: 0,
+  calibrationProgress: 0,
+  calibrationScenario: '',
+  calibrationVessel: '',
+  calibrationResult: '',
   lightningFlash: 0,
   obstacles: new Float32Array(MAX_OBSTACLES * 4), // x, y, z, radius
   worldTime: 12.0,
