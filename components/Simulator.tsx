@@ -14,6 +14,8 @@ import Boat from './Boat';
 import Buoys from './Buoys';
 import CameraRig from './CameraRig';
 import EnvironmentRig from './EnvironmentRig';
+import ExperienceChrome from './ExperienceChrome';
+import ExperiencePersistence from './ExperiencePersistence';
 import HUD from './HUD';
 import HurricaneClouds from './HurricaneClouds';
 import Islands from './Islands';
@@ -84,6 +86,7 @@ export default function Simulator() {
   const clearKeys = useSimStore((state) => state.clearKeys);
   const renderQuality = useSimStore((state) => state.renderQuality);
   const sessionPhase = useSimStore((state) => state.sessionPhase);
+  const hudVisible = useSimStore((state) => state.hudVisible);
   const activeBoat = useSimStore((state) => state.activeBoat);
   const resetVesselTrigger = useSimStore(
     (state) => state.resetVesselTrigger,
@@ -178,10 +181,12 @@ export default function Simulator() {
   }, [clearKeys, setKey]);
 
   const simulationRunning = automationMode || sessionPhase === 'running';
+  const showHud = automationMode || (sessionPhase !== 'menu' && hudVisible);
 
   return (
     <div className="relative h-screen w-full select-none overflow-hidden bg-slate-900">
       <QualityPersistence />
+      <ExperiencePersistence />
       <Canvas
         camera={{ position: [0, 15, -25], fov: 60, near: 0.1, far: 3000 }}
         dpr={DPR_BY_QUALITY[renderQuality]}
@@ -221,7 +226,7 @@ export default function Simulator() {
         </Suspense>
       </Canvas>
 
-      {(automationMode || sessionPhase !== 'menu') && <HUD />}
+      {showHud && <HUD />}
       {debugEnabled && (
         <div className="hidden sm:block">
           <BenchmarkPanel />
@@ -229,6 +234,7 @@ export default function Simulator() {
       )}
       <PerformanceHUD showMetrics={debugEnabled} />
       <SessionOverlay automationMode={automationMode} />
+      <ExperienceChrome automationMode={automationMode} />
     </div>
   );
 }
