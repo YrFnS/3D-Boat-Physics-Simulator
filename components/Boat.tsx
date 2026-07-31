@@ -13,34 +13,11 @@ import { FixedStepRunner } from '@/sim/core/FixedStepRunner';
 import { SixDofBody } from '@/sim/core/SixDofBody';
 import { SeededRandom } from '@/sim/core/SeededRandom';
 import { getVesselConfig } from '@/sim/vessels/VesselConfig';
+import { DistributedHullForces } from '@/sim/vessels/DistributedHullForces';
 
 interface OrbitControlsLike {
   target: Vector3;
   update: () => void;
-}
-
-function applyBuoyancyAtPoint(
-  body: SixDofBody,
-  pointWorld: Vector3,
-  depth: number,
-  submergedRatio: number,
-  massShareKg: number,
-  stiffness: number,
-  damping: number,
-  pointVelocity: Vector3,
-  force: Vector3,
-) {
-  if (depth <= -0.8) return;
-
-  body.velocityAtPoint(pointWorld, pointVelocity);
-  const acceleration =
-    Math.max(0, depth) * stiffness -
-    pointVelocity.y * damping * submergedRatio;
-
-  body.addForceAtPoint(
-    force.set(0, acceleration * massShareKg, 0),
-    pointWorld,
-  );
 }
 
 export default function Boat() {
@@ -48,6 +25,7 @@ export default function Boat() {
   const physicsBody = useRef(new SixDofBody());
   const fixedStepRunner = useRef(new FixedStepRunner());
   const simulationRandom = useRef(new SeededRandom(0xb0475eed));
+  const distributedHullForces = useRef(new DistributedHullForces());
   const previousPosition = useRef(new Vector3());
   const currentPosition = useRef(new Vector3());
   const previousQuaternion = useRef(new Quaternion());
@@ -64,29 +42,14 @@ export default function Boat() {
     () => ({
       forwardDir: new Vector3(),
       rightDir: new Vector3(),
-      fwdVec: new Vector3(),
-      rgtVec: new Vector3(),
-      cornerFR: new Vector3(),
-      cornerFL: new Vector3(),
-      cornerBR: new Vector3(),
-      cornerBL: new Vector3(),
       windVelocity: new Vector3(),
       waterVelocity: new Vector3(),
       waterRelativeVelocity: new Vector3(),
       thrustForce: new Vector3(),
-      dragForceForward: new Vector3(),
-      dragForceRight: new Vector3(),
       apparentWind: new Vector3(),
       apparentWindDir: new Vector3(),
       windForce: new Vector3(),
-      totalForce: new Vector3(),
       gravityForce: new Vector3(),
-      buoyancyForce: new Vector3(),
-      pointVelocity: new Vector3(),
-      pointFR: new Vector3(),
-      pointFL: new Vector3(),
-      pointBR: new Vector3(),
-      pointBL: new Vector3(),
       localPropeller: new Vector3(),
       localRudder: new Vector3(),
       localWind: new Vector3(),
@@ -106,10 +69,6 @@ export default function Boat() {
       cameraOffset: new Vector3(),
       cameraDesired: new Vector3(),
       cameraLookAt: new Vector3(),
-      pFR: { x: 0, y: 0, z: 0 },
-      pFL: { x: 0, y: 0, z: 0 },
-      pBR: { x: 0, y: 0, z: 0 },
-      pBL: { x: 0, y: 0, z: 0 },
     }),
     [],
   );
@@ -185,8 +144,6 @@ export default function Boat() {
     // --- Vessel Dynamics Configuration ---
     const mass = vessel.massKg;
     const engineForceMax = vessel.engineForceMaxN;
-    const dragCoeff = vessel.forwardDragCoefficient;
-    const keelDragMultiplier = vessel.keelDragMultiplier;
     const windCoeff = vessel.windAreaCoefficient;
     const turnForceMax = vessel.turnForceMax;
 
@@ -205,109 +162,82 @@ export default function Boat() {
     if (rightDir.lengthSq() > 1e-8) rightDir.normalize();
     else rightDir.set(-1, 0, 0);
 
-    // --- Sample Gerstner Wave for Multi-Point Buoyancy & Physics ---
+    // --- Distributed Hull Buoyancy & Hydrodynamic Resistance ---
     const pos = body.position;
-    
-    // Dimensions for the 4 sampling points (roughly matching the hull size)
     const halfL = vessel.halfLengthM;
     const halfW = vessel.halfWidthM;
 
-    // Four hull points are transformed by the full quaternion, so their
-    // different immersion depths generate real pitch and roll torques.
-    const cornerFR = scratch.cornerFR.set(-halfW, 0, -halfL);
-    const cornerFL = scratch.cornerFL.set(halfW, 0, -halfL);
-    const cornerBR = scratch.cornerBR.set(-halfW, 0, halfL);
-    const cornerBL = scratch.cornerBL.set(halfW, 0, halfL);
-    const pointFR = body.localPointToWorld(cornerFR, scratch.pointFR);
-    const pointFL = body.localPointToWorld(cornerFL, scratch.pointFL);
-    const pointBR = body.localPointToWorld(cornerBR, scratch.pointBR);
-    const pointBL = body.localPointToWorld(cornerBL, scratch.pointBL);
+    const windRad = MathUtils.degToRad(windDir);
+    const windVelocity = scratch.windVelocity
+      .set(Math.sin(windRad), 0, Math.cos(windRad))
+      .multiplyScalar(windSpeed);
 
-    // Sample the ocean shader's wave height at these 4 distinct world positions
-    const pFR = getWaveHeight(
-      pointFR.x,
-      pointFR.z,
-      time,
-      scratch.pFR,
+    const currentRad = MathUtils.degToRad(currentDir);
+    const waterVelocity = scratch.waterVelocity
+      .set(Math.sin(currentRad), 0, Math.cos(currentRad))
+      .multiplyScalar(currentSpeed);
+
+    // Recreate the localized ice field used by the ocean shader.
+    const isWinter = Math.max(
+      0,
+      Math.min(
+        1,
+        1 - Math.abs(sharedPhysics.season - 0.75) * 4,
+      ),
     );
-    const pFL = getWaveHeight(
-      pointFL.x,
-      pointFL.z,
-      time,
-      scratch.pFL,
-    );
-    const pBR = getWaveHeight(
-      pointBR.x,
-      pointBR.z,
-      time,
-      scratch.pBR,
-    );
-    const pBL = getWaveHeight(
-      pointBL.x,
-      pointBL.z,
-      time,
-      scratch.pBL,
+    const iceNoise =
+      Math.sin(pos.x * 0.01) * Math.cos(pos.z * 0.01) +
+      Math.sin(pos.x * 0.05 + pos.z * 0.04) * 0.5;
+    const currentIceFactor = Math.max(
+      0,
+      Math.min(
+        1,
+        (iceNoise * 0.3 + isWinter * 1.5 - 1) * 2,
+      ),
     );
 
-    // --- Ice & Winter Intercept (Phase 3 & 4) ---
-    // Mathematically recreate the localized ice noise field from the Ocean shader
-    const isWinter = Math.max(0, Math.min(1.0, 1.0 - Math.abs(sharedPhysics.season - 0.75) * 4.0));
-    const iceNoise = Math.sin(pos.x * 0.01) * Math.cos(pos.z * 0.01) + Math.sin(pos.x * 0.05 + pos.z * 0.04) * 0.5;
-    const currentIceFactor = Math.max(0, Math.min(1.0, (iceNoise * 0.3 + isWinter * 1.5 - 1.0) * 2.0));
-    
-    // Calculate submerged depth and ratio
-    
-    // --- PHASE 2/4: HULL DAMAGE BUOYANCY LOSS ---
-    // If the hull is breached (under 50 health), water comes in, lowering the resting drag depth
-    let hullDamageSinkOffset = hullHealth.current < 50 ? ((50 - hullHealth.current) / 50) * 0.6 : 0;
-    
-    // Fully swamp the boat if health is 0
+    let hullDamageSinkOffset =
+      hullHealth.current < 50
+        ? ((50 - hullHealth.current) / 50) * 0.6
+        : 0;
     if (hullHealth.current <= 0) {
-        hullDamageSinkOffset += 1.5; 
+      hullDamageSinkOffset += 1.5;
     }
-    
-    // Phase 3: Winter adds significant draft to the boat due to icing and water density
-    const winterDraftPenalty = isWinter * 0.15;
-    
-    // Negative offset effectively pushes the target higher up above avgY.
-    // We counteract the 0.28m natural gravity squat by using extreme negative offsets.
-    const baseDraft = vessel.baseDraftM;
-    const draftOffset = baseDraft - hullDamageSinkOffset - winterDraftPenalty; 
-    const depthFR = (pFR.y - draftOffset) - pointFR.y;
-    const depthFL = (pFL.y - draftOffset) - pointFL.y;
-    const depthBR = (pBR.y - draftOffset) - pointBR.y;
-    const depthBL = (pBL.y - draftOffset) - pointBL.y;
-    const submergedFR = MathUtils.clamp(depthFR * 1.5 + 0.5, 0, 1);
-    const submergedFL = MathUtils.clamp(depthFL * 1.5 + 0.5, 0, 1);
-    const submergedBR = MathUtils.clamp(depthBR * 1.5 + 0.5, 0, 1);
-    const submergedBL = MathUtils.clamp(depthBL * 1.5 + 0.5, 0, 1);
-    const submergedRatio =
-      (submergedFR + submergedFL + submergedBR + submergedBL) / 4;
 
+    const winterDraftPenalty = isWinter * 0.15;
+    const draftOffset =
+      vessel.baseDraftM -
+      hullDamageSinkOffset -
+      winterDraftPenalty;
+    const speedRatio = Math.min(
+      Math.hypot(
+        body.linearVelocity.x,
+        body.linearVelocity.z,
+      ) / vessel.planingReferenceSpeedMps,
+      1,
+    );
+    const planingDragReduction = vessel.planingCapable
+      ? MathUtils.lerp(1, 0.35, speedRatio * speedRatio)
+      : 1;
+    const hullDragPenalty =
+      1 + ((100 - hullHealth.current) / 100) * 0.8;
     const buoyancyStiffness =
       vessel.buoyancyStiffness * (1 - isWinter * 0.1);
-    const massShareKg = mass * 0.25;
-    applyBuoyancyAtPoint(
-      body, pointFR, depthFR, submergedFR, massShareKg,
-      buoyancyStiffness, vessel.verticalDamping,
-      scratch.pointVelocity, scratch.buoyancyForce,
-    );
-    applyBuoyancyAtPoint(
-      body, pointFL, depthFL, submergedFL, massShareKg,
-      buoyancyStiffness, vessel.verticalDamping,
-      scratch.pointVelocity, scratch.buoyancyForce,
-    );
-    applyBuoyancyAtPoint(
-      body, pointBR, depthBR, submergedBR, massShareKg,
-      buoyancyStiffness, vessel.verticalDamping,
-      scratch.pointVelocity, scratch.buoyancyForce,
-    );
-    applyBuoyancyAtPoint(
-      body, pointBL, depthBL, submergedBL, massShareKg,
-      buoyancyStiffness, vessel.verticalDamping,
-      scratch.pointVelocity, scratch.buoyancyForce,
-    );
-    
+
+    const hullForceResult = distributedHullForces.current.apply({
+      body,
+      vessel,
+      timeSeconds: time,
+      waterVelocity,
+      draftOffsetM: draftOffset,
+      buoyancyStiffness,
+      forwardDragMultiplier:
+        planingDragReduction * hullDragPenalty,
+      lateralDragMultiplier: hullDragPenalty,
+      sampleWater: getWaveHeight,
+    });
+    const submergedRatio = hullForceResult.submergedRatio;
+
     // --- PHASE 4: REFINED SLAM DAMAGE ---
     // A sudden transition from air to water with high downward velocity
     const isSlam = prevSubmergedRatio.current < 0.3 && submergedRatio > 0.4 && prevVelocityY.current < -2.0;
@@ -333,41 +263,19 @@ export default function Boat() {
     prevVelocityY.current = body.linearVelocity.y;
     prevSubmergedRatio.current = submergedRatio;
 
-    // --- Environmental Velocities ---
-    const windRad = MathUtils.degToRad(windDir);
-    const windVelocity = scratch.windVelocity
-      .set(Math.sin(windRad), 0, Math.cos(windRad))
-      .multiplyScalar(windSpeed);
-    
-    const currentRad = MathUtils.degToRad(currentDir);
-    const waterVelocity = scratch.waterVelocity
-      .set(Math.sin(currentRad), 0, Math.cos(currentRad))
-      .multiplyScalar(currentSpeed);
-
     // --- True Velocity Relative to Water ---
     const waterRelativeVelocity = scratch.waterRelativeVelocity
       .copy(body.linearVelocity)
       .sub(waterVelocity);
     const vRelForward = waterRelativeVelocity.dot(forwardDir);
-    const vRelRight = waterRelativeVelocity.dot(rightDir);
 
     // --- Applied Horizontal Forces ---
     
     // PLANING HYDRODYNAMICS
-    // Calculate how 'on plane' the hull is based on forward speed. 
-    // Speedboats ride up on top of the water, massively reducing drag and lifting the bow.
-    const speedRatio = Math.min(
-      Math.hypot(body.linearVelocity.x, body.linearVelocity.z) /
-        vessel.planingReferenceSpeedMps,
-      1.0,
-    );
-    const planingFactor = speedRatio * speedRatio * submergedRatio;
-    
-    // Decrease forward drag up to 65% for the speedboat when planing. Displacement hulls (Trawler) don't plane well.
-    const planingDragReduction = vessel.planingCapable
-      ? MathUtils.lerp(1.0, 0.35, Math.pow(speedRatio, 2))
-      : 1.0;
-    const dynamicDragCoeff = dragCoeff * planingDragReduction;
+    // The speedboat receives bow lift once forward speed builds. Hull
+    // resistance is already reduced inside the distributed point model.
+    const planingFactor =
+      speedRatio * speedRatio * submergedRatio;
 
     // --- ENGINE STRESS & RPM MODULATION ---
     let targetRPM =
@@ -427,29 +335,6 @@ export default function Boat() {
         thrustMultiplier,
     );
     
-    // 2. Hydrodynamic Drag (Water Resistance - Drops to zero if boat jumps)
-    // --- PHASE 2: Hull Damage Penalty ---
-    // A ruined hull creates tremendous parasitic drag, lowering top speed by up to 40%
-    const hullDragPenalty = 1.0 + ((100 - hullHealth.current) / 100) * 0.8; 
-    
-    const dragForceForward = scratch.dragForceForward
-      .copy(forwardDir)
-      .multiplyScalar(
-        -vRelForward *
-          Math.abs(vRelForward) *
-          dynamicDragCoeff *
-          hullDragPenalty *
-          0.2 -
-          vRelForward * dynamicDragCoeff * hullDragPenalty,
-      )
-      .multiplyScalar(submergedRatio);
-    const dragForceRight = scratch.dragForceRight
-      .copy(rightDir)
-      .multiplyScalar(
-        -vRelRight * Math.abs(vRelRight) * dragCoeff * keelDragMultiplier,
-      )
-      .multiplyScalar(submergedRatio);
-
     // DIRECTIONAL WIND CATCHING
     const apparentWind = scratch.apparentWind
       .copy(windVelocity)
@@ -475,9 +360,6 @@ export default function Boat() {
       Math.sqrt(apparentWindLengthSq) * trueWindCoeff,
     );
 
-    body.addForce(
-      scratch.totalForce.copy(dragForceForward).add(dragForceRight),
-    );
     body.localPointToWorld(
       scratch.localPropeller.fromArray(vessel.propellerPointLocal),
       scratch.worldPropeller,
@@ -618,6 +500,24 @@ export default function Boat() {
     body.linearVelocity.x = MathUtils.clamp(body.linearVelocity.x, -80, 80);
     body.linearVelocity.y = MathUtils.clamp(body.linearVelocity.y, -40, 40);
     body.linearVelocity.z = MathUtils.clamp(body.linearVelocity.z, -80, 80);
+    const maxAngularSpeed = vessel.maxAngularSpeedRadPerSecond;
+    body.angularVelocity.set(
+      MathUtils.clamp(
+        body.angularVelocity.x,
+        -maxAngularSpeed,
+        maxAngularSpeed,
+      ),
+      MathUtils.clamp(
+        body.angularVelocity.y,
+        -maxAngularSpeed,
+        maxAngularSpeed,
+      ),
+      MathUtils.clamp(
+        body.angularVelocity.z,
+        -maxAngularSpeed,
+        maxAngularSpeed,
+      ),
+    );
 
     // --- Integrate the accumulated six-degree-of-freedom forces ---
     body.integrate(dt);
@@ -833,7 +733,10 @@ export default function Boat() {
     // --- Update Telemetry UI & Health Degradation ---
     // 1 knot = 0.514444 m/s
     const speedKnots = speed2D / 0.514444;
-    let headingDeg = MathUtils.radToDeg(body.rotation.y) % 360;
+    let headingDeg =
+      MathUtils.radToDeg(
+        Math.atan2(forwardDir.x, -forwardDir.z),
+      ) % 360;
     if (headingDeg < 0) headingDeg += 360;
     
     // --- Phase 1: Health Math ---
