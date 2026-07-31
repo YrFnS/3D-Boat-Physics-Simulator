@@ -19,10 +19,14 @@ import ExperiencePersistence from './ExperiencePersistence';
 import HUD from './HUD';
 import HurricaneClouds from './HurricaneClouds';
 import Islands from './Islands';
+import NavigationHUD from './NavigationHUD';
 import Ocean from './Ocean';
 import PerformanceHUD from './PerformanceHUD';
 import PerformanceTelemetry from './PerformanceTelemetry';
 import QualityPersistence from './QualityPersistence';
+import ScenarioDirector from './ScenarioDirector';
+import ScenarioResultOverlay from './ScenarioResultOverlay';
+import ScenarioWaypoints from './ScenarioWaypoints';
 import SessionOverlay from './SessionOverlay';
 import ShadowBudget from './ShadowBudget';
 import Tornado from './Tornado';
@@ -215,6 +219,8 @@ export default function Simulator() {
         <Suspense fallback={<LoadingFallback />}>
           <EnvironmentRig />
           <Boat key={`${activeBoat}-${resetVesselTrigger}`} />
+          <ScenarioDirector enabled={!automationMode} />
+          <ScenarioWaypoints enabled={!automationMode} />
           <CameraRig />
           <HurricaneClouds />
           <Tornado />
@@ -227,6 +233,7 @@ export default function Simulator() {
       </Canvas>
 
       {showHud && <HUD />}
+      {showHud && !automationMode && <NavigationHUD />}
       {debugEnabled && (
         <div className="hidden sm:block">
           <BenchmarkPanel />
@@ -235,6 +242,7 @@ export default function Simulator() {
       <PerformanceHUD showMetrics={debugEnabled} />
       <SessionOverlay automationMode={automationMode} />
       <ExperienceChrome automationMode={automationMode} />
+      <ScenarioResultOverlay automationMode={automationMode} />
     </div>
   );
 }
