@@ -3,19 +3,28 @@ name: Product experience
 on:
   pull_request:
     paths:
+      - app/globals.css
       - components/CameraRig.tsx
+      - components/ContextualControlHints.tsx
       - components/ExperienceChrome.tsx
       - components/ExperiencePersistence.tsx
       - components/HUD.tsx
+      - components/InputModeTracker.tsx
       - components/NavigationHUD.tsx
+      - components/OnboardingOverlay.tsx
       - components/ScenarioDirector.tsx
       - components/ScenarioResultOverlay.tsx
       - components/ScenarioWaypoints.tsx
       - components/SessionOverlay.tsx
+      - components/SettingsOverlay.tsx
+      - components/SettingsPersistence.tsx
       - components/Simulator.tsx
+      - components/SimulatorRecovery.tsx
       - hooks/useAutomationMode.ts
       - sim/scenarios/**
+      - store/useExperienceSettings.ts
       - store/useSimStore.ts
+      - scripts/onboarding-settings-smoke.mjs
       - scripts/product-experience-smoke.mjs
       - package.json
       - package-lock.json
@@ -24,19 +33,28 @@ on:
     branches:
       - main
     paths:
+      - app/globals.css
       - components/CameraRig.tsx
+      - components/ContextualControlHints.tsx
       - components/ExperienceChrome.tsx
       - components/ExperiencePersistence.tsx
       - components/HUD.tsx
+      - components/InputModeTracker.tsx
       - components/NavigationHUD.tsx
+      - components/OnboardingOverlay.tsx
       - components/ScenarioDirector.tsx
       - components/ScenarioResultOverlay.tsx
       - components/ScenarioWaypoints.tsx
       - components/SessionOverlay.tsx
+      - components/SettingsOverlay.tsx
+      - components/SettingsPersistence.tsx
       - components/Simulator.tsx
+      - components/SimulatorRecovery.tsx
       - hooks/useAutomationMode.ts
       - sim/scenarios/**
+      - store/useExperienceSettings.ts
       - store/useSimStore.ts
+      - scripts/onboarding-settings-smoke.mjs
       - scripts/product-experience-smoke.mjs
       - package.json
       - package-lock.json
@@ -52,9 +70,9 @@ env:
 
 jobs:
   experience:
-    name: Session, navigation, pause, reset, and persistence flow
+    name: Session, navigation, onboarding, settings, and persistence flow
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       - name: Check out repository
@@ -98,10 +116,15 @@ jobs:
           cat /tmp/boat-product-server.log
           exit 1
 
-      - name: Run product experience smoke
+      - name: Run session and navigation smoke
         id: product_experience
         continue-on-error: true
         run: node scripts/product-experience-smoke.mjs
+
+      - name: Run onboarding and settings smoke
+        id: onboarding_settings
+        continue-on-error: true
+        run: node scripts/onboarding-settings-smoke.mjs
 
       - name: Collect server log
         if: always()
@@ -119,5 +142,7 @@ jobs:
           retention-days: 14
 
       - name: Enforce product experience result
-        if: steps.product_experience.outcome != 'success'
+        if: >-
+          steps.product_experience.outcome != 'success' ||
+          steps.onboarding_settings.outcome != 'success'
         run: exit 1
