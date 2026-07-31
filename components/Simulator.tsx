@@ -2,7 +2,12 @@
 
 import { Html, PerformanceMonitor } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
-import { Suspense, useCallback, useEffect } from 'react';
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useState,
+} from 'react';
 import { useAutomationMode } from '@/hooks/useAutomationMode';
 import { useDebugMode } from '@/hooks/useDebugMode';
 import {
@@ -13,14 +18,17 @@ import BenchmarkPanel from './BenchmarkPanel';
 import Boat from './Boat';
 import Buoys from './Buoys';
 import CameraRig from './CameraRig';
+import ContextualControlHints from './ContextualControlHints';
 import EnvironmentRig from './EnvironmentRig';
 import ExperienceChrome from './ExperienceChrome';
 import ExperiencePersistence from './ExperiencePersistence';
 import HUD from './HUD';
 import HurricaneClouds from './HurricaneClouds';
+import InputModeTracker from './InputModeTracker';
 import Islands from './Islands';
 import NavigationHUD from './NavigationHUD';
 import Ocean from './Ocean';
+import OnboardingOverlay from './OnboardingOverlay';
 import PerformanceHUD from './PerformanceHUD';
 import PerformanceTelemetry from './PerformanceTelemetry';
 import QualityPersistence from './QualityPersistence';
@@ -28,7 +36,15 @@ import ScenarioDirector from './ScenarioDirector';
 import ScenarioResultOverlay from './ScenarioResultOverlay';
 import ScenarioWaypoints from './ScenarioWaypoints';
 import SessionOverlay from './SessionOverlay';
+import SettingsOverlay from './SettingsOverlay';
+import SettingsPersistence from './SettingsPersistence';
 import ShadowBudget from './ShadowBudget';
+import {
+  detectWebGLSupport,
+  SimulatorRecoveryOverlay,
+  type WebGLStatus,
+  WebGLContextMonitor,
+} from './SimulatorRecovery';
 import Tornado from './Tornado';
 import WakeField from './WakeField';
 import WeatherEffects from './WeatherEffects';
@@ -69,8 +85,14 @@ function moveQuality(
 function LoadingFallback() {
   return (
     <Html center>
-      <div className="rounded-2xl border border-white/10 bg-slate-950/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.25em] text-sky-200 shadow-2xl backdrop-blur-xl">
-        Preparing simulation
+      <div className="w-56 rounded-2xl border border-white/10 bg-slate-950/86 p-4 text-center text-white shadow-2xl backdrop-blur-xl">
+        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-sky-300/20 border-t-sky-300" />
+        <div className="mt-3 text-[10px] font-black uppercase tracking-[0.22em] text-sky-200">
+          Preparing simulation
+        </div>
+        <div className="mt-1 text-[10px] leading-4 text-slate-500">
+          Loading the vessel, ocean, weather, and collision world.
+        </div>
       </div>
     </Html>
   );
@@ -86,6 +108,9 @@ function isEditableTarget(target: EventTarget | null) {
 }
 
 export default function Simulator() {
+  const [webglStatus, setWebglStatus] = useState<WebGLStatus>(() =>
+    detectWebGLSupport() ? 'ready' : 'unsupported',
+  );
   const setKey = useSimStore((state) => state.setKey);
   const clearKeys = useSimStore((state) => state.clearKeys);
   const renderQuality = useSimStore((state) => state.renderQuality);
@@ -118,6 +143,10 @@ export default function Simulator() {
     if (state.qualityMode === 'auto') {
       state.setRenderQuality('low');
     }
+  }, []);
+
+  const handleWebGLStatus = useCallback((status: WebGLStatus) => {
+    setWebglStatus(status);
   }, []);
 
   useEffect(() => {
@@ -192,10 +221,20 @@ export default function Simulator() {
   const showSessionOverlay =
     scenarioRunStatus === 'inactive' || scenarioRunStatus === 'active';
 
+  if (webglStatus === 'unsupported') {
+    return (
+      <div className="relative h-screen w-full overflow-hidden bg-slate-950">
+        <SimulatorRecoveryOverlay status="unsupported" />
+      </div>
+    );
+  }
+
   return (
     <div className="relative h-screen w-full select-none overflow-hidden bg-slate-900">
       <QualityPersistence />
       <ExperiencePersistence automationMode={automationMode} />
+      <SettingsPersistence automationMode={automationMode} />
+      <InputModeTracker />
       <Canvas
         camera={{ position: [0, 15, -25], fov: 60, near: 0.1, far: 3000 }}
         dpr={DPR_BY_QUALITY[renderQuality]}
@@ -211,6 +250,7 @@ export default function Simulator() {
         performance={{ min: 0.5 }}
       >
         <fog attach="fog" args={['#aab8c2', 200, 1000]} />
+        <WebGLContextMonitor onStatusChange={handleWebGLStatus} />
 
         <PerformanceMonitor
           flipflops={3}
@@ -237,19 +277,26 @@ export default function Simulator() {
         </Suspense>
       </Canvas>
 
-      {showHud && <HUD />}
-      {showHud && !automationMode && <NavigationHUD />}
-      {debugEnabled && (
-        <div className="hidden sm:block">
-          <BenchmarkPanel />
-        </div>
-      )}
-      <PerformanceHUD showMetrics={debugEnabled} />
-      {showSessionOverlay && (
-        <SessionOverlay automationMode={automationMode} />
-      )}
-      <ExperienceChrome automationMode={automationMode} />
-      <ScenarioResultOverlay automationMode={automationMode} />
+      <div className="sim-ui-layer pointer-events-none absolute inset-0">
+        {showHud && <HUD />}
+        {showHud && !automationMode && <NavigationHUD />}
+        {debugEnabled && (
+          <div className="hidden sm:block">
+            <BenchmarkPanel />
+          </div>
+        )}
+        <PerformanceHUD showMetrics={debugEnabled} />
+        {showSessionOverlay && (
+          <SessionOverlay automationMode={automationMode} />
+        )}
+        <ExperienceChrome automationMode={automationMode} />
+        <ScenarioResultOverlay automationMode={automationMode} />
+        <ContextualControlHints automationMode={automationMode} />
+        <SettingsOverlay automationMode={automationMode} />
+        <OnboardingOverlay automationMode={automationMode} />
+      </div>
+
+      {webglStatus === 'lost' && <SimulatorRecoveryOverlay status="lost" />}
     </div>
   );
 }
