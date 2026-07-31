@@ -912,6 +912,16 @@ export default function Boat() {
       );
     }
 
+    sharedPhysics.boatPos.copy(body.position);
+    sharedPhysics.boatQuaternion.copy(body.quaternion);
+    sharedPhysics.boatLinearVelocity.copy(body.linearVelocity);
+    sharedPhysics.boatAngularVelocity.copy(body.angularVelocity);
+    sharedPhysics.boatSpeed = Math.min(
+      Math.hypot(body.linearVelocity.x, body.linearVelocity.z),
+      35,
+    );
+    sharedPhysics.submergedRatio = submergedRatio;
+
     lastSubmergedRatio.current = submergedRatio;
     currentPosition.current.copy(body.position);
     currentQuaternion.current.copy(body.quaternion);
