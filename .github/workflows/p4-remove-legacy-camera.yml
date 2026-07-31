@@ -73,13 +73,15 @@ jobs:
                   raise SystemExit('Expected the OrbitControlsLike block exactly once.')
               if source.count(scratch_block) != 1:
                   raise SystemExit('Expected the legacy camera scratch block exactly once.')
+
+              source = source.replace(interface_block, '', 1)
+              source = source.replace(scratch_block, '', 1)
+
+              # Recalculate offsets after removing earlier declarations.
               start = source.find(start_marker)
               end = source.find(end_marker, start)
               if start < 0 or end < 0 or end <= start:
                   raise SystemExit('Unable to isolate the legacy camera tracking block.')
-
-              source = source.replace(interface_block, '', 1)
-              source = source.replace(scratch_block, '', 1)
               source = source[:start] + source[end:]
 
               forbidden = [
