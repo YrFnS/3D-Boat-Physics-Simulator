@@ -13,16 +13,23 @@ This document tracks the work required to turn the calibrated marine simulation 
 - [x] Add chase, helm, orbit, and cinematic camera modes.
 - [x] Add keyboard shortcuts for pause, camera cycling, and vessel reset.
 - [x] Preserve calibration, smoke-test, benchmark, and debug automation entry points.
-- [ ] Complete browser validation and tune any layout or camera issues found.
+- [x] Add persistent vessel, scenario, camera, and HUD preferences.
+- [x] Add HUD visibility and fullscreen controls.
+- [x] Complete desktop/mobile browser validation for the session shell.
 
 ## P3.2 — Navigation, objectives, and scenario progression
 
-- [ ] Add a marine chart/minimap with vessel heading and hazard markers.
-- [ ] Add waypoint placement and route guidance.
-- [ ] Add scenario objectives, progress tracking, success conditions, and failure conditions.
-- [ ] Add rescue, obstacle-course, river, and harbor-approach mission logic.
-- [ ] Add restart checkpoints and safe respawn locations.
-- [ ] Add clear scenario completion summaries and measured performance statistics.
+- [x] Add a responsive marine chart/minimap with vessel heading and route markers.
+- [x] Add data-driven mission waypoints, world-space beacons, distance, bearing, and route guidance.
+- [x] Resolve authored waypoints onto safe navigable water using the procedural terrain field.
+- [x] Add scenario objectives, progress tracking, operational time limits, success conditions, and failure conditions.
+- [x] Add route gameplay for open water, harbor training, storm passage, and winter rescue.
+- [x] Add mission scoring based on time, damage, contacts, and vessel resets.
+- [x] Add scenario-completion and failure summaries with retry, briefing, and next-passage actions.
+- [ ] Add player-placed free-navigation waypoints.
+- [ ] Add rescue targets, delivery cargo, obstacle-course gates, river navigation, and harbor-approach mission entities.
+- [ ] Add restart checkpoints and scenario-specific safe respawn locations.
+- [ ] Add best-time, best-score, and per-scenario history persistence.
 
 ## P3.3 — Input and settings
 
