@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { Quaternion, Vector3 } from 'three';
+import { queueNextSixDofBodySpawn } from '@/sim/core/SixDofBody';
 import {
   DEFAULT_SCENARIO_ID,
   getScenarioDefinition,
@@ -105,6 +106,19 @@ function createEmptyKeys(): ControlState {
   };
 }
 
+function queueScenarioSpawn(
+  x: number,
+  z: number,
+  headingDeg: number,
+) {
+  queueNextSixDofBodySpawn({
+    x,
+    y: 0,
+    z,
+    headingDeg,
+  });
+}
+
 function createScenarioGameplayState(
   scenarioRunStatus: ScenarioRunStatus,
 ) {
@@ -181,21 +195,19 @@ export const sharedPhysics = {
 };
 
 export interface SimState {
-  windSpeed: number; // m/s
-  windDir: number; // degrees
-  currentSpeed: number; // m/s
-  currentDir: number; // degrees
-  engineThrust: number; // -1 to 1
+  windSpeed: number;
+  windDir: number;
+  currentSpeed: number;
+  currentDir: number;
+  engineThrust: number;
   activeBoat: BoatType;
 
-  // Product session
   sessionPhase: SessionPhase;
   activeScenario: ScenarioId;
   cameraMode: CameraMode;
   hudVisible: boolean;
   resetVesselTrigger: number;
 
-  // Scenario navigation and progression
   scenarioRunStatus: ScenarioRunStatus;
   scenarioRunId: number;
   activeWaypointIndex: number;
@@ -217,7 +229,6 @@ export interface SimState {
   scenarioSpawnZ: number;
   scenarioSpawnHeadingDeg: number;
 
-  // Telemetry (updated by physics)
   speedKnots: number;
   heading: number;
   hullHealth: number;
@@ -225,11 +236,9 @@ export interface SimState {
   engineTemperature: number;
   rudderHealth: number;
 
-  // Environment targets
-  targetTime: number; // 0 to 24
-  targetSeason: number; // 0 to 1
+  targetTime: number;
+  targetSeason: number;
 
-  // Rendering and performance
   qualityMode: QualityMode;
   renderQuality: RenderQuality;
   fps: number;
@@ -237,10 +246,8 @@ export interface SimState {
   drawCalls: number;
   triangles: number;
 
-  // Controls
   keys: ControlState;
 
-  // Actions
   setWindSpeed: (value: number) => void;
   setWindDir: (value: number) => void;
   setCurrentSpeed: (value: number) => void;
@@ -343,24 +350,26 @@ export const useSimStore = create<SimState>((set, get) => ({
   setCurrentDir: (currentDir) => set({ currentDir }),
   setEngineThrust: (engineThrust) =>
     set({ engineThrust: Math.max(-1, Math.min(1, engineThrust)) }),
-  setActiveBoat: (activeBoat) =>
-    set((state) => {
-      if (state.activeBoat === activeBoat) return {};
+  setActiveBoat: (activeBoat) => {
+    const state = get();
+    if (state.activeBoat === activeBoat) return;
 
-      if (state.sessionPhase === 'menu') {
-        return { activeBoat };
-      }
+    if (state.sessionPhase === 'menu') {
+      set({ activeBoat });
+      return;
+    }
 
-      return {
-        activeBoat,
-        engineThrust: 0,
-        keys: createEmptyKeys(),
-        resetVesselTrigger: state.resetVesselTrigger + 1,
-        scenarioRunId: state.scenarioRunId + 1,
-        ...createScenarioGameplayState('active'),
-        ...resetTelemetry(),
-      };
-    }),
+    queueScenarioSpawn(0, 0, 0);
+    set({
+      activeBoat,
+      engineThrust: 0,
+      keys: createEmptyKeys(),
+      resetVesselTrigger: state.resetVesselTrigger + 1,
+      scenarioRunId: state.scenarioRunId + 1,
+      ...createScenarioGameplayState('active'),
+      ...resetTelemetry(),
+    });
+  },
   setTelemetry: (
     speedKnots,
     heading,
@@ -413,9 +422,11 @@ export const useSimStore = create<SimState>((set, get) => ({
     });
   },
   startScenario: (scenarioId, requestedBoat) => {
-    const activeScenario = scenarioId ?? get().activeScenario;
+    const state = get();
+    const activeScenario = scenarioId ?? state.activeScenario;
     const scenario = getScenarioDefinition(activeScenario);
-    set((state) => ({
+    queueScenarioSpawn(0, 0, 0);
+    set({
       activeScenario,
       activeBoat: requestedBoat ?? state.activeBoat,
       sessionPhase: 'running',
@@ -431,7 +442,7 @@ export const useSimStore = create<SimState>((set, get) => ({
       scenarioRunId: state.scenarioRunId + 1,
       ...createScenarioGameplayState('active'),
       ...resetTelemetry(),
-    }));
+    });
   },
   pauseSession: () =>
     set((state) =>
@@ -476,6 +487,7 @@ export const useSimStore = create<SimState>((set, get) => ({
   restartScenario: () => {
     const state = get();
     const scenario = getScenarioDefinition(state.activeScenario);
+    queueScenarioSpawn(0, 0, 0);
     set({
       sessionPhase: 'running',
       windSpeed: scenario.windSpeed,
@@ -576,8 +588,14 @@ export const useSimStore = create<SimState>((set, get) => ({
       engineThrust: 0,
       keys: createEmptyKeys(),
     }),
-  resetVessel: () =>
-    set((state) => ({
+  resetVessel: () => {
+    const state = get();
+    queueScenarioSpawn(
+      state.scenarioSpawnX,
+      state.scenarioSpawnZ,
+      state.scenarioSpawnHeadingDeg,
+    );
+    set({
       engineThrust: 0,
       keys: createEmptyKeys(),
       resetVesselTrigger: state.resetVesselTrigger + 1,
@@ -587,7 +605,8 @@ export const useSimStore = create<SimState>((set, get) => ({
           : state.scenarioResetCount,
       scenarioEventMessage: `Vessel recovered at ${state.scenarioCheckpointLabel}.`,
       ...resetTelemetry(),
-    })),
+    });
+  },
   fireInstantRepair: () =>
     set((state) => ({
       instantRepairTrigger: state.instantRepairTrigger + 1,
