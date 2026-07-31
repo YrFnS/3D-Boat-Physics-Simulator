@@ -74,9 +74,11 @@ function normalizeRecord(
     failures: Math.floor(finiteNonNegative(value.failures, 0)),
     bestScore: Math.min(1_000, finiteNonNegative(value.bestScore, 0)),
     bestTimeSeconds:
-      value.bestTimeSeconds === null
-        ? null
-        : finiteNonNegative(value.bestTimeSeconds, 0),
+      typeof value.bestTimeSeconds === 'number' &&
+      Number.isFinite(value.bestTimeSeconds) &&
+      value.bestTimeSeconds >= 0
+        ? value.bestTimeSeconds
+        : null,
     bestHullHealth: Math.min(
       100,
       finiteNonNegative(value.bestHullHealth, 0),
