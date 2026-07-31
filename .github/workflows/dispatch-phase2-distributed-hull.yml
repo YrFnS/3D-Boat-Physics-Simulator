@@ -1,23 +1,64 @@
-name: Dispatch distributed hull integration
+name: Run distributed hull integration
 
-# Updating this file triggers the dispatcher after the workflow exists on the branch.
 on:
   push:
     branches:
       - agent/phase-2-fixed-timestep-physics
     paths:
       - '.github/workflows/dispatch-phase2-distributed-hull.yml'
+  workflow_dispatch:
 
 permissions:
-  actions: write
-  contents: read
+  contents: write
+
+concurrency:
+  group: phase2-distributed-hull-runner
+  cancel-in-progress: false
 
 jobs:
-  dispatch:
+  integrate:
+    name: Apply and validate distributed hull forces
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+
     steps:
-      - name: Dispatch integration workflow
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run phase2-distributed-hull.yml --repo "$GITHUB_REPOSITORY" --ref agent/phase-2-fixed-timestep-physics
+      - name: Check out Phase 2 branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-2-fixed-timestep-physics
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply integration
+        run: node scripts/apply-distributed-hull.cjs
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate application
+        run: npm run validate
+
+      - name: Remove temporary integration files
+        run: |
+          rm -f scripts/apply-distributed-hull.cjs
+          rm -f .github/workflows/phase2-distributed-hull.yml
+          rm -f .github/workflows/dispatch-phase2-distributed-hull.yml
+
+      - name: Commit validated integration
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/Boat.tsx scripts/apply-distributed-hull.cjs .github/workflows/phase2-distributed-hull.yml .github/workflows/dispatch-phase2-distributed-hull.yml
+          if git diff --cached --quiet; then
+            echo "No integration changes to commit."
+            exit 0
+          fi
+          git commit -m "physics: integrate distributed hull forces"
+          git push origin "HEAD:agent/phase-2-fixed-timestep-physics"
