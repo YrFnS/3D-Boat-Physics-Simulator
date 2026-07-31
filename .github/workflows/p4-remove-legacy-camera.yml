@@ -1,11 +1,15 @@
 name: Remove legacy boat camera tracker
 
 on:
+  pull_request:
+    paths:
+      - .github/workflows/p4-remove-legacy-camera.yml
   push:
     branches:
       - agent/phase-4-release-validation
     paths:
       - .github/workflows/p4-remove-legacy-camera.yml
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -111,5 +115,3 @@ jobs:
           fi
           git commit -m 'refactor: remove legacy boat camera tracker'
           git push origin HEAD:agent/phase-4-release-validation
-
-# Connector-authored update intentionally triggers the guarded one-time job.
