@@ -35,6 +35,17 @@ function writeDataset(state: SimState) {
   dataset.simHudVisible = state.hudVisible ? '1' : '0';
   dataset.simActiveBoat = state.activeBoat;
   dataset.simResetVesselTrigger = String(state.resetVesselTrigger);
+  dataset.simScenarioRunStatus = state.scenarioRunStatus;
+  dataset.simActiveWaypointIndex = String(state.activeWaypointIndex);
+  dataset.simScenarioProgress = String(state.scenarioProgress);
+  dataset.simScenarioElapsedSeconds = String(
+    state.scenarioElapsedSeconds,
+  );
+  dataset.simNavigationDistanceM = String(state.navigationDistanceM);
+  dataset.simNavigationBearingDeg = String(
+    state.navigationBearingDeg,
+  );
+  dataset.simScenarioResult = state.scenarioResult?.outcome ?? '';
 }
 
 function writePreferences(state: SimState) {
