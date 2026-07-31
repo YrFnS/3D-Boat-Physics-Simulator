@@ -2,7 +2,7 @@
 
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Vector3, Group, MathUtils, Object3D, Quaternion } from 'three';
+import { Vector3, Group, MathUtils, Quaternion } from 'three';
 import { MeshDistortMaterial } from '@react-three/drei';
 import { useSimStore, sharedPhysics } from '@/store/useSimStore';
 import { getWaveHeight } from './Ocean';
@@ -10,6 +10,7 @@ import { getTerrainHeight } from '@/lib/terrain';
 import { useBoatAudio } from './boat/useBoatAudio';
 import { useBoatVisualDamage } from './boat/useBoatVisualDamage';
 import { FixedStepRunner } from '@/sim/core/FixedStepRunner';
+import { SixDofBody } from '@/sim/core/SixDofBody';
 import { SeededRandom } from '@/sim/core/SeededRandom';
 import { getVesselConfig } from '@/sim/vessels/VesselConfig';
 
@@ -18,9 +19,33 @@ interface OrbitControlsLike {
   update: () => void;
 }
 
+function applyBuoyancyAtPoint(
+  body: SixDofBody,
+  pointWorld: Vector3,
+  depth: number,
+  submergedRatio: number,
+  massShareKg: number,
+  stiffness: number,
+  damping: number,
+  pointVelocity: Vector3,
+  force: Vector3,
+) {
+  if (depth <= -0.8) return;
+
+  body.velocityAtPoint(pointWorld, pointVelocity);
+  const acceleration =
+    Math.max(0, depth) * stiffness -
+    pointVelocity.y * damping * submergedRatio;
+
+  body.addForceAtPoint(
+    force.set(0, acceleration * massShareKg, 0),
+    pointWorld,
+  );
+}
+
 export default function Boat() {
   const boatRef = useRef<Group>(null);
-  const physicsBody = useRef(new Object3D());
+  const physicsBody = useRef(new SixDofBody());
   const fixedStepRunner = useRef(new FixedStepRunner());
   const simulationRandom = useRef(new SeededRandom(0xb0475eed));
   const previousPosition = useRef(new Vector3());
@@ -28,8 +53,6 @@ export default function Boat() {
   const previousQuaternion = useRef(new Quaternion());
   const currentQuaternion = useRef(new Quaternion());
   const lastSubmergedRatio = useRef(1);
-  const velocity = useRef(new Vector3(0, 0, 0));
-  const angularVelocity = useRef(0);
   const engineRPM = useRef(1000); // Base idle RPM
   const rudderAngle = useRef(0);
   const trawlerEngineRef = useRef<Group>(null);
@@ -57,6 +80,23 @@ export default function Boat() {
       apparentWindDir: new Vector3(),
       windForce: new Vector3(),
       totalForce: new Vector3(),
+      gravityForce: new Vector3(),
+      buoyancyForce: new Vector3(),
+      pointVelocity: new Vector3(),
+      pointFR: new Vector3(),
+      pointFL: new Vector3(),
+      pointBR: new Vector3(),
+      pointBL: new Vector3(),
+      localPropeller: new Vector3(),
+      localRudder: new Vector3(),
+      localWind: new Vector3(),
+      localPlaning: new Vector3(),
+      worldPropeller: new Vector3(),
+      worldRudder: new Vector3(),
+      worldWind: new Vector3(),
+      worldPlaning: new Vector3(),
+      planingForce: new Vector3(),
+      rudderForce: new Vector3(),
       terrainNormal: new Vector3(),
       boatForward: new Vector3(),
       boatRight: new Vector3(),
@@ -122,6 +162,16 @@ export default function Boat() {
     } = useSimStore.getState();
 
     const vessel = getVesselConfig(activeBoat);
+    body.setMassProperties(
+      vessel.massKg,
+      vessel.principalInertiaKgM2,
+      vessel.angularDampingPerSecond,
+      vessel.centerOfMassLocal,
+    );
+    body.beginStep();
+    body.addForce(
+      scratch.gravityForce.set(0, -vessel.massKg * 9.81, 0),
+    );
 
     const keyboardThrottle =
       (keys.w || keys.arrowup ? 1 : 0) -
@@ -139,20 +189,21 @@ export default function Boat() {
     const keelDragMultiplier = vessel.keelDragMultiplier;
     const windCoeff = vessel.windAreaCoefficient;
     const turnForceMax = vessel.turnForceMax;
-    const angularDragCoeff = vessel.angularDragCoefficient;
 
-    // --- Heading & Forward Vectors ---
-    const heading = body.rotation.y;
-    const forwardDir = scratch.forwardDir.set(
-      -Math.sin(heading),
-      0,
-      -Math.cos(heading),
-    );
-    const rightDir = scratch.rightDir.set(
-      forwardDir.z,
-      0,
-      -forwardDir.x,
-    );
+    // --- Heading & Horizontal Vessel Axes ---
+    const forwardDir = scratch.forwardDir
+      .set(0, 0, -1)
+      .applyQuaternion(body.quaternion);
+    forwardDir.y = 0;
+    if (forwardDir.lengthSq() > 1e-8) forwardDir.normalize();
+    else forwardDir.set(0, 0, -1);
+
+    const rightDir = scratch.rightDir
+      .set(-1, 0, 0)
+      .applyQuaternion(body.quaternion);
+    rightDir.y = 0;
+    if (rightDir.lengthSq() > 1e-8) rightDir.normalize();
+    else rightDir.set(-1, 0, 0);
 
     // --- Sample Gerstner Wave for Multi-Point Buoyancy & Physics ---
     const pos = body.position;
@@ -161,44 +212,43 @@ export default function Boat() {
     const halfL = vessel.halfLengthM;
     const halfW = vessel.halfWidthM;
 
-    // Calculate vectors identifying the 4 corners of the boat based on its heading
-    const fwdVec = scratch.fwdVec.copy(forwardDir).multiplyScalar(halfL);
-    const rgtVec = scratch.rgtVec.copy(rightDir).multiplyScalar(halfW);
-
-    const cornerFR = scratch.cornerFR.copy(fwdVec).add(rgtVec);
-    const cornerFL = scratch.cornerFL.copy(fwdVec).sub(rgtVec);
-    const cornerBR = scratch.cornerBR.copy(fwdVec).multiplyScalar(-1).add(rgtVec);
-    const cornerBL = scratch.cornerBL.copy(fwdVec).multiplyScalar(-1).sub(rgtVec);
+    // Four hull points are transformed by the full quaternion, so their
+    // different immersion depths generate real pitch and roll torques.
+    const cornerFR = scratch.cornerFR.set(-halfW, 0, -halfL);
+    const cornerFL = scratch.cornerFL.set(halfW, 0, -halfL);
+    const cornerBR = scratch.cornerBR.set(-halfW, 0, halfL);
+    const cornerBL = scratch.cornerBL.set(halfW, 0, halfL);
+    const pointFR = body.localPointToWorld(cornerFR, scratch.pointFR);
+    const pointFL = body.localPointToWorld(cornerFL, scratch.pointFL);
+    const pointBR = body.localPointToWorld(cornerBR, scratch.pointBR);
+    const pointBL = body.localPointToWorld(cornerBL, scratch.pointBL);
 
     // Sample the ocean shader's wave height at these 4 distinct world positions
     const pFR = getWaveHeight(
-      pos.x + cornerFR.x,
-      pos.z + cornerFR.z,
+      pointFR.x,
+      pointFR.z,
       time,
       scratch.pFR,
     );
     const pFL = getWaveHeight(
-      pos.x + cornerFL.x,
-      pos.z + cornerFL.z,
+      pointFL.x,
+      pointFL.z,
       time,
       scratch.pFL,
     );
     const pBR = getWaveHeight(
-      pos.x + cornerBR.x,
-      pos.z + cornerBR.z,
+      pointBR.x,
+      pointBR.z,
       time,
       scratch.pBR,
     );
     const pBL = getWaveHeight(
-      pos.x + cornerBL.x,
-      pos.z + cornerBL.z,
+      pointBL.x,
+      pointBL.z,
       time,
       scratch.pBL,
     );
 
-    // Calculate Average Surface Y under the boat
-    const avgY = (pFR.y + pFL.y + pBR.y + pBL.y) / 4.0;
-    
     // --- Ice & Winter Intercept (Phase 3 & 4) ---
     // Mathematically recreate the localized ice noise field from the Ocean shader
     const isWinter = Math.max(0, Math.min(1.0, 1.0 - Math.abs(sharedPhysics.season - 0.75) * 4.0));
@@ -223,24 +273,40 @@ export default function Boat() {
     // We counteract the 0.28m natural gravity squat by using extreme negative offsets.
     const baseDraft = vessel.baseDraftM;
     const draftOffset = baseDraft - hullDamageSinkOffset - winterDraftPenalty; 
-    const depth = (avgY - draftOffset) - pos.y; // Positive means underwater, negative means airborne
-    const submergedRatio = MathUtils.clamp(depth * 1.5 + 0.5, 0.0, 1.0); // 0 = fully in air, 1 = fully submerged
+    const depthFR = (pFR.y - draftOffset) - pointFR.y;
+    const depthFL = (pFL.y - draftOffset) - pointFL.y;
+    const depthBR = (pBR.y - draftOffset) - pointBR.y;
+    const depthBL = (pBL.y - draftOffset) - pointBL.y;
+    const submergedFR = MathUtils.clamp(depthFR * 1.5 + 0.5, 0, 1);
+    const submergedFL = MathUtils.clamp(depthFL * 1.5 + 0.5, 0, 1);
+    const submergedBR = MathUtils.clamp(depthBR * 1.5 + 0.5, 0, 1);
+    const submergedBL = MathUtils.clamp(depthBL * 1.5 + 0.5, 0, 1);
+    const submergedRatio =
+      (submergedFR + submergedFL + submergedBR + submergedBL) / 4;
 
-    // --- Dynamic Vertical Physics (Crash & Slam) ---
-    // Instead of sticking to the water, we simulate gravity and buoyancy
-    let accelY = -9.81; // Base Gravity
-
-    if (depth > -0.8) { 
-      // Boat is touching or in water, apply upward buoyant force
-      // Ice/slush slightly reduces the clean buoyancy stiffness of fluid
-      const buoyancyStiffness = vessel.buoyancyStiffness * (1.0 - isWinter * 0.1);
-      const waterVerticalDamping = vessel.verticalDamping;
-      
-      accelY += Math.max(0, depth) * buoyancyStiffness; 
-      accelY -= velocity.current.y * waterVerticalDamping * submergedRatio;
-    }
-
-    velocity.current.y += accelY * dt;
+    const buoyancyStiffness =
+      vessel.buoyancyStiffness * (1 - isWinter * 0.1);
+    const massShareKg = mass * 0.25;
+    applyBuoyancyAtPoint(
+      body, pointFR, depthFR, submergedFR, massShareKg,
+      buoyancyStiffness, vessel.verticalDamping,
+      scratch.pointVelocity, scratch.buoyancyForce,
+    );
+    applyBuoyancyAtPoint(
+      body, pointFL, depthFL, submergedFL, massShareKg,
+      buoyancyStiffness, vessel.verticalDamping,
+      scratch.pointVelocity, scratch.buoyancyForce,
+    );
+    applyBuoyancyAtPoint(
+      body, pointBR, depthBR, submergedBR, massShareKg,
+      buoyancyStiffness, vessel.verticalDamping,
+      scratch.pointVelocity, scratch.buoyancyForce,
+    );
+    applyBuoyancyAtPoint(
+      body, pointBL, depthBL, submergedBL, massShareKg,
+      buoyancyStiffness, vessel.verticalDamping,
+      scratch.pointVelocity, scratch.buoyancyForce,
+    );
     
     // --- PHASE 4: REFINED SLAM DAMAGE ---
     // A sudden transition from air to water with high downward velocity
@@ -264,7 +330,7 @@ export default function Boat() {
     }
     
     // Store for next frame
-    prevVelocityY.current = velocity.current.y;
+    prevVelocityY.current = body.linearVelocity.y;
     prevSubmergedRatio.current = submergedRatio;
 
     // --- Environmental Velocities ---
@@ -280,7 +346,7 @@ export default function Boat() {
 
     // --- True Velocity Relative to Water ---
     const waterRelativeVelocity = scratch.waterRelativeVelocity
-      .copy(velocity.current)
+      .copy(body.linearVelocity)
       .sub(waterVelocity);
     const vRelForward = waterRelativeVelocity.dot(forwardDir);
     const vRelRight = waterRelativeVelocity.dot(rightDir);
@@ -291,11 +357,11 @@ export default function Boat() {
     // Calculate how 'on plane' the hull is based on forward speed. 
     // Speedboats ride up on top of the water, massively reducing drag and lifting the bow.
     const speedRatio = Math.min(
-      Math.hypot(velocity.current.x, velocity.current.z) /
+      Math.hypot(body.linearVelocity.x, body.linearVelocity.z) /
         vessel.planingReferenceSpeedMps,
       1.0,
     );
-    const planingLift = speedRatio * 0.18 * submergedRatio; // Also used for pitch visual later
+    const planingFactor = speedRatio * speedRatio * submergedRatio;
     
     // Decrease forward drag up to 65% for the speedboat when planing. Displacement hulls (Trawler) don't plane well.
     const planingDragReduction = vessel.planingCapable
@@ -387,7 +453,7 @@ export default function Boat() {
     // DIRECTIONAL WIND CATCHING
     const apparentWind = scratch.apparentWind
       .copy(windVelocity)
-      .sub(velocity.current);
+      .sub(body.linearVelocity);
     const apparentWindLengthSq = apparentWind.lengthSq();
     const apparentWindDir = scratch.apparentWindDir;
     if (apparentWindLengthSq > 1e-8) {
@@ -409,29 +475,55 @@ export default function Boat() {
       Math.sqrt(apparentWindLengthSq) * trueWindCoeff,
     );
 
-    const totalForce = scratch.totalForce
-      .copy(thrustForce)
-      .add(dragForceForward)
-      .add(dragForceRight)
-      .add(windForce);
-    velocity.current.x += (totalForce.x / mass) * dt;
-    velocity.current.z += (totalForce.z / mass) * dt;
+    body.addForce(
+      scratch.totalForce.copy(dragForceForward).add(dragForceRight),
+    );
+    body.localPointToWorld(
+      scratch.localPropeller.fromArray(vessel.propellerPointLocal),
+      scratch.worldPropeller,
+    );
+    body.addForceAtPoint(thrustForce, scratch.worldPropeller);
+    body.localPointToWorld(
+      scratch.localWind.fromArray(vessel.windPointLocal),
+      scratch.worldWind,
+    );
+    body.addForceAtPoint(windForce, scratch.worldWind);
+
+    if (vessel.planingCapable && planingFactor > 0) {
+      body.localPointToWorld(
+        scratch.localPlaning.set(0, 0, -halfL * 0.75),
+        scratch.worldPlaning,
+      );
+      body.addForceAtPoint(
+        scratch.planingForce.set(
+          0,
+          mass * 9.81 * planingFactor * 0.35,
+          0,
+        ),
+        scratch.worldPlaning,
+      );
+    }
     
     // --- PHASE 4.5: ICE FLOE FRICTION & DAMAGE ---
     // Instead of instantiating hundreds of meshes, we treat the procedural ice field as an actual physical entity
     if (currentIceFactor > 0.3 && submergedRatio > 0.1) {
         // The boat is crashing through the ice pack!
         // Ice induces extreme drag, capping momentum
-        velocity.current.multiplyScalar(Math.exp(-currentIceFactor * 6 * dt));
+        body.linearVelocity.multiplyScalar(Math.exp(-currentIceFactor * 6 * dt));
         
-        const iceImpactSpeed = Math.hypot(velocity.current.x, velocity.current.z);
+        const iceImpactSpeed = Math.hypot(body.linearVelocity.x, body.linearVelocity.z);
         if (iceImpactSpeed > 2.0 && Math.abs(thrustRaw) > 0.1) {
             // Apply continuous grinding damage based on speed and ice density
             hullHealth.current = Math.max(0, hullHealth.current - iceImpactSpeed * currentIceFactor * 0.2 * dt);
             
             // Random chaotic bumps representing ice chunk impacts
-            velocity.current.y += (simulationRandom.current.next() - 0.2) * currentIceFactor * iceImpactSpeed * 0.1;
-            angularVelocity.current += (simulationRandom.current.next() - 0.5) * currentIceFactor * iceImpactSpeed * 0.2;
+            body.linearVelocity.y += (simulationRandom.current.next() - 0.2) * currentIceFactor * iceImpactSpeed * 0.1;
+            body.angularVelocity.x +=
+              (simulationRandom.current.next() - 0.5) *
+              currentIceFactor * iceImpactSpeed * 0.12;
+            body.angularVelocity.z +=
+              (simulationRandom.current.next() - 0.5) *
+              currentIceFactor * iceImpactSpeed * 0.2;
             
         }
     }
@@ -464,8 +556,17 @@ export default function Boat() {
     const steeringBite = Math.max(0.1, Math.min(speedBite + propWashBite, 6.0)) * submergedRatio;
     
     const turnTorque = rudderAngle.current * steeringBite * turnForceMax;
-    const angularAcc = turnTorque - angularVelocity.current * angularDragCoeff;
-    angularVelocity.current += angularAcc * dt;
+    const rudderForceMagnitude = turnTorque * mass * 0.7;
+    body.localPointToWorld(
+      scratch.localRudder.fromArray(vessel.rudderPointLocal),
+      scratch.worldRudder,
+    );
+    body.addForceAtPoint(
+      scratch.rudderForce
+        .copy(rightDir)
+        .multiplyScalar(-rudderForceMagnitude),
+      scratch.worldRudder,
+    );
 
     // --- PHASE 4: OBSTACLE COLLISION DETECTION ---
     const currentBoatPos = body.position;
@@ -495,15 +596,15 @@ export default function Boat() {
             currentBoatPos.z += nz * overlap;
             
             // Calculate impact severity based on relative velocity towards object
-            const dotVelocity = -(velocity.current.x * nx + velocity.current.z * nz);
+            const dotVelocity = -(body.linearVelocity.x * nx + body.linearVelocity.z * nz);
             
             if (dotVelocity > 0.5) { // Lowered impact threshold so buoys consistently bonk
                 // Apply impulse response bounce (restitution = 0.5)
-                velocity.current.x += nx * dotVelocity * 1.5;
-                velocity.current.z += nz * dotVelocity * 1.5;
+                body.linearVelocity.x += nx * dotVelocity * 1.5;
+                body.linearVelocity.z += nz * dotVelocity * 1.5;
                 
                 // Add chaotic spin
-                angularVelocity.current += (simulationRandom.current.next() - 0.5) * dotVelocity * 1.0;
+                body.angularVelocity.y += (simulationRandom.current.next() - 0.5) * dotVelocity * 1.0;
 
                 // Damage Hull! (Reduced damage from buoys)
                 hullHealth.current = Math.max(0, hullHealth.current - dotVelocity * 1.5);
@@ -514,20 +615,22 @@ export default function Boat() {
     }
 
     // Extreme physics safety clamp to prevent space launches (Flying Boat Bug fix)
-    velocity.current.x = MathUtils.clamp(velocity.current.x, -80, 80);
-    velocity.current.y = MathUtils.clamp(velocity.current.y, -40, 40);
-    velocity.current.z = MathUtils.clamp(velocity.current.z, -80, 80);
+    body.linearVelocity.x = MathUtils.clamp(body.linearVelocity.x, -80, 80);
+    body.linearVelocity.y = MathUtils.clamp(body.linearVelocity.y, -40, 40);
+    body.linearVelocity.z = MathUtils.clamp(body.linearVelocity.z, -80, 80);
 
-    // --- Apply Transforms ---
-    body.position.x += velocity.current.x * dt;
-    body.position.y += velocity.current.y * dt;
-    body.position.z += velocity.current.z * dt;
-    body.rotation.y += angularVelocity.current * dt;
-    
+    // --- Integrate the accumulated six-degree-of-freedom forces ---
+    body.integrate(dt);
+
+    forwardDir.set(0, 0, -1).applyQuaternion(body.quaternion);
+    forwardDir.y = 0;
+    if (forwardDir.lengthSq() > 1e-8) forwardDir.normalize();
+    else forwardDir.set(0, 0, -1);
+
     // Update Shared Physics for Shaders (Ocean Wake)
     sharedPhysics.boatPos.copy(body.position);
     sharedPhysics.boatDir.copy(forwardDir);
-    const speed2D = Math.hypot(velocity.current.x, velocity.current.z);
+    const speed2D = Math.hypot(body.linearVelocity.x, body.linearVelocity.z);
     sharedPhysics.boatSpeed = Math.min(speed2D, 35.0);
 
     // --- PHASE 3: TERRAIN COLLISION & BEACHING ---
@@ -582,28 +685,28 @@ export default function Boat() {
         }
 
         // Dot product to see if we slammed into a wall
-        const dotVelocity = velocity.current.x * normalVector.x + velocity.current.y * normalVector.y + velocity.current.z * normalVector.z;
+        const dotVelocity = body.linearVelocity.x * normalVector.x + body.linearVelocity.y * normalVector.y + body.linearVelocity.z * normalVector.z;
         const speedIntoWall = -dotVelocity;
         
         // 4. Velocity Projection (Stop forward momentum from completely burrowing into the wall)
         if (dotVelocity < 0) {
-           velocity.current.x -= normalVector.x * dotVelocity;
+           body.linearVelocity.x -= normalVector.x * dotVelocity;
            // If we hit a steep wall, cancel the horizontal energy entirely. 
            // Do NOT convert horizontal momentum into vertical climbing momentum!
-           velocity.current.y = Math.min(velocity.current.y, 0); 
-           velocity.current.z -= normalVector.z * dotVelocity;
+           body.linearVelocity.y = Math.min(body.linearVelocity.y, 0); 
+           body.linearVelocity.z -= normalVector.z * dotVelocity;
         }
 
         // 5. Apply severe ground friction (beaching)
         const groundFriction = 3.0; 
-        velocity.current.x -= velocity.current.x * groundFriction * dt;
-        velocity.current.z -= velocity.current.z * groundFriction * dt;
+        body.linearVelocity.x -= body.linearVelocity.x * groundFriction * dt;
+        body.linearVelocity.z -= body.linearVelocity.z * groundFriction * dt;
         
         // Ensure bouncing upwards is stopped if we are pinned, stop downward velocity if falling
-        if (velocity.current.y > 0 && normalVector.y >= 0.9) {
-            velocity.current.y *= 0.5; // Dampen upward bouncing intelligently
-        } else if (velocity.current.y < 0) {
-            velocity.current.y = 0; // Prevent infinite gravity accumulation
+        if (body.linearVelocity.y > 0 && normalVector.y >= 0.9) {
+            body.linearVelocity.y *= 0.5; // Dampen upward bouncing intelligently
+        } else if (body.linearVelocity.y < 0) {
+            body.linearVelocity.y = 0; // Prevent infinite gravity accumulation
         }
 
         // 6. Crash Damage
@@ -619,12 +722,12 @@ export default function Boat() {
              }
              
              // Bounce off terrain (no upward geometry launch from lateral impacts)
-             velocity.current.x += normalVector.x * speedIntoWall * 0.8;
-             velocity.current.y += (normalVector.y > 0.9 ? normalVector.y * speedIntoWall * 0.5 : 0); 
-             velocity.current.z += normalVector.z * speedIntoWall * 0.8;
+             body.linearVelocity.x += normalVector.x * speedIntoWall * 0.8;
+             body.linearVelocity.y += (normalVector.y > 0.9 ? normalVector.y * speedIntoWall * 0.5 : 0); 
+             body.linearVelocity.z += normalVector.z * speedIntoWall * 0.8;
              
              // Add chaotic spin
-              angularVelocity.current +=
+              body.angularVelocity.y +=
                 (simulationRandom.current.next() - 0.5) * speedIntoWall;
               audio.playImpact(severity, 'terrain');
         }
@@ -647,12 +750,12 @@ export default function Boat() {
             const nx = dx / dist;
             const nz = dz / dist;
             
-            velocity.current.x += nx * pullFactor * dt;
-            velocity.current.z += nz * pullFactor * dt;
+            body.linearVelocity.x += nx * pullFactor * dt;
+            body.linearVelocity.z += nz * pullFactor * dt;
             
             if (dist < 40) {
-                angularVelocity.current += (simulationRandom.current.next() - 0.5) * 5.0 * dt;
-                velocity.current.y += simulationRandom.current.next() * 6.0 * dt; 
+                body.angularVelocity.y += (simulationRandom.current.next() - 0.5) * 5.0 * dt;
+                body.linearVelocity.y += simulationRandom.current.next() * 6.0 * dt; 
                 hullHealth.current = Math.max(0, hullHealth.current - 10.0 * dt);
             }
         }
@@ -679,8 +782,8 @@ export default function Boat() {
             // --- Pure Suction & Swirl (Mathematical Rankine Vortex) ---
             // Real whirlpools suck perfectly inwards and spiral
             const radialPull = Math.pow(f, 2.0) * 45.0; // Smooth curve pulling in
-            velocity.current.x += nx * radialPull * dt;
-            velocity.current.z += nz * radialPull * dt;
+            body.linearVelocity.x += nx * radialPull * dt;
+            body.linearVelocity.z += nz * radialPull * dt;
             
             // --- Tangential Swirl ---
             // Much faster spin, peaking right at the eye wall (Rankine model)
@@ -696,12 +799,12 @@ export default function Boat() {
             const fSwirlTotal = swirlIntensity;
             
             // Tangential vector is (-nz, nx) to match clockwise shader visual
-            velocity.current.x += -nz * fSwirlTotal * dt;
-            velocity.current.z += nx * fSwirlTotal * dt;
+            body.linearVelocity.x += -nz * fSwirlTotal * dt;
+            body.linearVelocity.z += nx * fSwirlTotal * dt;
             
             // --- Roll/Coriolis Effect ---
             // Tries to spin the boat to align perfectly with the swirl
-            angularVelocity.current += (fSwirlTotal * 0.05) * dt;
+            body.angularVelocity.y += (fSwirlTotal * 0.05) * dt;
 
             // --- The Eye Impact (Deep Plunge) ---
             if (dist < 40) {
@@ -710,81 +813,22 @@ export default function Boat() {
                  engineHealth.current = Math.max(0, engineHealth.current - 5.0 * dt * damageFactor);
                  
                  // Structural shuddering near the terrifying eye
-                 velocity.current.x += (simulationRandom.current.next() - 0.5) * 10.0 * damageFactor;
-                 velocity.current.z += (simulationRandom.current.next() - 0.5) * 10.0 * damageFactor;
-                 angularVelocity.current += (simulationRandom.current.next() - 0.5) * 5.0 * damageFactor;
+                 body.linearVelocity.x += (simulationRandom.current.next() - 0.5) * 10.0 * damageFactor;
+                 body.linearVelocity.z += (simulationRandom.current.next() - 0.5) * 10.0 * damageFactor;
+                 body.angularVelocity.y += (simulationRandom.current.next() - 0.5) * 5.0 * damageFactor;
                  
                  if (dist < 18) {
                     // Sucked directly down into the abyss
                     hullHealth.current = Math.max(0, hullHealth.current - 50.0 * dt);
-                    velocity.current.y -= 45.0 * dt; // Violent plunge into the void
+                    body.linearVelocity.y -= 45.0 * dt; // Violent plunge into the void
                     
                     // Rip to exact center
-                    velocity.current.x += nx * 40.0 * dt;
-                    velocity.current.z += nz * 40.0 * dt;
+                    body.linearVelocity.x += nx * 40.0 * dt;
+                    body.linearVelocity.z += nz * 40.0 * dt;
                  }
             }
         }
     }
-
-    // 2. PITCH (Rotation around X)
-    const heightFront = (pFR.y + pFL.y) / 2.0;
-    const heightBack = (pBR.y + pBL.y) / 2.0;
-    const pitchDelta = (heightFront - heightBack) / (halfL * 2.0); 
-
-    // Whirlpool proximity check
-    const wDistSq = (currentBoatPos.x - sharedPhysics.whirlpoolPos.x)**2 + (currentBoatPos.z - sharedPhysics.whirlpoolPos.z)**2;
-
-    // --- Whirlpool Pitch Bias (Nose Dip) ---
-    let whirlpoolPitchBias = 0;
-    if (wDistSq < 25600) { // 160m
-        const wDist = Math.max(Math.sqrt(wDistSq), 1e-4);
-        const toWhirlpoolX = (sharedPhysics.whirlpoolPos.x - currentBoatPos.x) / wDist;
-        const toWhirlpoolZ = (sharedPhysics.whirlpoolPos.z - currentBoatPos.z) / wDist;
-        
-        const boatForward = scratch.boatForward.set(0, 0, -1).applyQuaternion(body.quaternion);
-        const alignment = boatForward.x * toWhirlpoolX + boatForward.z * toWhirlpoolZ; // 1 if facing the center
-        
-        // Massive steepness down the 110m drop
-        const slopeStrength = Math.pow(1.0 - Math.min(1.0, wDist / 160.0), 3.0) * 1.5;
-        whirlpoolPitchBias = alignment * slopeStrength;
-    }
-
-    // targetPitch uses the planingLift defined above
-    // Visual mesh points to -Z. A positive X rotation points the -Z nose UP.
-    // If the front is higher (pitchDelta > 0), we want the nose to point UP (positive X rotation).
-    // planingLift lifts the nose UP (positive).
-    const targetPitch = MathUtils.clamp(Math.atan(pitchDelta) + planingLift + whirlpoolPitchBias, -1.2, 1.2);
-    
-    // 3. ROLL (Rotation around Z)
-    const heightRight = (pFR.y + pBR.y) / 2.0;
-    const heightLeft = (pFL.y + pBL.y) / 2.0;
-    const rollDelta = (heightRight - heightLeft) / (halfW * 2.0);
-    
-    // Whirlpool Roll Bias: The water slope is steep. We calculate the tangent of the boat relative to the vortex center.
-    let whirlpoolRollBias = 0;
-    if (wDistSq < 25600) {
-        const wDist = Math.max(Math.sqrt(wDistSq), 1e-4);
-        const toWhirlpoolX = (sharedPhysics.whirlpoolPos.x - currentBoatPos.x) / wDist;
-        const toWhirlpoolZ = (sharedPhysics.whirlpoolPos.z - currentBoatPos.z) / wDist;
-        
-        // Find boat's right vector
-        const boatRight = scratch.boatRight.set(1, 0, 0).applyQuaternion(body.quaternion);
-        const alignment = boatRight.x * toWhirlpoolX + boatRight.z * toWhirlpoolZ; // 1 if center is to the right
-        
-        // Tilt radically toward the eye wall as it gets steeper
-        const slopeStrength = Math.pow(1.0 - Math.min(1.0, wDist / 160.0), 3.0) * 1.5;
-        whirlpoolRollBias = alignment * slopeStrength;
-    }
-    
-    const safeBank = MathUtils.clamp(-angularVelocity.current * speedRatio * 0.6, -0.35, 0.35) * submergedRatio; 
-    const targetRoll = MathUtils.clamp(Math.atan(rollDelta) + safeBank + whirlpoolRollBias, -1.2, 1.2);
-
-    // Apply rotation. If jumping (airborne), we smoothly hold the angle rather than instantly snapping to the water far below
-    const rotSpeed = submergedRatio > 0.1 ? vessel.rotationResponse : 1.0;
-    body.rotation.x = MathUtils.lerp(body.rotation.x, targetPitch, rotSpeed * dt);
-    body.rotation.z = MathUtils.lerp(body.rotation.z, targetRoll, rotSpeed * dt);
-
 
     // --- Update Telemetry UI & Health Degradation ---
     // 1 knot = 0.514444 m/s
@@ -923,8 +967,8 @@ export default function Boat() {
         Math.cos(renderWindRadians),
       )
       .multiplyScalar(windSpeed)
-      .sub(velocity.current);
-    const speed2D = Math.hypot(velocity.current.x, velocity.current.z);
+      .sub(physicsBody.current.linearVelocity);
+    const speed2D = Math.hypot(physicsBody.current.linearVelocity.x, physicsBody.current.linearVelocity.z);
     const submergedRatio = lastSubmergedRatio.current;
     const pos = boat.position;
 
