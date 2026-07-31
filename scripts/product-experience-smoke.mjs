@@ -32,6 +32,15 @@ function readExperienceState(page) {
       hudVisible: dataset.simHudVisible ?? '',
       activeBoat: dataset.simActiveBoat ?? '',
       resetVesselTrigger: Number(dataset.simResetVesselTrigger ?? '0'),
+      scenarioRunStatus: dataset.simScenarioRunStatus ?? '',
+      activeWaypointIndex: Number(dataset.simActiveWaypointIndex ?? '0'),
+      scenarioProgress: Number(dataset.simScenarioProgress ?? '0'),
+      scenarioElapsedSeconds: Number(
+        dataset.simScenarioElapsedSeconds ?? '0',
+      ),
+      navigationDistanceM: Number(dataset.simNavigationDistanceM ?? '0'),
+      navigationBearingDeg: Number(dataset.simNavigationBearingDeg ?? '0'),
+      scenarioResult: dataset.simScenarioResult ?? '',
     };
   });
 }
@@ -55,6 +64,30 @@ async function waitForCanvasReady(page) {
         canvas.clientHeight === window.innerHeight &&
         canvas.width > 0 &&
         canvas.height > 0
+      );
+    },
+    undefined,
+    { timeout: 60_000 },
+  );
+}
+
+async function waitForNavigationReady(page) {
+  await page.waitForFunction(
+    () => {
+      const dataset = document.documentElement.dataset;
+      const distance = Number(dataset.simNavigationDistanceM);
+      const bearing = Number(dataset.simNavigationBearingDeg);
+      const progress = Number(dataset.simScenarioProgress);
+      return (
+        dataset.simScenarioRunStatus === 'active' &&
+        Number.isFinite(distance) &&
+        distance > 0 &&
+        Number.isFinite(bearing) &&
+        bearing >= 0 &&
+        bearing < 360 &&
+        Number.isFinite(progress) &&
+        progress >= 0 &&
+        progress <= 1
       );
     },
     undefined,
@@ -102,6 +135,24 @@ function runtimeIsValid(runtime) {
     runtime.canvas.clientHeight === runtime.viewport.height &&
     !runtime.horizontalOverflow &&
     !runtime.verticalOverflow
+  );
+}
+
+function navigationStateIsValid(state) {
+  return (
+    state.scenarioRunStatus === 'active' &&
+    Number.isInteger(state.activeWaypointIndex) &&
+    state.activeWaypointIndex >= 0 &&
+    Number.isFinite(state.scenarioProgress) &&
+    state.scenarioProgress >= 0 &&
+    state.scenarioProgress <= 1 &&
+    Number.isFinite(state.scenarioElapsedSeconds) &&
+    state.scenarioElapsedSeconds >= 0 &&
+    Number.isFinite(state.navigationDistanceM) &&
+    state.navigationDistanceM > 0 &&
+    Number.isFinite(state.navigationBearingDeg) &&
+    state.navigationBearingDeg >= 0 &&
+    state.navigationBearingDeg < 360
   );
 }
 
@@ -216,9 +267,14 @@ allPassed =
 
       await page.getByRole('button', { name: /Begin passage/i }).click();
       await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForNavigationReady(page);
+      await page.locator('[aria-label="Marine navigation chart"]').waitFor();
       checks.launch = true;
 
       const launched = await readExperienceState(page);
+      checks.navigationChartVisible = true;
+      checks.navigationState = navigationStateIsValid(launched);
+
       await page.keyboard.press('c');
       await waitForDataset(page, 'simCameraMode', 'helm');
       checks.cameraCycle = true;
@@ -227,6 +283,7 @@ allPassed =
       await waitForDataset(page, 'simHudVisible', '0');
       await page.keyboard.press('h');
       await waitForDataset(page, 'simHudVisible', '1');
+      await page.locator('[aria-label="Marine navigation chart"]').waitFor();
       checks.hudToggle = true;
 
       await page.keyboard.press('Home');
@@ -238,7 +295,9 @@ allPassed =
         { timeout: 60_000 },
       );
       const afterReset = await readExperienceState(page);
-      checks.vesselReset = true;
+      checks.vesselReset =
+        afterReset.scenarioRunStatus === 'active' &&
+        afterReset.scenarioResult === '';
 
       await page.keyboard.press('Escape');
       await waitForDataset(page, 'simSessionPhase', 'paused');
@@ -260,12 +319,18 @@ allPassed =
         afterReset.resetVesselTrigger,
         { timeout: 60_000 },
       );
-      checks.restart = true;
+      await waitForNavigationReady(page);
+      const afterRestart = await readExperienceState(page);
+      checks.restart =
+        afterRestart.activeWaypointIndex === 0 &&
+        afterRestart.scenarioRunStatus === 'active' &&
+        afterRestart.scenarioResult === '';
 
       await page.keyboard.press('Escape');
       await waitForDataset(page, 'simSessionPhase', 'paused');
       await page.getByRole('button', { name: /Return to briefing/i }).click();
       await waitForDataset(page, 'simSessionPhase', 'menu');
+      await waitForDataset(page, 'simScenarioRunStatus', 'inactive');
       checks.returnToBriefing = true;
 
       await page.reload({ waitUntil: 'domcontentloaded' });
@@ -277,7 +342,8 @@ allPassed =
         restored.scenario === 'storm-passage' &&
         restored.activeBoat === 'speedboat' &&
         restored.cameraMode === 'helm' &&
-        restored.hudVisible === '1';
+        restored.hudVisible === '1' &&
+        restored.scenarioRunStatus === 'inactive';
     },
   )) && allPassed;
 
@@ -293,7 +359,12 @@ allPassed =
     async ({ page, checks }) => {
       await page.getByRole('button', { name: /Begin passage/i }).click();
       await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForNavigationReady(page);
+      await page.locator('[aria-label="Marine navigation chart"]').waitFor();
+      const launched = await readExperienceState(page);
       checks.launch = true;
+      checks.mobileNavigationChart = true;
+      checks.mobileNavigationState = navigationStateIsValid(launched);
 
       await page.getByRole('button', { name: 'Pause simulation' }).click();
       await waitForDataset(page, 'simSessionPhase', 'paused');
@@ -307,6 +378,7 @@ allPassed =
       await waitForDataset(page, 'simHudVisible', '0');
       await page.getByRole('button', { name: 'Show instrument HUD' }).click();
       await waitForDataset(page, 'simHudVisible', '1');
+      await page.locator('[aria-label="Marine navigation chart"]').waitFor();
       checks.mobileHudToggle = true;
 
       checks.mobileTouchControls =
