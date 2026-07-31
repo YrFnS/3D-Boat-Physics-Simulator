@@ -46,6 +46,19 @@ function writeDataset(state: SimState) {
     state.navigationBearingDeg,
   );
   dataset.simScenarioResult = state.scenarioResult?.outcome ?? '';
+  dataset.simScenarioEntityCount = String(
+    state.completedScenarioEntityIds.length,
+  );
+  dataset.simScenarioCheckpointId = state.scenarioCheckpointId ?? '';
+  dataset.simScenarioCheckpointLabel = state.scenarioCheckpointLabel;
+  dataset.simScenarioCheckpointWaypointIndex = String(
+    state.scenarioCheckpointWaypointIndex,
+  );
+  dataset.simScenarioSpawnX = String(state.scenarioSpawnX);
+  dataset.simScenarioSpawnZ = String(state.scenarioSpawnZ);
+  dataset.simScenarioSpawnHeadingDeg = String(
+    state.scenarioSpawnHeadingDeg,
+  );
 }
 
 function writePreferences(state: SimState) {
