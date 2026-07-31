@@ -15,6 +15,8 @@ export interface VesselConfig {
   engineForceMaxN: number;
   forwardDragCoefficient: number;
   keelDragMultiplier: number;
+  dragApplicationDepthM: number;
+  maxLateralDragAccelerationMps2: number;
   windAreaCoefficient: number;
   sideAreaMultiplier: number;
   turnForceMax: number;
@@ -98,6 +100,8 @@ const VESSEL_CONFIGS = {
     engineForceMaxN: 12_000,
     forwardDragCoefficient: 250,
     keelDragMultiplier: 6,
+    dragApplicationDepthM: 0,
+    maxLateralDragAccelerationMps2: 40,
     windAreaCoefficient: 15,
     sideAreaMultiplier: 4.5,
     turnForceMax: 1.5,
@@ -152,13 +156,15 @@ const VESSEL_CONFIGS = {
   speedboat: {
     type: 'speedboat',
     massKg: 800,
-    principalInertiaKgM2: [1_600, 2_400, 520],
-    angularDampingPerSecond: [4.6, 4.2, 5.6],
+    principalInertiaKgM2: [1_600, 2_400, 900],
+    angularDampingPerSecond: [4.6, 4.2, 7.2],
     centerOfMassLocal: [0, -0.1, 0.35],
     maxAngularSpeedRadPerSecond: 2.2,
     engineForceMaxN: 25_000,
     forwardDragCoefficient: 180,
     keelDragMultiplier: 3,
+    dragApplicationDepthM: 0.35,
+    maxLateralDragAccelerationMps2: 14,
     windAreaCoefficient: 5,
     sideAreaMultiplier: 2,
     turnForceMax: 1.7,

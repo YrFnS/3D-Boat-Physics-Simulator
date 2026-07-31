@@ -25,6 +25,7 @@ export interface DistributedHullForceResult {
 interface PointScratch {
   readonly localPoint: Vector3;
   readonly worldPoint: Vector3;
+  readonly dragPoint: Vector3;
   readonly pointVelocity: Vector3;
   readonly waterRelativeVelocity: Vector3;
   readonly force: Vector3;
@@ -55,6 +56,7 @@ export class DistributedHullForces {
   private readonly pointScratch: PointScratch[] = [];
   private readonly forwardAxis = new Vector3();
   private readonly rightAxis = new Vector3();
+  private readonly upAxis = new Vector3();
   private readonly result: DistributedHullForceResult = {
     submergedRatio: 0,
     activePointCount: 0,
@@ -79,6 +81,10 @@ export class DistributedHullForces {
       .normalize();
     this.rightAxis
       .set(-1, 0, 0)
+      .applyQuaternion(body.quaternion)
+      .normalize();
+    this.upAxis
+      .set(0, 1, 0)
       .applyQuaternion(body.quaternion)
       .normalize();
 
@@ -162,11 +168,20 @@ export class DistributedHullForces {
             forwardDragCoefficient *
             0.2) *
         immersionWeight;
-      const lateralDragN =
+      const rawLateralDragN =
         -lateralSpeed *
         Math.abs(lateralSpeed) *
         lateralDragCoefficient *
         immersionWeight;
+      const maximumLateralDragN =
+        vessel.massKg *
+        vessel.maxLateralDragAccelerationMps2 *
+        immersionWeight;
+      const lateralDragN = MathUtils.clamp(
+        rawLateralDragN,
+        -maximumLateralDragN,
+        maximumLateralDragN,
+      );
 
       scratch.force
         .copy(this.forwardAxis)
@@ -174,7 +189,13 @@ export class DistributedHullForces {
         .addScaledVector(this.rightAxis, lateralDragN);
 
       if (scratch.force.lengthSq() > EPSILON) {
-        body.addForceAtPoint(scratch.force, scratch.worldPoint);
+        scratch.dragPoint
+          .copy(scratch.worldPoint)
+          .addScaledVector(
+            this.upAxis,
+            -vessel.dragApplicationDepthM,
+          );
+        body.addForceAtPoint(scratch.force, scratch.dragPoint);
       }
     }
 
@@ -197,6 +218,7 @@ export class DistributedHullForces {
       scratch = {
         localPoint: new Vector3(),
         worldPoint: new Vector3(),
+        dragPoint: new Vector3(),
         pointVelocity: new Vector3(),
         waterRelativeVelocity: new Vector3(),
         force: new Vector3(),
