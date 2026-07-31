@@ -156,7 +156,12 @@ function navigationStateIsValid(state) {
   );
 }
 
-async function runFlow(name, contextOptions, flow) {
+async function runFlow(
+  name,
+  contextOptions,
+  flow,
+  pathName = '/',
+) {
   const context = await browser.newContext(contextOptions);
   const page = await context.newPage();
   const consoleEntries = [];
@@ -183,7 +188,7 @@ async function runFlow(name, contextOptions, flow) {
   let flowError = null;
 
   try {
-    const response = await page.goto(baseUrl, {
+    const response = await page.goto(`${baseUrl}${pathName}`, {
       waitUntil: 'domcontentloaded',
       timeout: 60_000,
     });
@@ -387,6 +392,68 @@ allPassed =
         (await page.getByRole('button', { name: 'Steer left' }).count()) > 0 &&
         (await page.getByRole('button', { name: 'Steer right' }).count()) > 0;
     },
+  )) && allPassed;
+
+allPassed =
+  (await runFlow(
+    'mission-completion-flow',
+    {
+      viewport: { width: 1180, height: 780 },
+      deviceScaleFactor: 1,
+      isMobile: false,
+      hasTouch: false,
+    },
+    async ({ page, checks }) => {
+      await page.getByRole('button', { name: /Begin passage/i }).click();
+      await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForNavigationReady(page);
+      await waitForDataset(page, 'simScenarioResult', 'completed');
+      await page.getByText('Passage complete', { exact: true }).waitFor();
+      const resultState = await readExperienceState(page);
+      checks.completionState =
+        resultState.sessionPhase === 'paused' &&
+        resultState.scenarioRunStatus === 'completed' &&
+        resultState.scenarioResult === 'completed';
+      checks.completionActions =
+        (await page.getByRole('button', { name: /Retry passage/i }).count()) === 1 &&
+        (await page.getByRole('button', { name: /Briefing/i }).count()) === 1 &&
+        (await page.getByRole('button', { name: /Next: Harbor Training/i }).count()) === 1;
+      checks.scoreVisible =
+        (await page.getByText('Mission score', { exact: true }).count()) === 1 &&
+        (await page.getByText('out of 1000', { exact: true }).count()) === 1;
+    },
+    '/?missionTest=complete',
+  )) && allPassed;
+
+allPassed =
+  (await runFlow(
+    'mission-failure-flow',
+    {
+      viewport: { width: 1180, height: 780 },
+      deviceScaleFactor: 1,
+      isMobile: false,
+      hasTouch: false,
+    },
+    async ({ page, checks }) => {
+      await page.getByRole('button', { name: /Begin passage/i }).click();
+      await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForNavigationReady(page);
+      await waitForDataset(page, 'simScenarioResult', 'failed');
+      await page.getByText('Passage failed', { exact: true }).waitFor();
+      const resultState = await readExperienceState(page);
+      checks.failureState =
+        resultState.sessionPhase === 'paused' &&
+        resultState.scenarioRunStatus === 'failed' &&
+        resultState.scenarioResult === 'failed';
+      checks.failureReason =
+        (await page.getByText('Automated mission failure probe passed.', {
+          exact: true,
+        }).count()) === 1;
+      checks.failureActions =
+        (await page.getByRole('button', { name: /Retry passage/i }).count()) === 1 &&
+        (await page.getByRole('button', { name: /Briefing/i }).count()) === 1;
+    },
+    '/?missionTest=fail',
   )) && allPassed;
 
 await browser.close();
