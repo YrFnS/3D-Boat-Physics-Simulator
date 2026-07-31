@@ -39,6 +39,8 @@ jobs:
           node-version: 22
           cache: npm
 
+      # The transformation is guarded by exact source markers so a stale
+      # branch fails instead of silently producing a partial integration.
       - name: Apply guarded contact integration
         run: node scripts/apply-phase2-contact-scenarios.mjs
 
