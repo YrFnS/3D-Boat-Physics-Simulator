@@ -1,4 +1,4 @@
-name: Apply final Phase 2 scenarios through CI
+name: Apply final Phase 2 tuning through CI
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: apply-final-phase2-scenarios
+  group: apply-final-phase2-tuning
   cancel-in-progress: false
 
 env:
@@ -22,7 +22,7 @@ env:
 
 jobs:
   apply:
-    name: Apply, validate, and push final Phase 2 scenarios
+    name: Apply, validate, and push final Phase 2 tuning
     if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -40,11 +40,8 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Apply guarded contact integration
-        run: node scripts/run-phase2-contact-scenarios-patched.mjs
-
-      - name: Check calibration runner syntax
-        run: node --check scripts/physics-calibration.mjs
+      - name: Apply guarded final tuning
+        run: node scripts/apply-phase2-final-tuning.mjs
 
       - name: Install exact dependencies
         run: npm ci
@@ -59,13 +56,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
             components/Boat.tsx \
-            sim/calibration/VesselCalibration.ts \
-            sim/calibration/CollisionCalibration.ts \
-            sim/collision/RapierCollisionWorld.ts \
-            scripts/physics-calibration.mjs
+            sim/collision/RapierCollisionWorld.ts
           if git diff --cached --quiet; then
-            echo "No contact-scenario changes to commit."
+            echo "No final tuning changes to commit."
             exit 0
           fi
-          git commit -m "physics: calibrate grounding and impact contacts"
+          git commit -m "physics: stabilize planing turns and fast contacts"
           git push origin "HEAD:agent/phase-2-fixed-timestep-physics"
