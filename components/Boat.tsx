@@ -80,6 +80,7 @@ export default function Boat() {
       worldPlaning: new Vector3(),
       planingForce: new Vector3(),
       rudderForce: new Vector3(),
+      rollStabilityTorque: new Vector3(),
       boatForward: new Vector3(),
       boatRight: new Vector3(),
       boatUp: new Vector3(),
@@ -555,8 +556,8 @@ export default function Boat() {
     const highSpeedRudderAuthority = vessel.planingCapable
       ? MathUtils.lerp(
           1,
-          0.38,
-          MathUtils.smoothstep(normalizedSteeringSpeed, 0.55, 1.25),
+          0.22,
+          MathUtils.smoothstep(normalizedSteeringSpeed, 0.45, 1.1),
         )
       : MathUtils.lerp(
           1,
@@ -585,8 +586,15 @@ export default function Boat() {
     const propWashBite = Math.abs(effectiveThrustRatio) * 3.5;
     const speedBite = Math.abs(vRelForward) * 0.5;
     
-    // You cannot steer if the prop/rudder is out of the water!
-    const steeringBite = Math.max(0.1, Math.min(speedBite + propWashBite, 6.0)) * submergedRatio;
+    // You cannot steer if the prop/rudder is out of the water. Planing
+    // hulls also lose effective rudder bite as dynamic pressure rises, which
+    // prevents an arcade-like pivot at full speed.
+    const steeringBiteLimit = vessel.planingCapable ? 3.2 : 6;
+    const steeringBite =
+      Math.max(
+        0.1,
+        Math.min(speedBite + propWashBite, steeringBiteLimit),
+      ) * submergedRatio;
     
     const turnTorque = rudderAngle.current * steeringBite * turnForceMax;
     const uprightY = scratch.boatUp
@@ -609,6 +617,31 @@ export default function Boat() {
         .multiplyScalar(-rudderForceMagnitude),
       scratch.worldRudder,
     );
+
+    if (vessel.planingCapable && speedRatio > 0.15) {
+      const signedRollRadians = Math.atan2(
+        scratch.boatUp.dot(rightDir),
+        Math.max(0.05, scratch.boatUp.y),
+      );
+      const rollRateRadPerSecond =
+        body.angularVelocity.dot(forwardDir);
+      const stabilityBlend = MathUtils.smoothstep(
+        speedRatio,
+        0.15,
+        0.65,
+      );
+      const rollStabilityTorqueNm = MathUtils.clamp(
+        signedRollRadians * mass * 12 -
+          rollRateRadPerSecond * mass * 4.5,
+        -mass * 22,
+        mass * 22,
+      );
+      body.addTorque(
+        scratch.rollStabilityTorque
+          .copy(forwardDir)
+          .multiplyScalar(rollStabilityTorqueNm * stabilityBlend),
+      );
+    }
 
     // Rapier resolves compound-hull obstacle and terrain contacts after
     // the custom marine forces have been integrated for this fixed step.

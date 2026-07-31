@@ -426,6 +426,11 @@ export class RapierCollisionWorld {
       })
       .setCanSleep(false);
     this.vesselBody = this.world.createRigidBody(bodyDescription);
+    this.vesselBody.enableCcd(true);
+    this.vesselBody.setSoftCcdPrediction(
+      Math.max(0.35, vessel.halfLengthM * 0.22),
+    );
+    this.vesselBody.setAdditionalSolverIterations(4);
 
     const halfWidth = vessel.halfWidthM;
     const halfLength = vessel.halfLengthM;
