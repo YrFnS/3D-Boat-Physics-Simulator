@@ -17,8 +17,38 @@ export interface ScenarioWaypointDefinition {
   guidance: string;
 }
 
+export type ScenarioEntityType =
+  | 'navigation-gate'
+  | 'cargo-pickup'
+  | 'cargo-delivery'
+  | 'rescue-pickup'
+  | 'rescue-delivery'
+  | 'storm-beacon';
+
+export interface ScenarioEntityDefinition {
+  id: string;
+  label: string;
+  type: ScenarioEntityType;
+  waypointId: string;
+  radiusM: number;
+  guidance: string;
+  completionMessage: string;
+  required: boolean;
+  requiresEntityId?: string;
+  offsetX?: number;
+  offsetZ?: number;
+}
+
+export interface ScenarioCheckpointDefinition {
+  id: string;
+  label: string;
+  waypointId: string;
+}
+
 export interface ScenarioMissionDefinition {
   waypoints: readonly ScenarioWaypointDefinition[];
+  entities: readonly ScenarioEntityDefinition[];
+  checkpoints: readonly ScenarioCheckpointDefinition[];
   timeLimitSeconds: number;
   parTimeSeconds: number;
   failureHullHealth: number;
@@ -53,7 +83,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
     summary:
       'A balanced daylight passage with enough wind and current to feel the six-degree vessel model without overwhelming the helm.',
     objective:
-      'Follow the coastal training route, learn the navigation display, and return under control.',
+      'Follow the coastal training route, clear both sea gates, and return under control.',
     difficulty: 'Training',
     recommendedBoat: 'trawler',
     windSpeed: 8,
@@ -69,6 +99,40 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
       finalSpeedMaxKnots: 8,
       successSummary:
         'The open-water circuit is complete and the vessel returned under control.',
+      entities: [
+        {
+          id: 'east-training-gate',
+          label: 'East training gate',
+          type: 'navigation-gate',
+          waypointId: 'east-mark',
+          radiusM: 18,
+          guidance: 'Pass between the illuminated east-gate posts.',
+          completionMessage: 'East training gate cleared.',
+          required: true,
+        },
+        {
+          id: 'outer-training-gate',
+          label: 'Outer training gate',
+          type: 'navigation-gate',
+          waypointId: 'outer-leg',
+          radiusM: 20,
+          guidance: 'Hold the line and clear the outer gate cleanly.',
+          completionMessage: 'Outer training gate cleared.',
+          required: true,
+        },
+      ],
+      checkpoints: [
+        {
+          id: 'departure-checkpoint',
+          label: 'Departure lane',
+          waypointId: 'departure-lane',
+        },
+        {
+          id: 'outer-leg-checkpoint',
+          label: 'Outer leg',
+          waypointId: 'outer-leg',
+        },
+      ],
       waypoints: [
         {
           id: 'departure-lane',
@@ -112,7 +176,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
     summary:
       'Low wind, a gentle cross-current, and dawn visibility create a calmer environment for throttle, rudder, stopping, and grounding practice.',
     objective:
-      'Complete the compact harbor circuit and stop at the final berth marker.',
+      'Collect the harbor supply crate, complete the compact circuit, and deliver it at the final berth.',
     difficulty: 'Training',
     recommendedBoat: 'trawler',
     windSpeed: 3.5,
@@ -127,7 +191,56 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
       failureHullHealth: 15,
       finalSpeedMaxKnots: 3.5,
       successSummary:
-        'The harbor circuit is complete and the vessel is secured at safe speed.',
+        'The harbor circuit is complete and the supply crate was delivered safely.',
+      entities: [
+        {
+          id: 'harbor-supply-pickup',
+          label: 'Supply crate',
+          type: 'cargo-pickup',
+          waypointId: 'channel-entry',
+          radiusM: 12,
+          guidance: 'Approach the floating supply platform to load the crate.',
+          completionMessage: 'Supply crate secured aboard.',
+          required: true,
+          offsetX: 5,
+          offsetZ: -2,
+        },
+        {
+          id: 'harbor-turn-gate',
+          label: 'Port-turn gate',
+          type: 'navigation-gate',
+          waypointId: 'port-turn',
+          radiusM: 13,
+          guidance: 'Clear the narrow port-turn gate without contact.',
+          completionMessage: 'Port-turn gate cleared.',
+          required: true,
+        },
+        {
+          id: 'harbor-supply-delivery',
+          label: 'Berth delivery zone',
+          type: 'cargo-delivery',
+          waypointId: 'berth',
+          radiusM: 11,
+          guidance: 'Enter the delivery zone slowly to unload the supply crate.',
+          completionMessage: 'Supply crate delivered to the berth.',
+          required: true,
+          requiresEntityId: 'harbor-supply-pickup',
+          offsetX: -3,
+          offsetZ: 1,
+        },
+      ],
+      checkpoints: [
+        {
+          id: 'outer-dolphin-checkpoint',
+          label: 'Outer dolphin',
+          waypointId: 'outer-dolphin',
+        },
+        {
+          id: 'inner-basin-checkpoint',
+          label: 'Inner basin',
+          waypointId: 'inner-basin',
+        },
+      ],
       waypoints: [
         {
           id: 'channel-entry',
@@ -179,7 +292,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
     summary:
       'Strong wind, fast current, dusk light, dense rain, and severe seas turn the world into a demanding survival passage.',
     objective:
-      'Cross the storm corridor before conditions overwhelm the vessel.',
+      'Activate the emergency relay and cross the storm corridor before conditions overwhelm the vessel.',
     difficulty: 'Advanced',
     recommendedBoat: 'trawler',
     windSpeed: 34,
@@ -193,7 +306,36 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
       parTimeSeconds: 270,
       failureHullHealth: 20,
       successSummary:
-        'The vessel cleared the storm corridor with enough structural integrity to continue.',
+        'The emergency relay is active and the vessel cleared the storm corridor with enough structural integrity to continue.',
+      entities: [
+        {
+          id: 'storm-emergency-relay',
+          label: 'Emergency relay',
+          type: 'storm-beacon',
+          waypointId: 'cross-sea',
+          radiusM: 24,
+          guidance: 'Hold near the relay long enough to trigger the automatic handoff.',
+          completionMessage: 'Emergency relay activated.',
+          required: true,
+        },
+        {
+          id: 'storm-lee-gate',
+          label: 'Lee-corridor gate',
+          type: 'navigation-gate',
+          waypointId: 'lee-corridor',
+          radiusM: 25,
+          guidance: 'Clear the lee-side gate while controlling roll.',
+          completionMessage: 'Lee-corridor gate cleared.',
+          required: true,
+        },
+      ],
+      checkpoints: [
+        {
+          id: 'lee-corridor-checkpoint',
+          label: 'Lee corridor',
+          waypointId: 'lee-corridor',
+        },
+      ],
       waypoints: [
         {
           id: 'storm-entry',
@@ -237,7 +379,7 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
     summary:
       'Winter seas, cold morning light, packed ice, and a shifting current reward careful speed management and decisive route changes.',
     objective:
-      'Reach the rescue sector, cross the ice route, and return with the hull intact.',
+      'Recover the survivor pod, cross the ice route, and deliver it to safe water with the hull intact.',
     difficulty: 'Standard',
     recommendedBoat: 'speedboat',
     windSpeed: 17,
@@ -252,7 +394,44 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
       failureHullHealth: 35,
       finalSpeedMaxKnots: 10,
       successSummary:
-        'The rescue route is complete and the vessel exited the ice field safely.',
+        'The survivor pod reached safe water and the vessel exited the ice field intact.',
+      entities: [
+        {
+          id: 'winter-survivor-pickup',
+          label: 'Survivor pod',
+          type: 'rescue-pickup',
+          waypointId: 'rescue-sector',
+          radiusM: 18,
+          guidance: 'Approach the survivor pod carefully for automatic recovery.',
+          completionMessage: 'Survivor pod recovered.',
+          required: true,
+          offsetX: -4,
+          offsetZ: 3,
+        },
+        {
+          id: 'winter-survivor-delivery',
+          label: 'Safe-water rescue zone',
+          type: 'rescue-delivery',
+          waypointId: 'safe-water',
+          radiusM: 22,
+          guidance: 'Enter the safe-water zone below the arrival-speed limit.',
+          completionMessage: 'Survivor pod transferred to the rescue team.',
+          required: true,
+          requiresEntityId: 'winter-survivor-pickup',
+        },
+      ],
+      checkpoints: [
+        {
+          id: 'rescue-sector-checkpoint',
+          label: 'Rescue sector',
+          waypointId: 'rescue-sector',
+        },
+        {
+          id: 'western-lead-checkpoint',
+          label: 'Western lead',
+          waypointId: 'western-lead',
+        },
+      ],
       waypoints: [
         {
           id: 'ice-entry',
