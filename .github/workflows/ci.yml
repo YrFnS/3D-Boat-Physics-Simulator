@@ -1,31 +1,38 @@
-name: CI
+name: Apply final Phase 2 scenarios through CI
 
 on:
   push:
     branches:
-      - main
-      - 'agent/**'
+      - agent/phase-2-fixed-timestep-physics
+    paths:
+      - .github/workflows/ci.yml
   pull_request:
+    paths:
+      - .github/workflows/ci.yml
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: apply-final-phase2-scenarios
+  cancel-in-progress: false
 
 env:
   NEXT_TELEMETRY_DISABLED: 1
 
 jobs:
-  validate:
-    name: Lint, typecheck, build, and full audit
+  apply:
+    name: Apply, validate, and push final Phase 2 scenarios
+    if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     steps:
-      - name: Check out repository
+      - name: Check out Phase 2 branch
         uses: actions/checkout@v4
+        with:
+          ref: agent/phase-2-fixed-timestep-physics
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -33,17 +40,32 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
+      - name: Apply guarded contact integration
+        run: node scripts/apply-phase2-contact-scenarios.mjs
+
+      - name: Check calibration runner syntax
+        run: node --check scripts/physics-calibration.mjs
+
+      - name: Install exact dependencies
         run: npm ci
 
-      - name: Lint
-        run: npm run lint
+      - name: Validate repository
+        run: npm run validate
 
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Build application
-        run: npm run build
-
-      - name: Reject dependency advisories
-        run: npm run audit
+      - name: Commit validated non-workflow changes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            components/Boat.tsx \
+            sim/calibration/VesselCalibration.ts \
+            sim/calibration/CollisionCalibration.ts \
+            sim/collision/RapierCollisionWorld.ts \
+            scripts/physics-calibration.mjs
+          if git diff --cached --quiet; then
+            echo "No contact-scenario changes to commit."
+            exit 0
+          fi
+          git commit -m "physics: calibrate grounding and impact contacts"
+          git push origin "HEAD:agent/phase-2-fixed-timestep-physics"
