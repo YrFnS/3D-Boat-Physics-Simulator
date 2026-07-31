@@ -13,6 +13,7 @@ const imperativeThreeFiles = [
   'components/Islands.tsx',
   'components/Ocean.tsx',
   'components/PerformanceTelemetry.tsx',
+  'components/ScenarioDirector.tsx',
   'components/WakeField.tsx',
   'components/WeatherEffects.tsx',
   'components/boat/useBoatVisualDamage.ts',
