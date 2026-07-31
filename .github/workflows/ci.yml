@@ -1,4 +1,4 @@
-name: Apply speedboat hydrodynamic stability through CI
+name: Apply final speedboat turn stability through CI
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: apply-speedboat-hydrodynamic-stability
+  group: apply-final-speedboat-turn-stability
   cancel-in-progress: false
 
 env:
@@ -22,7 +22,7 @@ env:
 
 jobs:
   apply:
-    name: Apply, validate, and push hydrodynamic stability
+    name: Apply, validate, and push final turn stability
     if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -40,8 +40,8 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Apply guarded hydrodynamic stability
-        run: node scripts/apply-speedboat-hydrodynamic-stability.mjs
+      - name: Apply guarded speedboat turn stability
+        run: node scripts/apply-speedboat-turn-stability.mjs
 
       - name: Install exact dependencies
         run: npm ci
@@ -55,12 +55,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
-            sim/vessels/VesselConfig.ts \
+            components/Boat.tsx \
             sim/vessels/DistributedHullForces.ts \
+            sim/vessels/VesselConfig.ts \
             sim/calibration/VesselCalibration.ts
           if git diff --cached --quiet; then
-            echo "No hydrodynamic stability changes to commit."
+            echo "No final turn-stability changes to commit."
             exit 0
           fi
-          git commit -m "physics: stabilize planing lateral resistance"
+          git commit -m "physics: stabilize high-speed planing turns"
           git push origin "HEAD:agent/phase-2-fixed-timestep-physics"
