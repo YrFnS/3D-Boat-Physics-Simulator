@@ -1,28 +1,31 @@
 'use client';
 
+import { Html, PerformanceMonitor } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
-import { Html, OrbitControls, PerformanceMonitor } from '@react-three/drei';
 import { Suspense, useCallback, useEffect } from 'react';
+import { useAutomationMode } from '@/hooks/useAutomationMode';
+import { useDebugMode } from '@/hooks/useDebugMode';
 import {
   type RenderQuality,
   useSimStore,
 } from '@/store/useSimStore';
-import { useDebugMode } from '@/hooks/useDebugMode';
-import Boat from './Boat';
-import Ocean from './Ocean';
-import Islands from './Islands';
-import Buoys from './Buoys';
-import HUD from './HUD';
-import WeatherEffects from './WeatherEffects';
-import EnvironmentRig from './EnvironmentRig';
-import Tornado from './Tornado';
-import HurricaneClouds from './HurricaneClouds';
-import PerformanceTelemetry from './PerformanceTelemetry';
-import PerformanceHUD from './PerformanceHUD';
-import WakeField from './WakeField';
 import BenchmarkPanel from './BenchmarkPanel';
-import ShadowBudget from './ShadowBudget';
+import Boat from './Boat';
+import Buoys from './Buoys';
+import CameraRig from './CameraRig';
+import EnvironmentRig from './EnvironmentRig';
+import HUD from './HUD';
+import HurricaneClouds from './HurricaneClouds';
+import Islands from './Islands';
+import Ocean from './Ocean';
+import PerformanceHUD from './PerformanceHUD';
+import PerformanceTelemetry from './PerformanceTelemetry';
 import QualityPersistence from './QualityPersistence';
+import SessionOverlay from './SessionOverlay';
+import ShadowBudget from './ShadowBudget';
+import Tornado from './Tornado';
+import WakeField from './WakeField';
+import WeatherEffects from './WeatherEffects';
 
 const QUALITY_ORDER: RenderQuality[] = ['low', 'medium', 'high', 'ultra'];
 
@@ -32,6 +35,18 @@ const DPR_BY_QUALITY: Record<RenderQuality, number> = {
   high: 1.5,
   ultra: 2,
 };
+
+const MOVEMENT_KEYS = [
+  'w',
+  'a',
+  's',
+  'd',
+  'r',
+  'arrowup',
+  'arrowdown',
+  'arrowleft',
+  'arrowright',
+] as const;
 
 function moveQuality(
   current: RenderQuality,
@@ -55,10 +70,26 @@ function LoadingFallback() {
   );
 }
 
+function isEditableTarget(target: EventTarget | null) {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLSelectElement ||
+    target instanceof HTMLTextAreaElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
+
 export default function Simulator() {
   const setKey = useSimStore((state) => state.setKey);
+  const clearKeys = useSimStore((state) => state.clearKeys);
   const renderQuality = useSimStore((state) => state.renderQuality);
+  const sessionPhase = useSimStore((state) => state.sessionPhase);
+  const activeBoat = useSimStore((state) => state.activeBoat);
+  const resetVesselTrigger = useSimStore(
+    (state) => state.resetVesselTrigger,
+  );
   const debugEnabled = useDebugMode();
+  const automationMode = useAutomationMode();
 
   const lowerAutomaticQuality = useCallback(() => {
     const state = useSimStore.getState();
@@ -80,54 +111,73 @@ export default function Simulator() {
   }, []);
 
   useEffect(() => {
-    const handleKey = (event: KeyboardEvent, isDown: boolean) => {
+    if (automationMode) {
+      useSimStore.getState().resumeSession();
+    }
+  }, [automationMode]);
+
+  useEffect(() => {
+    const handleMovementKey = (
+      event: KeyboardEvent,
+      isDown: boolean,
+    ) => {
       const key = event.key.toLowerCase();
-      if (
-        [
-          'w',
-          'a',
-          's',
-          'd',
-          'r',
-          'arrowup',
-          'arrowdown',
-          'arrowleft',
-          'arrowright',
-        ].includes(key)
-      ) {
-        event.preventDefault();
-        setKey(key, isDown);
+      if (!MOVEMENT_KEYS.includes(key as (typeof MOVEMENT_KEYS)[number])) {
+        return;
       }
+
+      const phase = useSimStore.getState().sessionPhase;
+      if (isDown && phase !== 'running') return;
+      event.preventDefault();
+      setKey(key, isDown);
     };
 
-    const keyDown = (event: KeyboardEvent) => handleKey(event, true);
-    const keyUp = (event: KeyboardEvent) => handleKey(event, false);
-    const resetKeys = () => {
-      for (const key of [
-        'w',
-        'a',
-        's',
-        'd',
-        'r',
-        'arrowup',
-        'arrowdown',
-        'arrowleft',
-        'arrowright',
-      ]) {
-        setKey(key, false);
+    const keyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+
+      if (key === 'escape' && !event.repeat) {
+        event.preventDefault();
+        useSimStore.getState().togglePause();
+        return;
       }
+
+      if (isEditableTarget(event.target)) return;
+
+      if (key === 'c' && !event.repeat) {
+        if (useSimStore.getState().sessionPhase === 'running') {
+          event.preventDefault();
+          useSimStore.getState().cycleCameraMode();
+        }
+        return;
+      }
+
+      if (key === 'home' && !event.repeat) {
+        if (useSimStore.getState().sessionPhase === 'running') {
+          event.preventDefault();
+          useSimStore.getState().resetVessel();
+        }
+        return;
+      }
+
+      handleMovementKey(event, true);
+    };
+
+    const keyUp = (event: KeyboardEvent) => {
+      handleMovementKey(event, false);
     };
 
     window.addEventListener('keydown', keyDown);
     window.addEventListener('keyup', keyUp);
-    window.addEventListener('blur', resetKeys);
+    window.addEventListener('blur', clearKeys);
 
     return () => {
       window.removeEventListener('keydown', keyDown);
       window.removeEventListener('keyup', keyUp);
-      window.removeEventListener('blur', resetKeys);
+      window.removeEventListener('blur', clearKeys);
     };
-  }, [setKey]);
+  }, [clearKeys, setKey]);
+
+  const simulationRunning = automationMode || sessionPhase === 'running';
 
   return (
     <div className="relative h-screen w-full select-none overflow-hidden bg-slate-900">
@@ -135,6 +185,7 @@ export default function Simulator() {
       <Canvas
         camera={{ position: [0, 15, -25], fov: 60, near: 0.1, far: 3000 }}
         dpr={DPR_BY_QUALITY[renderQuality]}
+        frameloop={simulationRunning ? 'always' : 'demand'}
         shadows={renderQuality !== 'low' ? 'basic' : false}
         gl={{
           antialias: renderQuality !== 'low',
@@ -157,17 +208,9 @@ export default function Simulator() {
         <ShadowBudget />
 
         <Suspense fallback={<LoadingFallback />}>
-          <OrbitControls
-            makeDefault
-            enablePan={false}
-            enableDamping
-            dampingFactor={0.08}
-            maxPolarAngle={Math.PI / 2 - 0.05}
-            minDistance={5}
-            maxDistance={150}
-          />
           <EnvironmentRig />
-          <Boat />
+          <Boat key={`${activeBoat}-${resetVesselTrigger}`} />
+          <CameraRig />
           <HurricaneClouds />
           <Tornado />
           <Islands />
@@ -177,13 +220,15 @@ export default function Simulator() {
           <WeatherEffects />
         </Suspense>
       </Canvas>
-      <HUD />
+
+      {(automationMode || sessionPhase !== 'menu') && <HUD />}
       {debugEnabled && (
         <div className="hidden sm:block">
           <BenchmarkPanel />
         </div>
       )}
       <PerformanceHUD showMetrics={debugEnabled} />
+      <SessionOverlay automationMode={automationMode} />
     </div>
   );
 }
