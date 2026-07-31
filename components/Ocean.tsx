@@ -650,7 +650,7 @@ export default function Ocean() {
     const uniforms = material.uniforms;
     const store = useSimStore.getState();
 
-    uniforms.uTime.value = state.clock.elapsedTime;
+    uniforms.uTime.value = sharedPhysics.renderTime;
     uniforms.uSeason.value = sharedPhysics.season;
     uniforms.uDetailLevel.value = QUALITY_CONFIG[store.renderQuality].detail;
     uniforms.uWhirlpoolPos.value.copy(sharedPhysics.whirlpoolPos);

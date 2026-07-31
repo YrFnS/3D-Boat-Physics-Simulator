@@ -20,6 +20,11 @@ export const sharedPhysics = {
   boatPos: new Vector3(0, 0, 0),
   boatDir: new Vector3(0, 0, -1),
   boatSpeed: 0,
+  simulationTime: 0,
+  renderTime: 0,
+  fixedStepAlpha: 0,
+  fixedStepCount: 0,
+  droppedSimulationTime: 0,
   lightningFlash: 0,
   obstacles: new Float32Array(MAX_OBSTACLES * 4), // x, y, z, radius
   worldTime: 12.0,

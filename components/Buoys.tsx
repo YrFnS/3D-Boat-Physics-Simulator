@@ -106,7 +106,7 @@ function Buoy({ x, z, id }: BuoyProps) {
     const mesh = meshRef.current;
     if (!mesh) return;
 
-    const elapsed = state.clock.elapsedTime;
+    const elapsed = sharedPhysics.renderTime || state.clock.elapsedTime;
     const deltaX = sharedPhysics.boatPos.x - x;
     const deltaZ = sharedPhysics.boatPos.z - z;
     const distanceSquared = deltaX * deltaX + deltaZ * deltaZ;

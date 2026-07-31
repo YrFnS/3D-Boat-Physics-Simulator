@@ -2,13 +2,16 @@
 
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Vector3, Group, MathUtils } from 'three';
+import { Vector3, Group, MathUtils, Object3D, Quaternion } from 'three';
 import { MeshDistortMaterial } from '@react-three/drei';
 import { useSimStore, sharedPhysics } from '@/store/useSimStore';
 import { getWaveHeight } from './Ocean';
 import { getTerrainHeight } from '@/lib/terrain';
 import { useBoatAudio } from './boat/useBoatAudio';
 import { useBoatVisualDamage } from './boat/useBoatVisualDamage';
+import { FixedStepRunner } from '@/sim/core/FixedStepRunner';
+import { SeededRandom } from '@/sim/core/SeededRandom';
+import { getVesselConfig } from '@/sim/vessels/VesselConfig';
 
 interface OrbitControlsLike {
   target: Vector3;
@@ -17,6 +20,14 @@ interface OrbitControlsLike {
 
 export default function Boat() {
   const boatRef = useRef<Group>(null);
+  const physicsBody = useRef(new Object3D());
+  const fixedStepRunner = useRef(new FixedStepRunner());
+  const simulationRandom = useRef(new SeededRandom(0xb0475eed));
+  const previousPosition = useRef(new Vector3());
+  const currentPosition = useRef(new Vector3());
+  const previousQuaternion = useRef(new Quaternion());
+  const currentQuaternion = useRef(new Quaternion());
+  const lastSubmergedRatio = useRef(1);
   const velocity = useRef(new Vector3(0, 0, 0));
   const angularVelocity = useRef(0);
   const engineRPM = useRef(1000); // Base idle RPM
@@ -93,10 +104,11 @@ export default function Boat() {
   const flagRef = useRef<Group>(null);
 
 
-  useFrame((state, delta) => {
-    // Clamp delta to prevent physics explosion after tab inactivity
-    const dt = Math.min(delta, 0.1);
-    if (!boatRef.current) return;
+  const stepSimulation = (dt: number, time: number) => {
+    const body = physicsBody.current;
+    previousPosition.current.copy(currentPosition.current);
+    previousQuaternion.current.copy(currentQuaternion.current);
+    sharedPhysics.simulationTime = time;
 
     const {
       keys,
@@ -109,7 +121,7 @@ export default function Boat() {
       setTelemetry,
     } = useSimStore.getState();
 
-    const isSpeedboat = activeBoat === 'speedboat';
+    const vessel = getVesselConfig(activeBoat);
 
     const keyboardThrottle =
       (keys.w || keys.arrowup ? 1 : 0) -
@@ -120,17 +132,17 @@ export default function Boat() {
         : MathUtils.clamp(engineThrust, -1, 1);
     const steerRaw = (keys.a || keys.arrowleft ? 1 : 0) - (keys.d || keys.arrowright ? 1 : 0);
 
-    // --- Physical Constants ---
-    const mass = isSpeedboat ? 800 : 1500; // kg
-    const engineForceMax = isSpeedboat ? 25000 : 12000; // N
-    const dragCoeff = isSpeedboat ? 180 : 250;
-    const keelDragMultiplier = isSpeedboat ? 3 : 6; // Resists lateral (sideways) movement
-    const windCoeff = isSpeedboat ? 5 : 15; // Sail/Profile area multiplier
-    const turnForceMax = isSpeedboat ? 3.5 : 1.5;
-    const angularDragCoeff = isSpeedboat ? 3 : 4;
+    // --- Vessel Dynamics Configuration ---
+    const mass = vessel.massKg;
+    const engineForceMax = vessel.engineForceMaxN;
+    const dragCoeff = vessel.forwardDragCoefficient;
+    const keelDragMultiplier = vessel.keelDragMultiplier;
+    const windCoeff = vessel.windAreaCoefficient;
+    const turnForceMax = vessel.turnForceMax;
+    const angularDragCoeff = vessel.angularDragCoefficient;
 
     // --- Heading & Forward Vectors ---
-    const heading = boatRef.current.rotation.y;
+    const heading = body.rotation.y;
     const forwardDir = scratch.forwardDir.set(
       -Math.sin(heading),
       0,
@@ -143,12 +155,11 @@ export default function Boat() {
     );
 
     // --- Sample Gerstner Wave for Multi-Point Buoyancy & Physics ---
-    const time = state.clock.elapsedTime;
-    const pos = boatRef.current.position;
+    const pos = body.position;
     
     // Dimensions for the 4 sampling points (roughly matching the hull size)
-    const halfL = isSpeedboat ? 1.6 : 2.0; // Distance to bow/stern
-    const halfW = isSpeedboat ? 0.6 : 1.0; // Distance to port/starboard
+    const halfL = vessel.halfLengthM;
+    const halfW = vessel.halfWidthM;
 
     // Calculate vectors identifying the 4 corners of the boat based on its heading
     const fwdVec = scratch.fwdVec.copy(forwardDir).multiplyScalar(halfL);
@@ -210,7 +221,7 @@ export default function Boat() {
     
     // Negative offset effectively pushes the target higher up above avgY.
     // We counteract the 0.28m natural gravity squat by using extreme negative offsets.
-    const baseDraft = isSpeedboat ? -0.4 : -0.8;
+    const baseDraft = vessel.baseDraftM;
     const draftOffset = baseDraft - hullDamageSinkOffset - winterDraftPenalty; 
     const depth = (avgY - draftOffset) - pos.y; // Positive means underwater, negative means airborne
     const submergedRatio = MathUtils.clamp(depth * 1.5 + 0.5, 0.0, 1.0); // 0 = fully in air, 1 = fully submerged
@@ -222,8 +233,8 @@ export default function Boat() {
     if (depth > -0.8) { 
       // Boat is touching or in water, apply upward buoyant force
       // Ice/slush slightly reduces the clean buoyancy stiffness of fluid
-      const buoyancyStiffness = (isSpeedboat ? 40.0 : 35.0) * (1.0 - isWinter * 0.1); 
-      const waterVerticalDamping = isSpeedboat ? 6.0 : 8.0; // Slows down vertical movement
+      const buoyancyStiffness = vessel.buoyancyStiffness * (1.0 - isWinter * 0.1);
+      const waterVerticalDamping = vessel.verticalDamping;
       
       accelY += Math.max(0, depth) * buoyancyStiffness; 
       accelY -= velocity.current.y * waterVerticalDamping * submergedRatio;
@@ -279,18 +290,24 @@ export default function Boat() {
     // PLANING HYDRODYNAMICS
     // Calculate how 'on plane' the hull is based on forward speed. 
     // Speedboats ride up on top of the water, massively reducing drag and lifting the bow.
-    const speedRatio = Math.min(Math.hypot(velocity.current.x, velocity.current.z) / 15.0, 1.0); 
+    const speedRatio = Math.min(
+      Math.hypot(velocity.current.x, velocity.current.z) /
+        vessel.planingReferenceSpeedMps,
+      1.0,
+    );
     const planingLift = speedRatio * 0.18 * submergedRatio; // Also used for pitch visual later
     
     // Decrease forward drag up to 65% for the speedboat when planing. Displacement hulls (Trawler) don't plane well.
-    const planingDragReduction = isSpeedboat ? MathUtils.lerp(1.0, 0.35, Math.pow(speedRatio, 2)) : 1.0;
+    const planingDragReduction = vessel.planingCapable
+      ? MathUtils.lerp(1.0, 0.35, Math.pow(speedRatio, 2))
+      : 1.0;
     const dynamicDragCoeff = dragCoeff * planingDragReduction;
 
     // --- ENGINE STRESS & RPM MODULATION ---
     let targetRPM =
       engineHealth.current <= 0
         ? 0
-        : 1000 + Math.abs(thrustRaw) * (isSpeedboat ? 6000 : 3500);
+        : vessel.idleRpm + Math.abs(thrustRaw) * vessel.maxRpmDelta;
     
     // Determine engine load. 
     // High load = moving slow but demanding full thrust (takes longer to spool up).
@@ -316,7 +333,7 @@ export default function Boat() {
     const effectiveThrustRatio =
       engineHealth.current <= 0
         ? 0
-        : (engineRPM.current - 1000) / (isSpeedboat ? 6000 : 3500); 
+        : (engineRPM.current - vessel.idleRpm) / vessel.maxRpmDelta;
     
     // --- PHASE 2: Engine Efficiency & Misfires ---
     const engineHealthEfficiency = MathUtils.clamp(engineHealth.current / 100, 0, 1);
@@ -330,8 +347,8 @@ export default function Boat() {
     if (engineHealth.current > 0 && engineHealth.current < 40) {
       const damageRatio = (40 - engineHealth.current) / 40;
       const misfireProbability = 1 - Math.exp(-damageRatio * 8 * dt);
-      if (Math.random() < misfireProbability) {
-        thrustMultiplier *= Math.random() * 0.2;
+      if (simulationRandom.current.next() < misfireProbability) {
+        thrustMultiplier *= simulationRandom.current.next() * 0.2;
         engineRPM.current *= MathUtils.lerp(1, 0.4, dt * 10);
       }
     }
@@ -383,7 +400,7 @@ export default function Boat() {
     
     const windDotForward = apparentWindDir.dot(forwardDir);
     const windDotRight = apparentWindDir.dot(rightDir);
-    const sideAreaMultiplier = isSpeedboat ? 2.0 : 4.5;
+    const sideAreaMultiplier = vessel.sideAreaMultiplier;
     const exposedProfileArea =
       Math.abs(windDotForward) +
       Math.abs(windDotRight) * sideAreaMultiplier;
@@ -405,7 +422,7 @@ export default function Boat() {
     if (currentIceFactor > 0.3 && submergedRatio > 0.1) {
         // The boat is crashing through the ice pack!
         // Ice induces extreme drag, capping momentum
-        velocity.current.multiplyScalar(1.0 - (currentIceFactor * 0.1 * dt * 60)); // Framerate independent drag
+        velocity.current.multiplyScalar(Math.exp(-currentIceFactor * 6 * dt));
         
         const iceImpactSpeed = Math.hypot(velocity.current.x, velocity.current.z);
         if (iceImpactSpeed > 2.0 && Math.abs(thrustRaw) > 0.1) {
@@ -413,15 +430,15 @@ export default function Boat() {
             hullHealth.current = Math.max(0, hullHealth.current - iceImpactSpeed * currentIceFactor * 0.2 * dt);
             
             // Random chaotic bumps representing ice chunk impacts
-            velocity.current.y += (Math.random() - 0.2) * currentIceFactor * iceImpactSpeed * 0.1;
-            angularVelocity.current += (Math.random() - 0.5) * currentIceFactor * iceImpactSpeed * 0.2;
+            velocity.current.y += (simulationRandom.current.next() - 0.2) * currentIceFactor * iceImpactSpeed * 0.1;
+            angularVelocity.current += (simulationRandom.current.next() - 0.5) * currentIceFactor * iceImpactSpeed * 0.2;
             
         }
     }
 
     // --- ADVANCED RUDDER & PROP WASH SYSTEM ---
     // Rudder takes time to turn to target angle
-    let targetRudder = steerRaw * (isSpeedboat ? 0.7 : 0.8); // Max rudder angle (radians)
+    let targetRudder = steerRaw * vessel.maxRudderAngleRad;
     
     // --- PHASE 2: Rudder Damage Penalty ---
     // If rudder health is low, max turning angle drops significantly
@@ -430,7 +447,7 @@ export default function Boat() {
 
     // At extreme damage, rudder wiggles and jitters from broken linkages
     if (rudderHealth.current > 0 && rudderHealth.current < 40) {
-      targetRudder += (Math.random() - 0.5) * 0.15;
+      targetRudder += (simulationRandom.current.next() - 0.5) * 0.15;
     }
     
     rudderAngle.current = MathUtils.lerp(rudderAngle.current, targetRudder, 4.0 * dt);
@@ -451,7 +468,7 @@ export default function Boat() {
     angularVelocity.current += angularAcc * dt;
 
     // --- PHASE 4: OBSTACLE COLLISION DETECTION ---
-    const currentBoatPos = boatRef.current.position;
+    const currentBoatPos = body.position;
     for (let i = 0; i < 250; i++) { // MAX_OBSTACLES
         const ox = sharedPhysics.obstacles[i*4 + 0];
         const oz = sharedPhysics.obstacles[i*4 + 2];
@@ -486,7 +503,7 @@ export default function Boat() {
                 velocity.current.z += nz * dotVelocity * 1.5;
                 
                 // Add chaotic spin
-                angularVelocity.current += (Math.random() - 0.5) * dotVelocity * 1.0;
+                angularVelocity.current += (simulationRandom.current.next() - 0.5) * dotVelocity * 1.0;
 
                 // Damage Hull! (Reduced damage from buoys)
                 hullHealth.current = Math.max(0, hullHealth.current - dotVelocity * 1.5);
@@ -502,23 +519,23 @@ export default function Boat() {
     velocity.current.z = MathUtils.clamp(velocity.current.z, -80, 80);
 
     // --- Apply Transforms ---
-    boatRef.current.position.x += velocity.current.x * dt;
-    boatRef.current.position.y += velocity.current.y * dt;
-    boatRef.current.position.z += velocity.current.z * dt;
-    boatRef.current.rotation.y += angularVelocity.current * dt;
+    body.position.x += velocity.current.x * dt;
+    body.position.y += velocity.current.y * dt;
+    body.position.z += velocity.current.z * dt;
+    body.rotation.y += angularVelocity.current * dt;
     
     // Update Shared Physics for Shaders (Ocean Wake)
-    sharedPhysics.boatPos.copy(boatRef.current.position);
+    sharedPhysics.boatPos.copy(body.position);
     sharedPhysics.boatDir.copy(forwardDir);
     const speed2D = Math.hypot(velocity.current.x, velocity.current.z);
     sharedPhysics.boatSpeed = Math.min(speed2D, 35.0);
 
     // --- PHASE 3: TERRAIN COLLISION & BEACHING ---
-    let terrainY = getTerrainHeight(boatRef.current.position.x, boatRef.current.position.z);
+    let terrainY = getTerrainHeight(body.position.x, body.position.z);
     
     // Dynamic Seabed Cratering: If the whirlpool is here, the water pushes the effective seabed down
     // This fixes the bug where the boat floats flat in mid-air over the vortex because the physical terrain was catching the hull.
-    const distToW = Math.sqrt((boatRef.current.position.x - sharedPhysics.whirlpoolPos.x)**2 + (boatRef.current.position.z - sharedPhysics.whirlpoolPos.z)**2);
+    const distToW = Math.sqrt((body.position.x - sharedPhysics.whirlpoolPos.x)**2 + (body.position.z - sharedPhysics.whirlpoolPos.z)**2);
     if (distToW < 160) {
         const vFactor = 1.0 - MathUtils.smoothstep(distToW, 0.0, 160.0);
         let dampening = 1.0;
@@ -533,24 +550,24 @@ export default function Boat() {
     
     // The boat's origin is roughly at the waterline, but the hull extends down.
     // Trawler is deeper than the speedboat
-    const deepestDraft = isSpeedboat ? 0.3 : 0.6;
+    const deepestDraft = vessel.deepestDraftM;
     
     // Check if the bottom of the hull is touching the procedural terrain
-    if (boatRef.current.position.y - deepestDraft < terrainY) {
+    if (body.position.y - deepestDraft < terrainY) {
         // We hit the ground!
         
         // 1. Calculate how hard we hit it vertically
-        const penetrationY = terrainY - (boatRef.current.position.y - deepestDraft);
+        const penetrationY = terrainY - (body.position.y - deepestDraft);
         
         // 2. Resolve vertical penetration (prevent falling through the world)
-        boatRef.current.position.y = terrainY + deepestDraft;
+        body.position.y = terrainY + deepestDraft;
         
         // Calculate terrain normal
         const d = 1.0;
-        const ty1 = getTerrainHeight(boatRef.current.position.x + d, boatRef.current.position.z);
-        const ty2 = getTerrainHeight(boatRef.current.position.x - d, boatRef.current.position.z);
-        const ty3 = getTerrainHeight(boatRef.current.position.x, boatRef.current.position.z + d);
-        const ty4 = getTerrainHeight(boatRef.current.position.x, boatRef.current.position.z - d);
+        const ty1 = getTerrainHeight(body.position.x + d, body.position.z);
+        const ty2 = getTerrainHeight(body.position.x - d, body.position.z);
+        const ty3 = getTerrainHeight(body.position.x, body.position.z + d);
+        const ty4 = getTerrainHeight(body.position.x, body.position.z - d);
         
         const normalX = ty2 - ty1;
         const normalZ = ty4 - ty3;
@@ -560,8 +577,8 @@ export default function Boat() {
         if (normalVector.y < 0.9) { 
            // Push the boat OUT horizontally away from the cliff
            const pushOut = penetrationY * (1.0 - normalVector.y) * 2.0;
-           boatRef.current.position.x += normalVector.x * pushOut;
-           boatRef.current.position.z += normalVector.z * pushOut;
+           body.position.x += normalVector.x * pushOut;
+           body.position.z += normalVector.z * pushOut;
         }
 
         // Dot product to see if we slammed into a wall
@@ -608,7 +625,7 @@ export default function Boat() {
              
              // Add chaotic spin
               angularVelocity.current +=
-                (Math.random() - 0.5) * speedIntoWall;
+                (simulationRandom.current.next() - 0.5) * speedIntoWall;
               audio.playImpact(severity, 'terrain');
         }
     }
@@ -620,8 +637,8 @@ export default function Boat() {
     {
         const tx = sharedPhysics.tornadoPos.x;
         const tz = sharedPhysics.tornadoPos.z;
-        const dx = tx - boatRef.current.position.x;
-        const dz = tz - boatRef.current.position.z;
+        const dx = tx - body.position.x;
+        const dz = tz - body.position.z;
         const distSq = dx*dx + dz*dz;
         
         if (distSq < 14400) { // 120m range for Tornado
@@ -634,8 +651,8 @@ export default function Boat() {
             velocity.current.z += nz * pullFactor * dt;
             
             if (dist < 40) {
-                angularVelocity.current += (Math.random() - 0.5) * 5.0 * dt;
-                velocity.current.y += Math.random() * 6.0 * dt; 
+                angularVelocity.current += (simulationRandom.current.next() - 0.5) * 5.0 * dt;
+                velocity.current.y += simulationRandom.current.next() * 6.0 * dt; 
                 hullHealth.current = Math.max(0, hullHealth.current - 10.0 * dt);
             }
         }
@@ -645,8 +662,8 @@ export default function Boat() {
     {
         const wx = sharedPhysics.whirlpoolPos.x;
         const wz = sharedPhysics.whirlpoolPos.z;
-        const dx = wx - boatRef.current.position.x;
-        const dz = wz - boatRef.current.position.z;
+        const dx = wx - body.position.x;
+        const dz = wz - body.position.z;
         const distSq = dx*dx + dz*dz;
         
         if (distSq < 25600) { // 160m total influence range match visual shader
@@ -693,9 +710,9 @@ export default function Boat() {
                  engineHealth.current = Math.max(0, engineHealth.current - 5.0 * dt * damageFactor);
                  
                  // Structural shuddering near the terrifying eye
-                 velocity.current.x += (Math.random() - 0.5) * 10.0 * damageFactor;
-                 velocity.current.z += (Math.random() - 0.5) * 10.0 * damageFactor;
-                 angularVelocity.current += (Math.random() - 0.5) * 5.0 * damageFactor;
+                 velocity.current.x += (simulationRandom.current.next() - 0.5) * 10.0 * damageFactor;
+                 velocity.current.z += (simulationRandom.current.next() - 0.5) * 10.0 * damageFactor;
+                 angularVelocity.current += (simulationRandom.current.next() - 0.5) * 5.0 * damageFactor;
                  
                  if (dist < 18) {
                     // Sucked directly down into the abyss
@@ -725,7 +742,7 @@ export default function Boat() {
         const toWhirlpoolX = (sharedPhysics.whirlpoolPos.x - currentBoatPos.x) / wDist;
         const toWhirlpoolZ = (sharedPhysics.whirlpoolPos.z - currentBoatPos.z) / wDist;
         
-        const boatForward = scratch.boatForward.set(0, 0, -1).applyQuaternion(boatRef.current.quaternion);
+        const boatForward = scratch.boatForward.set(0, 0, -1).applyQuaternion(body.quaternion);
         const alignment = boatForward.x * toWhirlpoolX + boatForward.z * toWhirlpoolZ; // 1 if facing the center
         
         // Massive steepness down the 110m drop
@@ -752,7 +769,7 @@ export default function Boat() {
         const toWhirlpoolZ = (sharedPhysics.whirlpoolPos.z - currentBoatPos.z) / wDist;
         
         // Find boat's right vector
-        const boatRight = scratch.boatRight.set(1, 0, 0).applyQuaternion(boatRef.current.quaternion);
+        const boatRight = scratch.boatRight.set(1, 0, 0).applyQuaternion(body.quaternion);
         const alignment = boatRight.x * toWhirlpoolX + boatRight.z * toWhirlpoolZ; // 1 if center is to the right
         
         // Tilt radically toward the eye wall as it gets steeper
@@ -764,15 +781,15 @@ export default function Boat() {
     const targetRoll = MathUtils.clamp(Math.atan(rollDelta) + safeBank + whirlpoolRollBias, -1.2, 1.2);
 
     // Apply rotation. If jumping (airborne), we smoothly hold the angle rather than instantly snapping to the water far below
-    const rotSpeed = submergedRatio > 0.1 ? (isSpeedboat ? 5.0 : 3.0) : 1.0;
-    boatRef.current.rotation.x = MathUtils.lerp(boatRef.current.rotation.x, targetPitch, rotSpeed * dt);
-    boatRef.current.rotation.z = MathUtils.lerp(boatRef.current.rotation.z, targetRoll, rotSpeed * dt);
+    const rotSpeed = submergedRatio > 0.1 ? vessel.rotationResponse : 1.0;
+    body.rotation.x = MathUtils.lerp(body.rotation.x, targetPitch, rotSpeed * dt);
+    body.rotation.z = MathUtils.lerp(body.rotation.z, targetRoll, rotSpeed * dt);
 
 
     // --- Update Telemetry UI & Health Degradation ---
     // 1 knot = 0.514444 m/s
     const speedKnots = speed2D / 0.514444;
-    let headingDeg = MathUtils.radToDeg(boatRef.current.rotation.y) % 360;
+    let headingDeg = MathUtils.radToDeg(body.rotation.y) % 360;
     if (headingDeg < 0) headingDeg += 360;
     
     // --- Phase 1: Health Math ---
@@ -851,13 +868,73 @@ export default function Boat() {
       );
     }
 
+    lastSubmergedRatio.current = submergedRatio;
+    currentPosition.current.copy(body.position);
+    currentQuaternion.current.copy(body.quaternion);
+  };
+
+  useFrame((state, delta) => {
+    const boat = boatRef.current;
+    if (!boat) return;
+
+    const stepResult = fixedStepRunner.current.advance(
+      delta,
+      (stepSeconds, simulationTimeSeconds) => {
+        stepSimulation(stepSeconds, simulationTimeSeconds);
+      },
+    );
+
+    sharedPhysics.renderTime =
+      stepResult.simulationTimeSeconds +
+      stepResult.alpha * fixedStepRunner.current.stepSeconds;
+    sharedPhysics.fixedStepAlpha = stepResult.alpha;
+    sharedPhysics.fixedStepCount = stepResult.steps;
+    sharedPhysics.droppedSimulationTime = stepResult.droppedTimeSeconds;
+
+    boat.position.lerpVectors(
+      previousPosition.current,
+      currentPosition.current,
+      stepResult.alpha,
+    );
+    boat.quaternion.slerpQuaternions(
+      previousQuaternion.current,
+      currentQuaternion.current,
+      stepResult.alpha,
+    );
+
+    const renderDelta = Math.min(delta, 0.1);
+    const { windSpeed, windDir, activeBoat } = useSimStore.getState();
+    const isSpeedboat = activeBoat === 'speedboat';
+    const forwardDir = scratch.forwardDir
+      .set(0, 0, -1)
+      .applyQuaternion(boat.quaternion);
+    forwardDir.y = 0;
+    if (forwardDir.lengthSq() > 1e-8) {
+      forwardDir.normalize();
+    } else {
+      forwardDir.set(0, 0, -1);
+    }
+
+    const renderWindRadians = MathUtils.degToRad(windDir);
+    const apparentWind = scratch.apparentWind
+      .set(
+        Math.sin(renderWindRadians),
+        0,
+        Math.cos(renderWindRadians),
+      )
+      .multiplyScalar(windSpeed)
+      .sub(velocity.current);
+    const speed2D = Math.hypot(velocity.current.x, velocity.current.z);
+    const submergedRatio = lastSubmergedRatio.current;
+    const pos = boat.position;
+
     // --- Update Flag (Apparent Wind) ---
     if (flagRef.current) {
       if (apparentWind.lengthSq() > 0.1) {
         // Flag points away from apparent wind
         const targetAngle = Math.atan2(apparentWind.x, apparentWind.z);
         // Local rotation needs to account for boat heading
-        flagRef.current.rotation.y = targetAngle - boatRef.current.rotation.y;
+        flagRef.current.rotation.y = targetAngle - boat.rotation.y;
       }
     }
     
@@ -867,12 +944,16 @@ export default function Boat() {
     if (speedboatEngineRRef.current) speedboatEngineRRef.current.rotation.y = rudderAngle.current;
 
     // Damage visuals are cached and updated at a controlled rate.
-    updateVisualDamage(hullHealth.current, engineHealth.current, dt);
+    updateVisualDamage(
+      hullHealth.current,
+      engineHealth.current,
+      renderDelta,
+    );
 
     // Wake Particle system has been removed in favor of the shader-based Analytical Kelvin Wake
     
     // --- Camera Tracking (Orbit Controls) ---
-    const boatPos = scratch.boatPosition.copy(boatRef.current.position);
+    const boatPos = scratch.boatPosition.copy(boat.position);
     
     if (state.controls) {
       const controls = state.controls as unknown as OrbitControlsLike;
