@@ -24,11 +24,6 @@ import {
   parseCollisionCalibrationRequest,
 } from '@/sim/calibration/CollisionCalibration';
 
-interface OrbitControlsLike {
-  target: Vector3;
-  update: () => void;
-}
-
 type SimulationCalibrationRunner =
   | VesselCalibrationRunner
   | CollisionCalibrationRunner;
@@ -85,12 +80,6 @@ export default function Boat() {
       boatRight: new Vector3(),
       boatUp: new Vector3(),
       worldUp: new Vector3(0, 1, 0),
-      boatPosition: new Vector3(),
-      cameraTarget: new Vector3(),
-      cameraDelta: new Vector3(),
-      cameraOffset: new Vector3(),
-      cameraDesired: new Vector3(),
-      cameraLookAt: new Vector3(),
     }),
     [],
   );
@@ -1151,33 +1140,6 @@ export default function Boat() {
 
     // Wake Particle system has been removed in favor of the shader-based Analytical Kelvin Wake
     
-    // --- Camera Tracking (Orbit Controls) ---
-    const boatPos = scratch.boatPosition.copy(boat.position);
-    
-    if (state.controls) {
-      const controls = state.controls as unknown as OrbitControlsLike;
-      const targetPos = scratch.cameraTarget.copy(boatPos);
-      targetPos.y += 2;
-      const deltaPos = scratch.cameraDelta
-        .copy(targetPos)
-        .sub(controls.target);
-      controls.target.copy(targetPos);
-      state.camera.position.add(deltaPos);
-      controls.update();
-    } else {
-      const cameraOffset = scratch.cameraOffset
-        .copy(forwardDir)
-        .multiplyScalar(-15);
-      cameraOffset.y += 8;
-      const desiredCameraPos = scratch.cameraDesired
-        .copy(boatPos)
-        .add(cameraOffset);
-      state.camera.position.lerp(desiredCameraPos, 0.1);
-      const lookAt = scratch.cameraLookAt.copy(boatPos);
-      lookAt.y += 2;
-      state.camera.lookAt(lookAt);
-    }
-
     if (!calibration) {
       audio.updateFrame(
         pos,
