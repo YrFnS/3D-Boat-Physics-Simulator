@@ -1,5 +1,6 @@
 name: Apply Phase 5B water and hydrostatics
 
+# The payload is complete; every source mutation remains checksum-gated.
 on:
   pull_request:
     branches:
