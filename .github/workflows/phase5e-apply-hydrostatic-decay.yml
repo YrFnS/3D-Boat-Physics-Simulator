@@ -1,0 +1,112 @@
+name: Apply Phase 5E hydrostatic decay probes
+
+on:
+  push:
+    branches:
+      - agent/phase-5e-physical-calibration
+    paths:
+      - '.github/workflows/phase5e-apply-hydrostatic-decay.yml'
+
+permissions:
+  contents: write
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+concurrency:
+  group: phase5e-hydrostatic-decay-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    name: Validate and publish nonlinear stability decay probes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out exact Phase 5E branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5e-physical-calibration
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Reconstruct verified hydrostatic source
+        run: |
+          base64 --decode scripts/.phase5e-hydrostatic-decay.ts.gz.b64 > "$RUNNER_TEMP/HydrostaticStability.ts.gz"
+          echo 'b75232f1f96622ecd206bd2ba9dc4ec3acf217da020f767903377dfda6487e05  '"$RUNNER_TEMP/HydrostaticStability.ts.gz" | sha256sum --check
+          gzip -dc "$RUNNER_TEMP/HydrostaticStability.ts.gz" > sim/calibration/HydrostaticStability.ts
+          echo 'e7bb57267a39374e4fc78eeee0848ac2d40af7087ee586bdbbd5154819a85e61  sim/calibration/HydrostaticStability.ts' | sha256sum --check
+          git diff --check
+
+      - name: Remove one-use transfer tooling
+        run: |
+          rm -f scripts/.phase5e-hydrostatic-decay.ts.gz.b64
+          rm -f .github/workflows/phase5e-apply-hydrostatic-decay.yml
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run marine, collision, reference, and stability regressions
+        run: npm run test:physics
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build application
+        run: npm run build
+
+      - name: Dependency audit
+        run: npm run audit
+
+      - name: Verify generated stability evidence
+        run: |
+          test -s artifacts/physics-calibration/hydrostatic-stability.json
+          grep -q '"phase": "5E.3-hydrostatic-stability-foundation"' artifacts/physics-calibration/hydrostatic-stability.json
+          grep -q '"evidenceClass": "engineering-derived"' artifacts/physics-calibration/hydrostatic-stability.json
+          grep -q '"decayPassed": true' artifacts/physics-calibration/hydrostatic-stability.json
+          git diff --check
+
+      - name: Stage only permanent source and transfer cleanup
+        run: |
+          git add sim/calibration/HydrostaticStability.ts
+          git add -u \
+            scripts/.phase5e-hydrostatic-decay.ts.gz.b64 \
+            .github/workflows/phase5e-apply-hydrostatic-decay.yml
+          python <<'PY'
+          import subprocess
+
+          expected = {
+              '.github/workflows/phase5e-apply-hydrostatic-decay.yml',
+              'scripts/.phase5e-hydrostatic-decay.ts.gz.b64',
+              'sim/calibration/HydrostaticStability.ts',
+          }
+          actual = set(
+              subprocess.check_output(
+                  ['git', 'diff', '--cached', '--name-only'],
+                  text=True,
+              ).splitlines()
+          )
+          if actual != expected:
+              raise SystemExit(
+                  f'unexpected staged files: missing={sorted(expected-actual)}, '
+                  f'extra={sorted(actual-expected)}'
+              )
+          PY
+
+      - name: Commit and push validated decay probes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'physics: add nonlinear stability decay probes'
+          git push origin HEAD:agent/phase-5e-physical-calibration
