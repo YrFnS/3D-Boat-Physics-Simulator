@@ -46,11 +46,11 @@ jobs:
 
       - name: Reconstruct and apply tuning patch
         run: |
-          echo 'c9f24ac60c2b8e53887d0173d1fb3e92cb4ab3e0255ad223bdf364d45eab1d77  scripts/.phase5e-tuning.patch.gz.b64' | sha256sum --check
+          echo '44c18ae276995c11b28e953040eb244a0fa22235babf4ec841efe9f33357b85a  scripts/.phase5e-tuning.patch.gz.b64' | sha256sum --check
           base64 --decode scripts/.phase5e-tuning.patch.gz.b64 > "$RUNNER_TEMP/phase5e-tuning.patch.gz"
-          echo 'e0247dad79f01e78e64dfd08878f89c1b3d2479c8354b8c7cbb314269149b143  '"$RUNNER_TEMP/phase5e-tuning.patch.gz" | sha256sum --check
+          echo 'df0e85053341c8a8f0b59d33045e761e7e1bdd737441ea7162d3895044e5d110  '"$RUNNER_TEMP/phase5e-tuning.patch.gz" | sha256sum --check
           gzip -dc "$RUNNER_TEMP/phase5e-tuning.patch.gz" > "$RUNNER_TEMP/phase5e-tuning.patch"
-          echo '9b89341c2c160c35932f1334c16029cd376b9707e548983a10a10e05f8cd03cc  '"$RUNNER_TEMP/phase5e-tuning.patch" | sha256sum --check
+          echo '491d3e6b912d801cb6c3f9ee8ce626083c04f9bda8539b680173f6fee85c7ec7  '"$RUNNER_TEMP/phase5e-tuning.patch" | sha256sum --check
           git apply -p1 --check "$RUNNER_TEMP/phase5e-tuning.patch"
           git apply -p1 "$RUNNER_TEMP/phase5e-tuning.patch"
           git diff --check
@@ -110,6 +110,7 @@ jobs:
           cp /tmp/phase5e-tuning-server.log artifacts/phase5e-propulsion-tuning/server.log || true
           cp artifacts/physics-calibration/report.json artifacts/phase5e-propulsion-tuning/calibration-report.json || true
           cp artifacts/physical-reference/report.json artifacts/phase5e-propulsion-tuning/reference-report.json || true
+          printf 'workflow reached diagnostics\n' > artifacts/phase5e-propulsion-tuning/workflow.txt
 
       - name: Upload tuning diagnostics
         if: always()
