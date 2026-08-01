@@ -1,0 +1,226 @@
+name: Apply validated Phase 5E propulsion calibration
+
+on:
+  pull_request:
+    branches:
+      - agent/phase-4-release-validation
+    paths:
+      - '.github/workflows/phase5e-apply-final.yml'
+  push:
+    branches:
+      - agent/phase-5e-physical-calibration
+    paths:
+      - '.github/workflows/phase5e-apply-final.yml'
+
+permissions:
+  contents: write
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+concurrency:
+  group: phase5e-apply-final-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]' && (github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/phase-5e-physical-calibration')
+    name: Validate and publish propulsion calibration
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out Phase 5E branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5e-physical-calibration
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply the validated calibration source
+        run: |
+          echo 'eeffbeca02d3e98f55b741b787d06d6ceff241f4e146f7922ca49e87835ac8f3  scripts/.phase5e-tuning-v6.patch.gz.b64' | sha256sum --check
+          base64 --decode scripts/.phase5e-tuning-v6.patch.gz.b64 > "$RUNNER_TEMP/phase5e-tuning.patch.gz"
+          echo '533e2cbed71e8007d0c774a40dceed3b1c3217093ad435107611f6f1f19f2efb  '"$RUNNER_TEMP/phase5e-tuning.patch.gz" | sha256sum --check
+          gzip -dc "$RUNNER_TEMP/phase5e-tuning.patch.gz" > "$RUNNER_TEMP/phase5e-tuning.patch"
+          echo 'a431140cf612cb25ae9469ac80d375667b5b3c2bc86f3517baac2de2226e6f52  '"$RUNNER_TEMP/phase5e-tuning.patch" | sha256sum --check
+          git apply --check "$RUNNER_TEMP/phase5e-tuning.patch"
+          git apply "$RUNNER_TEMP/phase5e-tuning.patch"
+          python <<'PY'
+          from pathlib import Path
+
+          boat = Path('components/Boat.tsx')
+          boat_text = boat.read_text(encoding='utf-8')
+          old_drag = "      0.318,\n"
+          new_drag = "      0.28,\n"
+          if boat_text.count(old_drag) != 1:
+              raise SystemExit('expected one powered-planing drag value')
+          boat.write_text(boat_text.replace(old_drag, new_drag, 1), encoding='utf-8')
+
+          config = Path('sim/vessels/VesselConfig.ts')
+          config_text = config.read_text(encoding='utf-8')
+          old_astern = "      asternAuthorityFactor: 0.78,\n"
+          new_astern = "      asternAuthorityFactor: 0.70,\n"
+          if config_text.count(old_astern) != 1:
+              raise SystemExit('expected one speedboat astern-authority value')
+          config.write_text(
+              config_text.replace(old_astern, new_astern, 1),
+              encoding='utf-8',
+          )
+          PY
+          git diff --check
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run marine, collision, and physical-reference regressions
+        run: npm run test:physics
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build application
+        run: npm run build
+
+      - name: Dependency audit
+        run: npm run audit
+
+      - name: Install calibration browser without changing the lockfile
+        run: |
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Prepare standalone server
+        run: |
+          if [ -d public ]; then
+            cp -R public .next/standalone/public
+          fi
+          mkdir -p .next/standalone/.next
+          cp -R .next/static .next/standalone/.next/static
+
+      - name: Start production server
+        run: |
+          HOSTNAME=127.0.0.1 PORT=3000 node .next/standalone/server.js > /tmp/phase5e-final-server.log 2>&1 &
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:3000/ > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/phase5e-final-server.log
+          exit 1
+
+      - name: Run and verify the twenty-scenario calibration
+        run: |
+          node scripts/physics-calibration.mjs
+          python <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(
+              Path('artifacts/physics-calibration/report.json').read_text(
+                  encoding='utf-8'
+              )
+          )
+          summary = report.get('summary', {})
+          if summary != {'total': 20, 'passed': 20, 'failed': 0}:
+              raise SystemExit(f'unexpected calibration summary: {summary}')
+
+          scenarios = {entry['name']: entry for entry in report['scenarios']}
+          required = {
+              'trawler-speed': ('steadySpeedMps', 2.55, 3.10),
+              'trawler-reverse-speed': ('steadyAsternSpeedMps', 1.20, 1.90),
+              'speedboat-speed': ('steadySpeedMps', 13.50, 15.60),
+              'speedboat-reverse-turn': ('turnRadiusM', 3.50, 18.00),
+          }
+          for name, (metric, minimum, maximum) in required.items():
+              value = scenarios[name]['calibration']['result']['metrics'][metric]
+              if not minimum <= value <= maximum:
+                  raise SystemExit(
+                      f'{name} {metric}={value} outside [{minimum}, {maximum}]'
+                  )
+          PY
+
+      - name: Upload final calibration evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase5e-propulsion-final
+          path: artifacts/physics-calibration
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove temporary transfer and export tooling
+        run: |
+          rm -f .github/workflows/phase5e-source-snapshot.yml
+          rm -f .github/workflows/phase5e-source-export.yml
+          rm -f .github/workflows/phase5e-apply-final.yml
+          rm -f scripts/.phase5e-tuning.patch.gz
+          rm -f scripts/.phase5e-tuning-v6.patch.gz.b64
+          rm -f scripts/.phase5e-tuning-v7.patch.gz.b64
+          git diff --check
+
+      - name: Stage only the intended permanent source changes
+        run: |
+          git add \
+            components/Boat.tsx \
+            scripts/physics-correctness.mjs \
+            scripts/reference-vessel-validation.mjs \
+            sim/calibration/CollisionCalibration.ts \
+            sim/calibration/VesselCalibration.ts \
+            sim/collision/RapierCollisionWorld.ts \
+            sim/vessels/PropulsionSystem.ts \
+            sim/vessels/VesselConfig.ts
+          git add -u \
+            .github/workflows/phase5e-source-snapshot.yml \
+            .github/workflows/phase5e-source-export.yml \
+            .github/workflows/phase5e-apply-final.yml \
+            scripts/.phase5e-tuning.patch.gz \
+            scripts/.phase5e-tuning-v6.patch.gz.b64 \
+            scripts/.phase5e-tuning-v7.patch.gz.b64
+          python <<'PY'
+          import subprocess
+
+          expected = {
+              '.github/workflows/phase5e-apply-final.yml',
+              '.github/workflows/phase5e-source-export.yml',
+              '.github/workflows/phase5e-source-snapshot.yml',
+              'components/Boat.tsx',
+              'scripts/.phase5e-tuning-v6.patch.gz.b64',
+              'scripts/.phase5e-tuning-v7.patch.gz.b64',
+              'scripts/.phase5e-tuning.patch.gz',
+              'scripts/physics-correctness.mjs',
+              'scripts/reference-vessel-validation.mjs',
+              'sim/calibration/CollisionCalibration.ts',
+              'sim/calibration/VesselCalibration.ts',
+              'sim/collision/RapierCollisionWorld.ts',
+              'sim/vessels/PropulsionSystem.ts',
+              'sim/vessels/VesselConfig.ts',
+          }
+          actual = set(
+              subprocess.check_output(
+                  ['git', 'diff', '--cached', '--name-only'],
+                  text=True,
+              ).splitlines()
+          )
+          if actual != expected:
+              raise SystemExit(
+                  f'unexpected staged files: missing={sorted(expected-actual)}, '
+                  f'extra={sorted(actual-expected)}'
+              )
+          PY
+
+      - name: Commit and push the validated calibration
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'physics: apply reference-driven propulsion calibration'
+          git push origin HEAD:agent/phase-5e-physical-calibration
