@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { evaluatePhysicalCalibrationReport } from '../sim/calibration/PhysicalCalibration.ts';
+import { PHYSICAL_REFERENCE_PROFILES } from '../sim/calibration/ReferenceProfiles.ts';
 
 const baseUrl = process.env.CALIBRATION_BASE_URL ?? 'http://127.0.0.1:3000';
 const outputDirectory = path.resolve('artifacts/physics-calibration');
@@ -161,11 +163,26 @@ report.summary = {
   failed: report.scenarios.filter((scenario) => !scenario.passed).length,
 };
 
-await fs.writeFile(
-  path.join(outputDirectory, 'report.json'),
-  `${JSON.stringify(report, null, 2)}\n`,
-  'utf8',
+// Physical-reference comparison is deliberately separate from the simulator's
+// pass/fail result. Simulator-baseline profiles exercise the Phase 5E pipeline
+// but cannot certify real-world agreement.
+report.physicalCalibration = evaluatePhysicalCalibrationReport(
+  report.scenarios,
+  PHYSICAL_REFERENCE_PROFILES,
 );
+
+await Promise.all([
+  fs.writeFile(
+    path.join(outputDirectory, 'report.json'),
+    `${JSON.stringify(report, null, 2)}\n`,
+    'utf8',
+  ),
+  fs.writeFile(
+    path.join(outputDirectory, 'physical-comparison.json'),
+    `${JSON.stringify(report.physicalCalibration, null, 2)}\n`,
+    'utf8',
+  ),
+]);
 
 console.log(JSON.stringify(report, null, 2));
 if (failed) process.exitCode = 1;
