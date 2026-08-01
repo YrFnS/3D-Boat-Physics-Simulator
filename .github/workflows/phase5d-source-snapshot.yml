@@ -1,0 +1,35 @@
+name: Phase 5D source snapshot
+
+on:
+  push:
+    branches:
+      - agent/phase-5d-collision-authority
+    paths:
+      - '.github/workflows/phase5d-source-snapshot.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    if: github.actor != 'github-actions[bot]'
+    name: Package exact Phase 5D source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out Phase 5D branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5d-collision-authority
+
+      - name: Package source
+        run: tar --exclude=.git -czf "$RUNNER_TEMP/phase5d-source.tar.gz" .
+
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase5d-source-snapshot
+          path: ${{ runner.temp }}/phase5d-source.tar.gz
+          include-hidden-files: true
+          retention-days: 1
