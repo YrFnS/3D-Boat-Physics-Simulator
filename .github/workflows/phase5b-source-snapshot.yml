@@ -1,6 +1,11 @@
 name: Phase 5B source snapshot
 
 on:
+  pull_request:
+    branches:
+      - agent/phase-4-release-validation
+    paths:
+      - '.github/workflows/phase5b-source-snapshot.yml'
   push:
     branches:
       - agent/phase-5b-water-hydrostatics
@@ -12,6 +17,7 @@ permissions:
 
 jobs:
   snapshot:
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/phase-5b-water-hydrostatics'
     name: Package exact Phase 5B source
     runs-on: ubuntu-latest
     timeout-minutes: 5
