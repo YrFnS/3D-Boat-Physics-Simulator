@@ -47,7 +47,6 @@ jobs:
 
       - name: Reconstruct and apply verified robustness patch
         run: |
-          echo '523484acbebf23f57c062b9ad7449d986aac7d38ce6f550350bb9be6882b8672  scripts/.phase5d-robustness.patch.b64' | sha256sum --check
           base64 --decode scripts/.phase5d-robustness.patch.b64 > "$RUNNER_TEMP/phase5d-robustness.patch.gz"
           echo '4a6fbb38efa087c3142d2185505f63dae8f37e62bcce29a9d206273662fd9438  '"$RUNNER_TEMP/phase5d-robustness.patch.gz" | sha256sum --check
           gzip -dc "$RUNNER_TEMP/phase5d-robustness.patch.gz" > "$RUNNER_TEMP/phase5d-robustness.patch"
