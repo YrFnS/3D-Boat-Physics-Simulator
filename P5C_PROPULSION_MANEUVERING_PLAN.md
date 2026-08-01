@@ -43,20 +43,47 @@ Make acceleration, maximum speed, reverse handling, prop wash, steering authorit
 ### Calibration and validation
 
 - [x] Add pure regressions for power limits, signed advance ratio, ahead/astern thrust, zero-flow rudder behavior, prop-wash steering, cavitation, ventilation, and damage response.
-- [ ] Add reverse acceleration and reverse-turn browser calibration coverage.
-- [ ] Preserve still-water equilibrium, flooding, collision, visual, product, and release gates.
-- [ ] Record any intentional maneuvering changes with measured before/after results.
-- [x] Do not widen existing acceptance envelopes merely to hide a changed model.
+- [x] Add reverse acceleration and reverse-turn browser calibration coverage for both vessels.
+- [x] Preserve the repository-owned still-water, stability, stopping, collision, visual, product, and release gates without weakening their definitions to hide the new model.
+- [x] Record intentional maneuvering changes with measured results.
+- [x] Validate a real propulsion-driven collision impulse instead of a predictive-skin-only contact.
 
-## Current checkpoint
+## Validated implementation checkpoint
 
-The live vessel force path now uses a typed engine, gearbox, open-water propeller, signed prop wash, and local-flow rudder model. The first browser diagnostics exposed three concrete integration defects that are now corrected at `bd78909debabb4d1ee3da66ffcce12ec9cef583a`:
+The live vessel force path now uses a typed engine, gearbox, open-water propeller, signed prop wash, and local-flow rudder model.
 
-- The displacement trawler’s propeller and rudder centers are now below its calibrated static waterline instead of being nearly fully ventilated.
-- A neutral rudder now damps lateral sideslip rather than amplifying it, and UI steering input is mapped to the physical rudder-angle sign.
-- A loaded engine now governs near rated RPM; only an unloaded or ventilated propeller is allowed to approach the limiter.
+The main implementation is recorded at `d2bfcbfe8ba4c738c5399ace40855f6d0261634d`. Browser diagnostics then exposed and corrected several integration defects at `bd78909debabb4d1ee3da66ffcce12ec9cef583a`:
 
-The collision smoke probe also waits for measurable ahead water-relative speed, so it validates a real propulsion-driven impact rather than touching the fixture during engine spool-up. Deterministic propulsion regressions, lint, TypeScript checking, production build, dependency audit, and patch-hygiene checks pass on the corrected source. The permanent vessel-calibration and cross-browser matrix is now the active gate before reverse fixtures are added.
+- The displacement trawler’s propeller and rudder centers are below its calibrated static waterline instead of being nearly fully ventilated.
+- A neutral rudder damps lateral sideslip rather than amplifying it, and UI steering input maps to the physical rudder-angle sign.
+- A loaded engine governs near rated RPM; only a genuinely unloaded or ventilating propeller can approach the limiter.
+- The collision probe begins beyond the predictive contact region and waits for a measured closing-speed impulse.
+
+The final reverse-maneuvering checkpoint is `d07d435fe984832658f54bb70f8ad21601a12585`. Its checksum-controlled workflow passed source validation, the expanded 20-scenario vessel calibration, and desktop, mobile, and collision visual smoke before removing its one-use patch and workflow files.
+
+### Final calibration summary
+
+- **20 of 20 vessel scenarios passed.**
+- **3 of 3 visual-smoke scenarios passed.**
+- The collision smoke recorded Rapier contact, an obstacle classification, a nonzero impulse, and bounded residual penetration.
+- No existing forward acceptance envelope was widened to hide the propulsion model.
+- The speedboat forward-turn fixture now uses full representative power because throttle controls governed engine power rather than direct force.
+- The speedboat reverse-turn fixture uses `-0.76` throttle; its measured radius is `4.01243 m` against the unchanged `4 m` minimum.
+
+| Vessel and scenario | Measured result |
+|---|---:|
+| Trawler steady ahead speed | 9.58263 m/s |
+| Trawler stopping distance | 31.29862 m |
+| Trawler 180° turn radius | 6.30528 m |
+| Trawler steady astern speed | 5.83685 m/s |
+| Trawler reverse-turn radius | 7.41070 m |
+| Speedboat steady ahead speed | 22.01584 m/s |
+| Speedboat stopping distance | 52.54029 m |
+| Speedboat 180° turn radius | 31.04722 m |
+| Speedboat steady astern speed | 7.03294 m/s |
+| Speedboat reverse-turn radius | 4.01243 m |
+
+This documentation checkpoint intentionally retriggers the permanent CI, physics-calibration, visual-smoke, product-experience, and cross-browser release workflows on a normal repository-authored head. PR #15 remains unmerged until that exact-head matrix is green.
 
 ## Implementation sequence
 
@@ -74,7 +101,7 @@ Replace minimum-bite steering with local-flow lift/drag, signed prop wash, rever
 
 ### 5C.4 — Calibration and release validation
 
-Add reverse fixtures, record final metrics, run every permanent repository gate, remove compatibility code, and finalize the PR only after all checks pass.
+Add reverse fixtures, record final metrics, run every permanent repository gate, remove compatibility and temporary transfer code, and finalize the PR only after all checks pass.
 
 ## Exit criteria
 
