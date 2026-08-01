@@ -1,6 +1,11 @@
 name: Correct Phase 5C drivetrain dynamics
 
 on:
+  pull_request:
+    branches:
+      - agent/phase-4-release-validation
+    paths:
+      - '.github/workflows/phase5c-correct-dynamics.yml'
   push:
     branches:
       - agent/phase-5c-propulsion-maneuvering
@@ -11,12 +16,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: phase5c-correct-dynamics-${{ github.ref }}
+  group: phase5c-correct-dynamics-${{ github.event.pull_request.head.ref || github.ref }}
   cancel-in-progress: false
 
 jobs:
   correct:
-    if: github.actor != 'github-actions[bot]'
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/phase-5c-propulsion-maneuvering'
     name: Correct, validate, and publish drivetrain dynamics
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -41,95 +46,73 @@ jobs:
 
           propulsion = Path('sim/vessels/PropulsionSystem.ts')
           source = propulsion.read_text(encoding='utf-8')
-          old = """    let targetRpm = engine.idleRpm;
-              if (gearSign !== 0 && healthRatio > 0) {
-                const commandCurve = Math.sqrt(normalizedCommand);
-                targetRpm =
-                  engine.idleRpm +
-                  commandCurve * (engine.maximumRpm - engine.idleRpm);
-                const loadDroop = Math.max(0, this.previousLoadRatio - 0.92);
-                targetRpm *= 1 - loadDroop * engine.loadDroopFraction;
-                targetRpm +=
-                  (1 - ventilationFactor) *
-                  normalizedCommand *
-                  (engine.maximumRpm - engine.ratedRpm) *
-                  engine.unloadedOverRevFraction;
-              }
-          """
-          new = """    let targetRpm = engine.idleRpm;
-              if (gearSign !== 0 && healthRatio > 0) {
-                const commandCurve = Math.sqrt(normalizedCommand);
-                targetRpm =
-                  engine.idleRpm +
-                  commandCurve * (engine.ratedRpm - engine.idleRpm);
+          governor_start = source.index('    let targetRpm = engine.idleRpm;')
+          governor_end = source.index('    if (healthRatio <= EPSILON)', governor_start)
+          governor = """    let targetRpm = engine.idleRpm;
+          if (gearSign !== 0 && healthRatio > 0) {
+            const commandCurve = Math.sqrt(normalizedCommand);
+            targetRpm =
+              engine.idleRpm +
+              commandCurve * (engine.ratedRpm - engine.idleRpm);
 
-                // A loaded marine engine should govern near rated RPM. Only a genuinely
-                // unloaded or ventilated propeller is allowed to spin toward the limiter.
-                const unloadedFraction = clamp(1 - this.previousLoadRatio, 0, 1);
-                targetRpm +=
-                  unloadedFraction *
-                  normalizedCommand *
-                  (engine.maximumRpm - engine.ratedRpm) *
-                  engine.unloadedOverRevFraction;
-                const loadDroop = Math.max(0, this.previousLoadRatio - 1);
-                targetRpm *= 1 - loadDroop * engine.loadDroopFraction;
-                targetRpm +=
-                  (1 - ventilationFactor) *
-                  normalizedCommand *
-                  (engine.maximumRpm - engine.ratedRpm) *
-                  engine.unloadedOverRevFraction;
-              }
+            // A loaded marine engine should govern near rated RPM. Only a genuinely
+            // unloaded or ventilated propeller is allowed to spin toward the limiter.
+            const unloadedFraction = clamp(1 - this.previousLoadRatio, 0, 1);
+            targetRpm +=
+              unloadedFraction *
+              normalizedCommand *
+              (engine.maximumRpm - engine.ratedRpm) *
+              engine.unloadedOverRevFraction;
+            const loadDroop = Math.max(0, this.previousLoadRatio - 1);
+            targetRpm *= 1 - loadDroop * engine.loadDroopFraction;
+            targetRpm +=
+              (1 - ventilationFactor) *
+              normalizedCommand *
+              (engine.maximumRpm - engine.ratedRpm) *
+              engine.unloadedOverRevFraction;
+          }
           """
-          if source.count(old) != 1:
-              raise SystemExit('Expected one engine-governor block.')
-          source = source.replace(old, new, 1)
+          source = source[:governor_start] + governor + source[governor_end:]
 
-          old = """  return {
-              forwardN:
-                hydrodynamics.liftN * rightUnit -
-                hydrodynamics.dragN * forwardUnit,
-              rightN:
-                -hydrodynamics.liftN * forwardUnit -
-                hydrodynamics.dragN * rightUnit,
-            };
+          function_start = source.index('export function resolveRudderForceComponents')
+          force_start = source.index('  return {', function_start)
+          force_end = source.index('  };\n}', force_start) + len('  };\n')
+          force_block = """  return {
+            // Lift is perpendicular to the incoming flow while drag opposes it. This
+            // orientation also makes a neutral rudder damp sideslip instead of
+            // amplifying it.
+            forwardN:
+              -hydrodynamics.liftN * rightUnit -
+              hydrodynamics.dragN * forwardUnit,
+            rightN:
+              hydrodynamics.liftN * forwardUnit -
+              hydrodynamics.dragN * rightUnit,
+          };
           """
-          new = """  return {
-              // Lift is perpendicular to the incoming flow while drag opposes it. This
-              // orientation also makes a neutral rudder damp sideslip instead of
-              // amplifying it.
-              forwardN:
-                -hydrodynamics.liftN * rightUnit -
-                hydrodynamics.dragN * forwardUnit,
-              rightN:
-                hydrodynamics.liftN * forwardUnit -
-                hydrodynamics.dragN * rightUnit,
-            };
-          """
-          if source.count(old) != 1:
-              raise SystemExit('Expected one rudder-force resolution block.')
-          propulsion.write_text(source.replace(old, new, 1), encoding='utf-8')
+          source = source[:force_start] + force_block + source[force_end:]
+          propulsion.write_text(source, encoding='utf-8')
 
           boat = Path('components/Boat.tsx')
           source = boat.read_text(encoding='utf-8')
           old = """    let targetRudder =
-              steerRaw * vessel.rudder.maximumAngleRad * rudderHealthRatio;
+            steerRaw * vessel.rudder.maximumAngleRad * rudderHealthRatio;
           """
           new = """    // Positive input means port/left in the UI, while positive physical
-              // rudder angle is starboard/right in the body-axis hydrodynamic model.
-              let targetRudder =
-                -steerRaw * vessel.rudder.maximumAngleRad * rudderHealthRatio;
+            // rudder angle is starboard/right in the body-axis hydrodynamic model.
+            let targetRudder =
+              -steerRaw * vessel.rudder.maximumAngleRad * rudderHealthRatio;
           """
           if source.count(old) != 1:
               raise SystemExit('Expected one live rudder target.')
           source = source.replace(old, new, 1)
           old = """            !calibration &&
-                        collisionTestEnabled.current &&
-                        Math.abs(thrustRaw) > 0.1,
+              collisionTestEnabled.current &&
+              Math.abs(thrustRaw) > 0.1,
           """
           new = """            !calibration &&
-                        collisionTestEnabled.current &&
-                        thrustRaw > 0.1 &&
-                        vRelForward > 0.35,
+              collisionTestEnabled.current &&
+              thrustRaw > 0.1 &&
+              vRelForward > 0.35,
           """
           if source.count(old) != 1:
               raise SystemExit('Expected one collision-probe enable condition.')
@@ -154,44 +137,42 @@ jobs:
 
           tests = Path('scripts/physics-correctness.mjs')
           source = tests.read_text(encoding='utf-8')
-          old = """      rudderAngleRad: vessel.rudder.maximumAngleRad * 0.6,
-          """
+          old = '      rudderAngleRad: vessel.rudder.maximumAngleRad * 0.6,\n'
           if source.count(old) != 2:
               raise SystemExit('Expected ahead and astern rudder fixtures.')
           source = source.replace(
               old,
-              """      rudderAngleRad: -vessel.rudder.maximumAngleRad * 0.6,
-          """,
+              '      rudderAngleRad: -vessel.rudder.maximumAngleRad * 0.6,\n',
               2,
           )
           marker = """    assert.ok(aheadRudder.forceMagnitudeN > 0);
-              assert.ok(aheadComponents.rightN < 0);
+            assert.ok(aheadComponents.rightN < 0);
 
-              const asternRudder = computeRudderHydrodynamics({
+            const asternRudder = computeRudderHydrodynamics({
           """
           replacement = """    assert.ok(aheadRudder.forceMagnitudeN > 0);
-              assert.ok(aheadComponents.rightN < 0);
+            assert.ok(aheadComponents.rightN < 0);
 
-              const neutralSideslip = computeRudderHydrodynamics({
-                config: vessel.rudder,
-                waterDensityKgM3: vessel.waterDensityKgM3,
-                forwardFlowMps: 6,
-                rightFlowMps: 1.5,
-                rudderAngleRad: 0,
-                submergenceM: vessel.rudder.ventilationFullSubmergenceM,
-                healthRatio: 1,
-              });
-              const neutralSideslipComponents = resolveRudderForceComponents(
-                neutralSideslip,
-                6,
-                1.5,
-              );
-              assert.ok(
-                neutralSideslipComponents.rightN < 0,
-                `${vesselType} neutral rudder must damp starboard sideslip`,
-              );
+            const neutralSideslip = computeRudderHydrodynamics({
+              config: vessel.rudder,
+              waterDensityKgM3: vessel.waterDensityKgM3,
+              forwardFlowMps: 6,
+              rightFlowMps: 1.5,
+              rudderAngleRad: 0,
+              submergenceM: vessel.rudder.ventilationFullSubmergenceM,
+              healthRatio: 1,
+            });
+            const neutralSideslipComponents = resolveRudderForceComponents(
+              neutralSideslip,
+              6,
+              1.5,
+            );
+            assert.ok(
+              neutralSideslipComponents.rightN < 0,
+              `${vesselType} neutral rudder must damp starboard sideslip`,
+            );
 
-              const asternRudder = computeRudderHydrodynamics({
+            const asternRudder = computeRudderHydrodynamics({
           """
           if source.count(marker) != 1:
               raise SystemExit('Expected the rudder regression insertion point.')
