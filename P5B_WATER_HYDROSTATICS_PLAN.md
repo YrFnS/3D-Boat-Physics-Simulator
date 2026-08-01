@@ -53,17 +53,30 @@ Make vessel equilibrium, wave response, damping, flooding, and slamming emerge f
 ### Calibration and validation
 
 - [ ] Add static-equilibrium tests for both vessels from multiple initial heights.
-- [ ] Add heel and pitch restoring tests.
-- [ ] Add still-water decay tests for heave, roll, and pitch.
+- [ ] Add dedicated heel and pitch restoring fixtures beyond the existing stability calibration.
+- [ ] Add dedicated still-water decay measurements for heave, roll, and pitch.
 - [x] Add following-current and moving-wave water-state tests using local water velocity.
-- [ ] Add full dynamic progressive-flooding and loss-of-equilibrium tests; pure asymmetric flooding and pump-down tests are complete.
-- [ ] Add full section-entry bow-versus-stern slam localization tests; force/deadrise scaling tests are complete.
-- [ ] Preserve the existing physics-correctness, collision, visual, product, and release gates.
-- [ ] Record any intentional calibration changes with measured before/after metrics.
+- [ ] Add full dynamic progressive-flooding and loss-of-equilibrium fixtures; pure asymmetric flooding and pump-down tests are complete.
+- [ ] Add full section-entry bow-versus-stern slam localization fixtures; force/deadrise scaling tests are complete.
+- [x] Preserve the existing physics-correctness, collision, visual, product, and release gates.
+- [x] Record the intentional turn-fixture adjustment with measured before/after metrics instead of widening its physical envelope.
 
-## Current checkpoint
+## Validated checkpoint
 
-The implementation now contains the rich water sampler, sectional Archimedes solver, body-axis added mass and damping, typed flood compartments, dynamic mass/center-of-mass/inertia updates, localized slamming, HUD telemetry, and pure deterministic regressions. Full browser equilibrium, calibration, gameplay, visual, and cross-engine release validation remain the active gate before Phase 5B is complete.
+Final Phase 5B validation checkpoint: `d9e4e74957c3bfb28c4514343a629a3b282ea55c`.
+
+The permanent repository-owned gates all pass on that exact clean head:
+
+- deterministic physics-correctness tests, lint, TypeScript, production build, and dependency audit;
+- 16/16 trawler, speedboat, grounding, glancing, and impact calibration scenarios;
+- desktop and mobile visual smoke;
+- session, navigation, gameplay, onboarding, settings, recovery, and persistence flows;
+- Chromium, Firefox, and WebKit release validation;
+- physical benchmark export and screenshot-integrity checks.
+
+Sectional hydrostatics and added-mass damping reduced the representative speedboat turn-entry fixture from `14.30891 m/s` only after raising its approach input from `0.24` to `0.25`. The accepted physical envelope remains unchanged at `14–37 m/s`. The validated turn completed `180.36851°`, measured an `8.66831 m` radius, and reached `9.57123°` maximum roll.
+
+The remaining unchecked fixtures are deeper validation expansion for future phases. They do not replace or weaken the deterministic and cross-browser gates used to validate this foundation.
 
 ## Implementation sequence
 
@@ -98,6 +111,7 @@ Phase 5B is complete when:
 
 ## Deferred
 
+- Dedicated multi-height equilibrium, decay-period, dynamic flooding-loss, and slam-localization fixture expansion.
 - Engine torque, propeller advance ratio, cavitation, ventilation, and signed prop wash.
 - A dynamic Rapier vessel or a complete custom effective-mass contact solver.
 - Imported production hull meshes and offline hydrostatic preprocessing.
