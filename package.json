@@ -12,7 +12,8 @@
     "audit": "npm audit --audit-level=low",
     "validate": "npm run test:physics && npm run lint && npm run typecheck && npm run build && npm run audit",
     "clean": "node -e \"require('node:fs').rmSync('.next',{recursive:true,force:true})\"",
-    "test:physics": "node --experimental-strip-types --no-warnings scripts/physics-correctness.mjs && node --no-warnings scripts/collision-authority.mjs"
+    "test:physics": "node --experimental-strip-types --no-warnings scripts/physics-correctness.mjs && node --no-warnings scripts/collision-authority.mjs && node --experimental-strip-types --no-warnings scripts/reference-vessel-validation.mjs",
+    "report:references": "node --experimental-strip-types --no-warnings scripts/reference-vessel-validation.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.19.3",
