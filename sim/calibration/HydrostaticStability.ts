@@ -47,6 +47,29 @@ export interface RightingSample {
   deepestImmersedDraftM: number;
 }
 
+export interface DecayProbeResult {
+  initialOffsetDeg: number;
+  durationSeconds: number;
+  timeStepSeconds: number;
+  finalOffsetDeg: number;
+  maximumAbsoluteOffsetDeg: number;
+  recoveryTimeSeconds: number | null;
+  zeroCrossingTimesSeconds: readonly number[];
+  signedPeakOffsetsDeg: readonly number[];
+  measuredPeriodSeconds: number | null;
+  measuredDampingRatio: number | null;
+  behavior: 'oscillatory' | 'aperiodic-within-window';
+  checks: {
+    finite: boolean;
+    amplitudeBounded: boolean;
+    recovered: boolean;
+    finalOffsetSettled: boolean;
+    periodPlausible: boolean;
+    dampingPlausible: boolean;
+  };
+  passed: boolean;
+}
+
 export interface AxisStabilityResult {
   axis: StabilityAxis;
   equilibriumAngleDeg: number;
@@ -63,6 +86,7 @@ export interface AxisStabilityResult {
   behavior: 'underdamped' | 'critical-or-overdamped' | 'invalid';
   maximumSymmetryErrorRatio: number;
   symmetryLimitRatio: number;
+  decay: DecayProbeResult;
   checks: {
     equilibriumFound: boolean;
     equilibriumTorqueBounded: boolean;
@@ -70,6 +94,7 @@ export interface AxisStabilityResult {
     symmetryBounded: boolean;
     positiveStiffness: boolean;
     finiteLinearizedDynamics: boolean;
+    decayPassed: boolean;
   };
   passed: boolean;
 }
@@ -335,6 +360,202 @@ function pairSymmetryError(
   );
 }
 
+function average(values: readonly number[]) {
+  return values.length > 0
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : Number.NaN;
+}
+
+function interpolateZeroCrossing(
+  previousTimeSeconds: number,
+  previousOffsetRad: number,
+  timeSeconds: number,
+  offsetRad: number,
+) {
+  const denominator = Math.abs(previousOffsetRad) + Math.abs(offsetRad);
+  if (denominator <= Number.EPSILON) return timeSeconds;
+  return (
+    previousTimeSeconds +
+    ((timeSeconds - previousTimeSeconds) * Math.abs(previousOffsetRad)) /
+      denominator
+  );
+}
+
+function estimateMeasuredDampingRatio(
+  signedPeaksDeg: readonly number[],
+) {
+  const decrements: number[] = [];
+  for (const sign of [-1, 1] as const) {
+    const amplitudes = signedPeaksDeg
+      .filter((value) => Math.sign(value) === sign)
+      .map(Math.abs)
+      .filter((value) => value > 1e-4);
+    for (let index = 1; index < amplitudes.length; index += 1) {
+      if (amplitudes[index] >= amplitudes[index - 1]) continue;
+      decrements.push(Math.log(amplitudes[index - 1] / amplitudes[index]));
+    }
+  }
+  if (decrements.length === 0) return null;
+  const decrement = average(decrements);
+  return decrement / Math.sqrt((Math.PI * 2) ** 2 + decrement ** 2);
+}
+
+function runDecayProbe(
+  vessel: VesselConfig,
+  axis: StabilityAxis,
+  equilibriumAngleDeg: number,
+  effectiveInertiaKgM2: number,
+): DecayProbeResult {
+  const initialOffsetDeg = 10;
+  const durationSeconds = 36;
+  const timeStepSeconds = 1 / 120;
+  const axisIndex = axis === 'roll' ? 2 : 0;
+  const linearDampingNmPerRadPerSecond =
+    vessel.hydrodynamics.angularLinearDampingNmPerRadPerSecond[axisIndex];
+  const quadraticDampingNmPerRad2PerSecond2 =
+    vessel.hydrodynamics.angularQuadraticDampingNmPerRad2PerSecond2[
+      axisIndex
+    ];
+  const bodyDampingPerSecond = vessel.angularDampingPerSecond[axisIndex];
+
+  let offsetRad = initialOffsetDeg * DEG_TO_RAD;
+  let angularVelocityRadPerSecond = 0;
+  let previousOffsetRad = offsetRad;
+  let previousAngularVelocityRadPerSecond = angularVelocityRadPerSecond;
+  let previousTimeSeconds = 0;
+  let maximumAbsoluteOffsetDeg = Math.abs(initialOffsetDeg);
+  let recoveryTimeSeconds: number | null = null;
+  let finite = true;
+  const zeroCrossingTimesSeconds: number[] = [];
+  const signedPeakOffsetsDeg: number[] = [initialOffsetDeg];
+
+  const totalSteps = Math.ceil(durationSeconds / timeStepSeconds);
+  for (let step = 1; step <= totalSteps; step += 1) {
+    const timeSeconds = step * timeStepSeconds;
+    const absoluteAngleDeg =
+      equilibriumAngleDeg + offsetRad * RAD_TO_DEG;
+    const hydrostaticState = solveStaticHydrostaticState(
+      vessel,
+      axis,
+      absoluteAngleDeg,
+    );
+    const dampingTorqueNm =
+      linearDampingNmPerRadPerSecond * angularVelocityRadPerSecond +
+      quadraticDampingNmPerRad2PerSecond2 *
+        angularVelocityRadPerSecond *
+        Math.abs(angularVelocityRadPerSecond);
+    const angularAccelerationRadPerSecond2 =
+      (hydrostaticState.axisTorqueNm - dampingTorqueNm) /
+      Math.max(Number.EPSILON, effectiveInertiaKgM2);
+
+    angularVelocityRadPerSecond +=
+      angularAccelerationRadPerSecond2 * timeStepSeconds;
+    angularVelocityRadPerSecond *= Math.exp(
+      -bodyDampingPerSecond * timeStepSeconds,
+    );
+    offsetRad += angularVelocityRadPerSecond * timeStepSeconds;
+
+    const offsetDeg = offsetRad * RAD_TO_DEG;
+    maximumAbsoluteOffsetDeg = Math.max(
+      maximumAbsoluteOffsetDeg,
+      Math.abs(offsetDeg),
+    );
+    finite &&= [
+      timeSeconds,
+      offsetRad,
+      angularVelocityRadPerSecond,
+      hydrostaticState.axisTorqueNm,
+      angularAccelerationRadPerSecond2,
+    ].every(Number.isFinite);
+
+    if (
+      previousOffsetRad !== 0 &&
+      Math.sign(previousOffsetRad) !== Math.sign(offsetRad)
+    ) {
+      zeroCrossingTimesSeconds.push(
+        interpolateZeroCrossing(
+          previousTimeSeconds,
+          previousOffsetRad,
+          timeSeconds,
+          offsetRad,
+        ),
+      );
+    }
+    if (
+      previousAngularVelocityRadPerSecond !== 0 &&
+      Math.sign(previousAngularVelocityRadPerSecond) !==
+        Math.sign(angularVelocityRadPerSecond)
+    ) {
+      signedPeakOffsetsDeg.push(previousOffsetRad * RAD_TO_DEG);
+    }
+    if (
+      recoveryTimeSeconds === null &&
+      Math.abs(offsetDeg) <= 2 &&
+      Math.abs(angularVelocityRadPerSecond) <= 0.1
+    ) {
+      recoveryTimeSeconds = timeSeconds;
+    }
+
+    previousOffsetRad = offsetRad;
+    previousAngularVelocityRadPerSecond = angularVelocityRadPerSecond;
+    previousTimeSeconds = timeSeconds;
+    if (!finite) break;
+  }
+
+  const fullPeriodSamplesSeconds: number[] = [];
+  for (
+    let index = 2;
+    index < zeroCrossingTimesSeconds.length;
+    index += 1
+  ) {
+    fullPeriodSamplesSeconds.push(
+      zeroCrossingTimesSeconds[index] -
+        zeroCrossingTimesSeconds[index - 2],
+    );
+  }
+  const measuredPeriodSeconds =
+    fullPeriodSamplesSeconds.length > 0
+      ? average(fullPeriodSamplesSeconds)
+      : null;
+  const measuredDampingRatio = estimateMeasuredDampingRatio(
+    signedPeakOffsetsDeg,
+  );
+  const finalOffsetDeg = offsetRad * RAD_TO_DEG;
+  const behavior =
+    zeroCrossingTimesSeconds.length >= 2
+      ? 'oscillatory'
+      : 'aperiodic-within-window';
+  const checks = {
+    finite,
+    amplitudeBounded: maximumAbsoluteOffsetDeg <= initialOffsetDeg * 1.05,
+    recovered:
+      recoveryTimeSeconds !== null && recoveryTimeSeconds <= durationSeconds,
+    finalOffsetSettled: Math.abs(finalOffsetDeg) <= 0.5,
+    periodPlausible:
+      measuredPeriodSeconds === null ||
+      (measuredPeriodSeconds >= 0.25 && measuredPeriodSeconds <= 30),
+    dampingPlausible:
+      measuredDampingRatio === null ||
+      (measuredDampingRatio >= 0 && measuredDampingRatio < 1),
+  };
+
+  return {
+    initialOffsetDeg,
+    durationSeconds,
+    timeStepSeconds,
+    finalOffsetDeg,
+    maximumAbsoluteOffsetDeg,
+    recoveryTimeSeconds,
+    zeroCrossingTimesSeconds,
+    signedPeakOffsetsDeg,
+    measuredPeriodSeconds,
+    measuredDampingRatio,
+    behavior,
+    checks,
+    passed: Object.values(checks).every(Boolean),
+  };
+}
+
 function evaluateAxis(
   vessel: VesselConfig,
   axis: StabilityAxis,
@@ -431,6 +652,12 @@ function evaluateAxis(
   );
 
   const symmetryLimitRatio = axis === 'roll' ? 0.05 : 0.35;
+  const decay = runDecayProbe(
+    vessel,
+    axis,
+    equilibrium.angleDeg,
+    effectiveInertiaKgM2,
+  );
 
   const torqueReferenceNm = Math.max(
     1,
@@ -455,6 +682,7 @@ function evaluateAxis(
       dampingRatio !== null &&
       Number.isFinite(dampingRatio) &&
       dampingRatio >= 0,
+    decayPassed: decay.passed,
   };
 
   return {
@@ -478,6 +706,7 @@ function evaluateAxis(
           : 'critical-or-overdamped',
     maximumSymmetryErrorRatio,
     symmetryLimitRatio,
+    decay,
     checks,
     passed: Object.values(checks).every(Boolean),
   };
@@ -528,7 +757,7 @@ export function evaluateHydrostaticStability(
         'This is simulator-model evidence, not a manufacturer hydrostatic table or full-scale inclining experiment.',
         'The equilibrium solver holds yaw fixed and evaluates one angular axis at a time.',
         'Roll uses a strict port-starboard symmetry check; pitch permits bounded fore-aft asymmetry from the configured hull stations.',
-        'Linearized period and damping values are engineering diagnostics; time-domain decay trials remain a separate checkpoint.',
+        'The time-domain decay probe uses the same nonlinear sectional righting moment with configured linear, quadratic, and body angular damping; it is still simulator-model evidence rather than a full-scale decay trial.',
       ],
     },
     upright,
