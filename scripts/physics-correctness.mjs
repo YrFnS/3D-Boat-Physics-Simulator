@@ -594,6 +594,106 @@ function testPowerLimitedPropulsionAndSignedManeuvering() {
   }
 }
 
+function testSplitIntegrationAndExternalSolverState() {
+  const configureBody = (body) => {
+    body.position.set(3, -0.7, 8);
+    body.quaternion
+      .setFromAxisAngle(new Vector3(0, 1, 0), -0.35)
+      .multiply(
+        new Quaternion().setFromAxisAngle(
+          new Vector3(1, 0, 0),
+          0.12,
+        ),
+      )
+      .multiply(
+        new Quaternion().setFromAxisAngle(
+          new Vector3(0, 0, 1),
+          0.08,
+        ),
+      )
+      .normalize();
+    body.linearVelocity.set(2.5, -0.3, -4.2);
+    body.angularVelocity.set(0.18, -0.22, 0.31);
+    body.setMassProperties(
+      1_250,
+      [2_300, 2_900, 980],
+      [0.2, 0.15, 0.25],
+      [0.08, -0.12, 0.2],
+      [260, 480, 180],
+      [220, 160, 280],
+    );
+    body.beginStep();
+    body.addForceAtPoint(
+      new Vector3(1_800, 3_400, -2_100),
+      new Vector3(3.7, -0.4, 6.9),
+    );
+    body.addTorque(new Vector3(420, -180, 260));
+  };
+
+  const composed = new SixDofBody();
+  const split = new SixDofBody();
+  configureBody(composed);
+  configureBody(split);
+
+  const deltaSeconds = 1 / 60;
+  composed.integrate(deltaSeconds);
+  assert.equal(split.integrateVelocities(deltaSeconds), true);
+  assert.equal(split.integratePose(deltaSeconds), true);
+
+  for (const [label, actual, expected] of [
+    ['position', split.position.toArray(), composed.position.toArray()],
+    ['quaternion', split.quaternion.toArray(), composed.quaternion.toArray()],
+    [
+      'linear velocity',
+      split.linearVelocity.toArray(),
+      composed.linearVelocity.toArray(),
+    ],
+    [
+      'angular velocity',
+      split.angularVelocity.toArray(),
+      composed.angularVelocity.toArray(),
+    ],
+  ]) {
+    assert.equal(actual.length, expected.length);
+    actual.forEach((value, index) =>
+      approximatelyEqual(
+        value,
+        expected[index],
+        1e-10,
+      ),
+    );
+    assertFiniteValues(actual, `split integration ${label}`);
+  }
+
+  const centerOfMass = split.getCenterOfMassLocal(new Vector3());
+  const principalInertia = split.getPrincipalInertia(new Vector3());
+  assert.deepEqual(centerOfMass.toArray(), [0.08, -0.12, 0.2]);
+  assert.deepEqual(principalInertia.toArray(), [2_520, 3_060, 1_260]);
+
+  const imported = split.importExternalSolverState({
+    position: { x: 11, y: -2, z: 4 },
+    quaternion: { x: 0, y: 0.2, z: 0, w: 0.98 },
+    linearVelocity: { x: -1, y: 0.5, z: 2 },
+    angularVelocity: { x: 0.1, y: -0.3, z: 0.2 },
+  });
+  assert.equal(imported, true);
+  approximatelyEqual(split.quaternion.length(), 1, 1e-12);
+  assert.deepEqual(split.position.toArray(), [11, -2, 4]);
+  assert.deepEqual(split.linearVelocity.toArray(), [-1, 0.5, 2]);
+
+  const validPosition = split.position.clone();
+  assert.equal(
+    split.importExternalSolverState({
+      position: { x: Number.NaN, y: 0, z: 0 },
+      quaternion: { x: 0, y: 0, z: 0, w: 1 },
+      linearVelocity: { x: 0, y: 0, z: 0 },
+      angularVelocity: { x: 0, y: 0, z: 0 },
+    }),
+    false,
+  );
+  assert.deepEqual(split.position.toArray(), validPosition.toArray());
+}
+
 function testLastValidStateAndMotionLimits() {
   const body = new SixDofBody();
   body.position.set(12, 3, -4);
@@ -647,6 +747,7 @@ testCompartmentFloodingAndPumping();
 testLocalizedSlamScaling();
 testMassAwareReferenceForcesAndAddedMass();
 testPowerLimitedPropulsionAndSignedManeuvering();
+testSplitIntegrationAndExternalSolverState();
 testLastValidStateAndMotionLimits();
 
 console.log('Physics correctness regression tests passed.');
