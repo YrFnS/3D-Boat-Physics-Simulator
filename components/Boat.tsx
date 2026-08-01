@@ -437,10 +437,24 @@ export default function Boat() {
       preSolveSurgeSpeed,
       vessel.planingReferenceSpeedMps,
     );
+    // Powered trim reduces wetted area more than a coasting hull at the same
+    // speed. When throttle is cut, the planing craft progressively settles and
+    // regains resistance instead of retaining its minimum powered drag until
+    // it has almost stopped.
+    const planingPowerSupport = MathUtils.smoothstep(
+      Math.max(0, thrustRaw),
+      0.05,
+      0.5,
+    );
+    const fullPlaningDragMultiplier = MathUtils.lerp(
+      0.62,
+      0.28,
+      planingPowerSupport,
+    );
     const planingDragReduction = vessel.planingCapable
       ? MathUtils.lerp(
           1,
-          0.35,
+          fullPlaningDragMultiplier,
           preSolvePlaningRatio * preSolvePlaningRatio,
         )
       : 1;
