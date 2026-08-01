@@ -42,7 +42,7 @@ jobs:
       - name: Reconstruct and verify patch
         run: |
           cat scripts/.phase5c-patch/part-* > "$RUNNER_TEMP/phase5c.patch.gz.b64"
-          echo '4d7042c77878072a44d82517a41a2d1ec3e5fa5992b22650572f836816565f31  '"$RUNNER_TEMP/phase5c.patch.gz.b64" | sha256sum --check
+          echo '91f0a18e625f4c561a38582fde46403ddec8bd88ebb7a0d37f9656682b0ee2d7  '"$RUNNER_TEMP/phase5c.patch.gz.b64" | sha256sum --check
           base64 --decode "$RUNNER_TEMP/phase5c.patch.gz.b64" > "$RUNNER_TEMP/phase5c.patch.gz"
           echo '297a0d9856d067ab4f131d6d386838d17cb10eabda9ae408e7b0d07cb47ed287  '"$RUNNER_TEMP/phase5c.patch.gz" | sha256sum --check
           gzip -dc "$RUNNER_TEMP/phase5c.patch.gz" > "$RUNNER_TEMP/phase5c.patch"
