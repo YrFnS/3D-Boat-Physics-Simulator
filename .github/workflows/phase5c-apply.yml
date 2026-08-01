@@ -1,0 +1,81 @@
+name: Apply Phase 5C propulsion and maneuvering
+
+on:
+  push:
+    branches:
+      - agent/phase-5c-propulsion-maneuvering
+    paths:
+      - '.github/workflows/phase5c-apply.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: phase5c-apply-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    name: Verify, apply, validate, and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out Phase 5C branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5c-propulsion-maneuvering
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Reconstruct and verify patch
+        run: |
+          cat scripts/.phase5c-patch/part-* > "$RUNNER_TEMP/phase5c.patch.gz.b64"
+          echo '4d7042c77878072a44d82517a41a2d1ec3e5fa5992b22650572f836816565f31  '"$RUNNER_TEMP/phase5c.patch.gz.b64" | sha256sum --check
+          base64 --decode "$RUNNER_TEMP/phase5c.patch.gz.b64" > "$RUNNER_TEMP/phase5c.patch.gz"
+          echo '297a0d9856d067ab4f131d6d386838d17cb10eabda9ae408e7b0d07cb47ed287  '"$RUNNER_TEMP/phase5c.patch.gz" | sha256sum --check
+          gzip -dc "$RUNNER_TEMP/phase5c.patch.gz" > "$RUNNER_TEMP/phase5c.patch"
+          echo 'af973cb30189a69f3b1bf5f0c7132f4928043fe8041117ad670989de72529389  '"$RUNNER_TEMP/phase5c.patch" | sha256sum --check
+          git apply --check "$RUNNER_TEMP/phase5c.patch"
+          git apply "$RUNNER_TEMP/phase5c.patch"
+
+      - name: Remove one-use transfer tooling
+        run: |
+          rm -rf scripts/.phase5c-patch
+          rm -f .github/workflows/phase5c-apply.yml
+          rm -f .github/workflows/phase5c-source-snapshot.yml
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run deterministic physics correctness
+        run: npm run test:physics
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build application
+        run: npm run build
+
+      - name: Dependency audit
+        run: npm run audit
+
+      - name: Verify patch hygiene
+        run: git diff --check
+
+      - name: Commit and push validated implementation
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Phase 5C: power-limited propulsion and local-flow steering'
+          git push origin HEAD:agent/phase-5c-propulsion-maneuvering
