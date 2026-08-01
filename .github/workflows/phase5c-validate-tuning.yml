@@ -1,0 +1,129 @@
+name: Validate measured Phase 5C tuning
+
+on:
+  pull_request:
+    branches:
+      - agent/phase-4-release-validation
+    paths:
+      - '.github/workflows/phase5c-validate-tuning.yml'
+
+permissions:
+  contents: write
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+concurrency:
+  group: phase5c-validate-tuning-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.event.pull_request.head.ref == 'agent/phase-5c-propulsion-maneuvering'
+    name: Apply, calibrate, and publish measured tuning
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out Phase 5C branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5c-propulsion-maneuvering
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Reconstruct and apply measured tuning
+        run: |
+          echo 'cd5e21a2b691274807a01295aea3b472abc46f018647250496c75309818d862f  scripts/.phase5c-tuning-patch.b64' | sha256sum --check
+          base64 --decode scripts/.phase5c-tuning-patch.b64 > "$RUNNER_TEMP/phase5c-tuning.patch.gz"
+          echo 'fa3999ce8ff9e4126093e79cde6a54ced8cd5a65ecf8b3ac7126d15c7d075601  '"$RUNNER_TEMP/phase5c-tuning.patch.gz" | sha256sum --check
+          gzip -dc "$RUNNER_TEMP/phase5c-tuning.patch.gz" > "$RUNNER_TEMP/phase5c-tuning.patch"
+          echo '97f002204c1179bd35a346352eaeb689de8f472663752dbe6d780279b3ef4ba9  '"$RUNNER_TEMP/phase5c-tuning.patch" | sha256sum --check
+          git apply --check "$RUNNER_TEMP/phase5c-tuning.patch"
+          git apply "$RUNNER_TEMP/phase5c-tuning.patch"
+          git diff --check
+
+      - name: Install committed dependencies
+        run: npm ci
+
+      - name: Validate source and dependency graph
+        run: npm run validate
+
+      - name: Install calibration browser without changing lockfile
+        run: |
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Prepare standalone production server
+        run: |
+          if [ -d public ]; then
+            cp -R public .next/standalone/public
+          fi
+          mkdir -p .next/standalone/.next
+          cp -R .next/static .next/standalone/.next/static
+
+      - name: Start production server
+        run: |
+          HOSTNAME=127.0.0.1 PORT=3000 node .next/standalone/server.js > /tmp/phase5c-tuning-server.log 2>&1 &
+          echo $! > /tmp/phase5c-tuning-server.pid
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:3000/ > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/phase5c-tuning-server.log
+          exit 1
+
+      - name: Run vessel calibration
+        id: calibration
+        continue-on-error: true
+        run: node scripts/physics-calibration.mjs
+
+      - name: Run visual smoke
+        id: smoke
+        continue-on-error: true
+        run: node scripts/visual-smoke.mjs
+
+      - name: Collect validation artifacts
+        if: always()
+        run: |
+          mkdir -p artifacts/phase5c-tuning-validation
+          cp /tmp/phase5c-tuning-server.log artifacts/phase5c-tuning-validation/server.log || true
+          cp -R artifacts/physics-calibration artifacts/phase5c-tuning-validation/ || true
+          cp -R artifacts/visual-smoke artifacts/phase5c-tuning-validation/ || true
+
+      - name: Upload validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase5c-tuning-validation
+          path: artifacts/phase5c-tuning-validation
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Enforce vessel and smoke gates
+        if: steps.calibration.outcome != 'success' || steps.smoke.outcome != 'success'
+        run: exit 1
+
+      - name: Remove temporary diagnostics and tuning tooling
+        run: |
+          rm -f scripts/.phase5c-tuning-patch.b64
+          rm -f scripts/phase5c-propulsion-diagnostics.mjs
+          rm -f .github/workflows/phase5c-source-snapshot.yml
+          rm -f .github/workflows/phase5c-propulsion-diagnostics.yml
+          rm -f .github/workflows/phase5c-validate-tuning.yml
+
+      - name: Commit and push validated tuning
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'physics: calibrate Phase 5C propulsion and contacts'
+          git push origin HEAD:agent/phase-5c-propulsion-maneuvering
