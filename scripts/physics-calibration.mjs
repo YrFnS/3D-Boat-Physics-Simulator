@@ -5,6 +5,10 @@ import { evaluatePhysicalCalibrationReport } from '../sim/calibration/PhysicalCa
 import { PHYSICAL_REFERENCE_PROFILES } from '../sim/calibration/ReferenceProfiles.ts';
 import { EXTERNAL_REFERENCE_PROFILES } from '../sim/calibration/ExternalReferenceProfiles.ts';
 import { createVesselConfigurationMeasurements } from '../sim/calibration/VesselConfigurationMeasurements.ts';
+import {
+  evaluateReferenceVesselConfigurations,
+  REFERENCE_VESSEL_CONFIGURATIONS,
+} from '../sim/calibration/ReferenceVesselConfigurations.ts';
 import { getVesselConfig } from '../sim/vessels/VesselConfig.ts';
 
 const baseUrl = process.env.CALIBRATION_BASE_URL ?? 'http://127.0.0.1:3000';
@@ -185,6 +189,9 @@ report.physicalCalibration = evaluatePhysicalCalibrationReport(
   [...report.scenarios, ...configurationScenarioEntries],
   physicalProfiles,
 );
+report.referenceConfigurations = evaluateReferenceVesselConfigurations(
+  REFERENCE_VESSEL_CONFIGURATIONS,
+);
 
 await Promise.all([
   fs.writeFile(
@@ -195,6 +202,11 @@ await Promise.all([
   fs.writeFile(
     path.join(outputDirectory, 'physical-comparison.json'),
     `${JSON.stringify(report.physicalCalibration, null, 2)}\n`,
+    'utf8',
+  ),
+  fs.writeFile(
+    path.join(outputDirectory, 'reference-configurations.json'),
+    `${JSON.stringify(report.referenceConfigurations, null, 2)}\n`,
     'utf8',
   ),
 ]);
