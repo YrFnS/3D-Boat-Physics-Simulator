@@ -1,0 +1,74 @@
+name: Apply Phase 5 physics correctness
+
+on:
+  push:
+    branches:
+      - agent/phase-5-physics-correctness
+    paths:
+      - '.github/workflows/phase5-apply.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: phase5-apply-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    name: Verify, apply, validate, and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out Phase 5 branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5-physics-correctness
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Reconstruct and verify patch
+        run: |
+          cat scripts/.phase5-patch/part-* | base64 --decode > "$RUNNER_TEMP/phase5.patch"
+          echo '2c938a60e339a84d2c0a532bb194422ea1ff80fc2650db96567d4723f251d33f  '"$RUNNER_TEMP/phase5.patch" | sha256sum --check --status
+          git apply --check "$RUNNER_TEMP/phase5.patch"
+          git apply "$RUNNER_TEMP/phase5.patch"
+
+      - name: Remove one-use transfer helpers
+        run: |
+          rm -rf scripts/.phase5-patch
+          rm -f .github/workflows/phase5-apply.yml
+          rm -f .github/workflows/phase5-source-snapshot.yml
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run physics correctness regression tests
+        run: npm run test:physics
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build application
+        run: npm run build
+
+      - name: Verify patch hygiene
+        run: git diff --check
+
+      - name: Commit and push implementation
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Phase 5A: correct core vessel physics'
+          git push origin HEAD:agent/phase-5-physics-correctness
