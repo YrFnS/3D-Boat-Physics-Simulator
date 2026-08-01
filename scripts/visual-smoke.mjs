@@ -227,7 +227,7 @@ async function exerciseVesselControls(page, scenarioName) {
     await page.keyboard.down('w');
     try {
       // Wait for a real closing-speed impulse instead of assuming the
-      // software render advances enough physics in a fixed wall-clock delay.
+      // software renderer advances enough physics in a fixed wall-clock delay.
       await page.waitForFunction(
         () => {
           const dataset = document.documentElement.dataset;
@@ -405,7 +405,7 @@ try {
     });
 
     const screenshotPath = path.join(outputDirectory, `${scenario.name}.png`);
-    await page.screenshot(y path: screenshotPath, fullPage: false });
+    await page.screenshot({ path: screenshotPath, fullPage: false });
 
     const severeConsoleEntries = consoleEntries.filter((entry) =>
       ['error', 'assert'].includes(entry.type),
