@@ -10,43 +10,47 @@ Make acceleration, maximum speed, reverse handling, prop wash, steering authorit
 
 ### Engine and driveline
 
-- [ ] Add vessel-specific idle, rated, and maximum engine RPM.
-- [ ] Add rated shaft power, torque-curve shape, gearbox ratio, driveline efficiency, and rotational response.
-- [ ] Model throttle as an engine-command target rather than a direct force multiplier.
-- [ ] Keep engine RPM, shaft RPM, delivered power, and load finite and deterministic.
-- [ ] Reduce available power from engine damage without creating discontinuities.
+- [x] Add vessel-specific idle, rated, and maximum engine RPM.
+- [x] Add rated shaft power, torque-curve shape, gearbox ratio, driveline efficiency, and rotational response.
+- [x] Model throttle as an engine-command target rather than a direct force multiplier.
+- [x] Keep engine RPM, shaft RPM, delivered power, and load finite and deterministic.
+- [x] Reduce available power from engine damage without creating discontinuities.
 
 ### Propeller model
 
-- [ ] Add propeller diameter, pitch ratio, blade count, wake fraction, thrust deduction, and signed rotation direction.
-- [ ] Compute advance speed from local water-relative flow at the propeller.
-- [ ] Derive advance ratio, thrust coefficient, torque coefficient, thrust, shaft torque, and absorbed power.
-- [ ] Preserve correct ahead and astern signs.
-- [ ] Limit output through engine power, propeller loading, cavitation, and ventilation factors.
-- [ ] Apply propeller force at the configured shaft position so trim and yaw torque remain physical.
+- [x] Add propeller diameter, pitch ratio, blade count, wake fraction, thrust deduction, and signed rotation direction.
+- [x] Compute advance speed from local water-relative flow at the propeller.
+- [x] Derive advance ratio, thrust coefficient, torque coefficient, thrust, shaft torque, and absorbed power.
+- [x] Preserve correct ahead and astern signs.
+- [x] Limit output through engine power, propeller loading, cavitation, and ventilation factors.
+- [x] Apply propeller force at the configured shaft position so trim and yaw torque remain physical.
 
 ### Rudder and maneuvering
 
-- [ ] Sample local inflow at the rudder from vessel motion, ambient water, and signed prop wash.
-- [ ] Replace the fixed minimum steering bite with lift and drag based on angle of attack and local flow speed.
-- [ ] Support correct ahead, astern, and near-zero-speed steering behavior.
-- [ ] Add stall saturation and bounded rudder side force.
-- [ ] Apply lift and drag at the configured rudder center of pressure.
-- [ ] Keep damaged-rudder authority continuous and bounded.
+- [x] Sample local inflow at the rudder from vessel motion, ambient water, and signed prop wash.
+- [x] Replace the fixed minimum steering bite with lift and drag based on angle of attack and local flow speed.
+- [x] Support correct ahead, astern, and near-zero-speed steering behavior.
+- [x] Add stall saturation and bounded rudder side force.
+- [x] Apply lift and drag at the configured rudder center of pressure.
+- [x] Keep damaged-rudder authority continuous and bounded.
 
 ### Telemetry and presentation
 
-- [ ] Expose engine RPM, shaft RPM, shaft power, propeller thrust, advance ratio, cavitation, ventilation, prop wash, and rudder load.
-- [ ] Keep existing HUD and audio integrations compatible while moving their source to physical drivetrain state.
-- [ ] Preserve deterministic calibration exports and browser diagnostics.
+- [x] Expose engine RPM, shaft RPM, shaft power, propeller thrust, advance ratio, cavitation, ventilation, prop wash, and rudder load.
+- [x] Keep existing HUD and audio integrations compatible while moving their source to physical drivetrain state.
+- [x] Preserve deterministic calibration exports and browser diagnostics.
 
 ### Calibration and validation
 
-- [ ] Add pure regressions for power limits, signed advance ratio, ahead/astern thrust, zero-flow rudder behavior, prop-wash steering, cavitation, ventilation, and damage response.
-- [ ] Add reverse acceleration and reverse-turn calibration coverage.
+- [x] Add pure regressions for power limits, signed advance ratio, ahead/astern thrust, zero-flow rudder behavior, prop-wash steering, cavitation, ventilation, and damage response.
+- [ ] Add reverse acceleration and reverse-turn browser calibration coverage.
 - [ ] Preserve still-water equilibrium, flooding, collision, visual, product, and release gates.
 - [ ] Record any intentional maneuvering changes with measured before/after results.
-- [ ] Do not widen existing acceptance envelopes merely to hide a changed model.
+- [x] Do not widen existing acceptance envelopes merely to hide a changed model.
+
+## Current checkpoint
+
+The live vessel force path now uses a typed engine, gearbox, open-water propeller, signed prop wash, and local-flow rudder model. The deterministic propulsion regressions, lint, TypeScript checking, production build, dependency audit, and patch-hygiene checks pass. Permanent vessel calibration and cross-browser gates are running before any coefficient or fixture adjustment is considered.
 
 ## Implementation sequence
 
