@@ -4,7 +4,8 @@ import {
   validatePhysicalReferenceProfile,
 } from '../sim/calibration/PhysicalCalibration.ts';
 import { EXTERNAL_REFERENCE_PROFILES } from '../sim/calibration/ExternalReferenceProfiles.ts';
-import { VESSEL_CONFIGURATION_MEASUREMENTS } from '../sim/calibration/VesselConfigurationMeasurements.ts';
+import { createVesselConfigurationMeasurements } from '../sim/calibration/VesselConfigurationMeasurements.ts';
+import { getVesselConfig } from '../sim/vessels/VesselConfig.ts';
 
 const V1_SPEED_MEASUREMENTS = [
   {
@@ -20,7 +21,10 @@ const V1_SPEED_MEASUREMENTS = [
 ];
 
 const measurements = [
-  ...VESSEL_CONFIGURATION_MEASUREMENTS,
+  ...createVesselConfigurationMeasurements([
+    getVesselConfig('trawler'),
+    getVesselConfig('speedboat'),
+  ]),
   ...V1_SPEED_MEASUREMENTS,
 ];
 
@@ -55,23 +59,25 @@ for (const profile of EXTERNAL_REFERENCE_PROFILES) {
   );
 }
 
-const tomboy = evaluatePhysicalReferenceProfile(
-  EXTERNAL_REFERENCE_PROFILES.find((profile) =>
-    profile.id.includes('tomboy-26'),
-  ),
-  measurements,
+const tomboyProfile = EXTERNAL_REFERENCE_PROFILES.find((profile) =>
+  profile.id.includes('tomboy-26'),
 );
-assert.ok(
+assert.ok(tomboyProfile);
+const tomboy = evaluatePhysicalReferenceProfile(tomboyProfile, measurements);
+assert.equal(
   tomboy.metrics.find((metric) => metric.metric === 'configuredLengthOverallM')
-    ?.withinEnvelope === false,
+    ?.withinEnvelope,
+  false,
 );
-assert.ok(
+assert.equal(
   tomboy.metrics.find((metric) => metric.metric === 'configuredRatedPowerW')
-    ?.withinEnvelope === false,
+    ?.withinEnvelope,
+  false,
 );
-assert.ok(
+assert.equal(
   tomboy.metrics.find((metric) => metric.metric === 'steadySpeedMps')
-    ?.withinEnvelope === false,
+    ?.withinEnvelope,
+  false,
 );
 assert.equal(
   tomboy.metrics.find((metric) => metric.metric === 'bollardPullKg')
@@ -79,19 +85,20 @@ assert.equal(
   false,
 );
 
-const axopar = evaluatePhysicalReferenceProfile(
-  EXTERNAL_REFERENCE_PROFILES.find((profile) =>
-    profile.id.includes('axopar-22-spyder'),
-  ),
-  measurements,
+const axoparProfile = EXTERNAL_REFERENCE_PROFILES.find((profile) =>
+  profile.id.includes('axopar-22-spyder'),
 );
-assert.ok(
+assert.ok(axoparProfile);
+const axopar = evaluatePhysicalReferenceProfile(axoparProfile, measurements);
+assert.equal(
   axopar.metrics.find((metric) => metric.metric === 'configuredLengthOverallM')
-    ?.withinEnvelope === false,
+    ?.withinEnvelope,
+  false,
 );
-assert.ok(
+assert.equal(
   axopar.metrics.find((metric) => metric.metric === 'configuredRatedPowerW')
-    ?.withinEnvelope === false,
+    ?.withinEnvelope,
+  false,
 );
 assert.equal(
   axopar.metrics.find((metric) => metric.metric === 'configuredPlaningCapableFlag')
