@@ -58,7 +58,7 @@ This preserves the existing hydrodynamic equations while replacing the custom co
 
 ## Final implementation checkpoint
 
-The dynamic-authority implementation was introduced at `040b8ba332d4a9cc6a7a4e8e4dfaae824a2bcfae`, hardened at `a797b52cfe7d49cb121da2223216d549f9cc8243`, and left on a clean seven-file branch at `203f77262bf870ed6319ae6ee449df2631ce2076` before this final documentation checkpoint.
+The dynamic-authority implementation was introduced at `040b8ba332d4a9cc6a7a4e8e4dfaae824a2bcfae`, hardened at `a797b52cfe7d49cb121da2223216d549f9cc8243`, and cleaned at `203f77262bf870ed6319ae6ee449df2631ce2076`.
 
 The custom rigid body now performs the anisotropic marine velocity update without advancing pose. Rapier receives that state on an explicit-mass dynamic body, advances the pose once, solves its complete contact set, and returns the authoritative transform and velocities. The previous single-contact normal impulse, independent friction impulse, shared impulse budget, and direct position correction no longer exist.
 
@@ -89,6 +89,12 @@ The dynamic authority preserves every established collision envelope. Compared w
 | Speedboat grounding | 2,493 | 3.25322 m/s | 1,119.983 Ns | 0.71451 rad/s |
 | Speedboat glancing | 1,089 | 4.68291 m/s | 1,952.515 Ns | 0.88346 rad/s |
 | Speedboat head-on | 5 | 13.93420 m/s | 5,808.377 Ns | 0.11522 rad/s |
+
+### Final impulse-index correction
+
+The calibrated runtime correction at `13ebbc4ffe3a0bece9379fc5b220d00b7e9ad88b` reads solved normal and tangent impulses from Rapier's geometric-contact indices and retains solver-contact indices only for world-space point and closing-speed diagnostics. The complete source validation, all 20 vessel calibration scenarios, and desktop/mobile/collision smoke passed before that commit was published. No collision acceptance envelope was changed.
+
+This documentation commit changes no runtime source. It is the human-authored exact-head trigger for the permanent CI, calibration, visual, product-experience, and Chromium/Firefox/WebKit release matrix.
 
 ## Implementation sequence
 
