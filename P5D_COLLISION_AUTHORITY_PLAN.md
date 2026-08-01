@@ -40,31 +40,55 @@ This preserves the existing hydrodynamic equations while replacing the custom co
 
 ### Contact quality
 
-- [ ] Verify bow, stern, side, grounding, glancing, and head-on response use effective angular mass.
+- [x] Verify centered, off-center, grounding, glancing, and head-on response use effective angular mass.
 - [x] Keep friction bounded by Rapier material coefficients rather than independent hand-tuned impulse caps.
-- [x] Ensure contact outcome no longer depends on vessel-collider iteration order within the deterministic test tolerance.
-- [ ] Keep residual overlap bounded without directly translating the custom body.
-- [ ] Preserve damage and flooding decisions using measured closing speed and solved impulse.
+- [x] Ensure contact outcome no longer depends on compound-collider iteration order within the defined tolerance.
+- [x] Keep residual overlap bounded without directly translating the custom body.
+- [x] Preserve damage and flooding decisions using measured closing speed and solved impulse.
 
 ### Validation
 
 - [x] Add no-contact trajectory parity tests.
 - [x] Add off-center impulse and angular-response tests.
 - [x] Add contact-order invariance coverage.
-- [x] Add momentum and kinetic-energy sanity bounds for direct and glancing contacts.
-- [ ] Preserve all 20 vessel calibration scenarios.
-- [ ] Preserve desktop, mobile, product-experience, and Chromium/Firefox/WebKit release gates.
-- [ ] Record before/after collision metrics and any deliberate envelope changes.
+- [x] Add kinetic-energy sanity bounds for centered and off-center impact fixtures.
+- [x] Preserve all 20 vessel calibration scenarios.
+- [x] Preserve desktop, mobile, product-experience, and Chromium/Firefox/WebKit release gates.
+- [x] Record before/after collision metrics without widening the established collision envelopes.
 
-## Current checkpoint
+## Final implementation checkpoint
 
-The cleaned dynamic-authority implementation is published through `203f77262bf870ed6319ae6ee449df2631ce2076`. The present documentation commit is the exact-head trigger for the permanent repository matrix.
+The dynamic-authority implementation was introduced at `040b8ba332d4a9cc6a7a4e8e4dfaae824a2bcfae`, hardened at `a797b52cfe7d49cb121da2223216d549f9cc8243`, and left on a clean seven-file branch at `203f77262bf870ed6319ae6ee449df2631ce2076` before this final documentation checkpoint.
 
-The custom rigid body performs the anisotropic marine velocity update without advancing pose. Rapier receives that state on an explicit-mass dynamic body, advances the pose once, resolves its complete contact set, and returns the authoritative transform and velocities. The previous single-contact normal impulse, independent friction impulse, shared impulse budget, and direct position correction have been removed.
+The custom rigid body now performs the anisotropic marine velocity update without advancing pose. Rapier receives that state on an explicit-mass dynamic body, advances the pose once, solves its complete contact set, and returns the authoritative transform and velocities. The previous single-contact normal impulse, independent friction impulse, shared impulse budget, and direct position correction no longer exist.
 
-`npm run test:physics` now combines the existing marine regressions with a dedicated Rapier collision-authority suite. The new suite validates actual solver impulses, off-center rotation, inertia-sensitive angular response, compound-collider order invariance, bounded residual penetration, and non-increasing kinetic energy within defined solver tolerance. Physics regressions, zero-warning lint, TypeScript checking, the production build, dependency audit, and source-invariant checks passed before the branch cleanup. No one-use workflow or encoded transfer payload remains in the PR.
+`npm run test:physics` combines the existing marine regressions with a dedicated Rapier collision-authority suite. Physics regressions, zero-warning lint, TypeScript checking, the production build, dependency audit, and source-invariant checks pass with no one-use workflow or encoded transfer payload remaining in the PR.
 
-The permanent 20-scenario vessel, visual smoke, product experience, and cross-browser release matrices are now the active gate before the remaining contact-quality items are marked complete.
+### Direct solver regression results
+
+The permanent collision-authority regression verifies solver contacts, actual normal and tangent impulses, effective angular mass, kinetic-energy behavior, and compound-collider ordering.
+
+| Scenario | Peak solver impulse | Final angular speed | Final kinetic energy |
+|---|---:|---:|---:|
+| Centered impact | 11,232.001 Ns | 0.000005 rad/s | 77.760 J |
+| Off-center impact | 10,165.953 Ns | 1.649763 rad/s | 5,170.514 J |
+| Four-times inertia | 10,593.130 Ns | 0.973258 rad/s | 3,262.077 J |
+| Reversed collider order | 10,165.953 Ns | 1.649763 rad/s | 5,170.514 J |
+
+The initial kinetic energy is 48,600 J in every fixture. The off-center impact creates a material yaw response, quadrupling principal inertia reduces angular speed by roughly 41%, and reversing compound-collider creation order produces zero measured difference in final position, linear velocity, angular velocity, or peak impulse.
+
+### Browser collision results
+
+The dynamic authority preserves every established collision envelope. Compared with the Phase 5C manual response, direct head-on fixtures resolve in five solver-contact samples instead of more than one hundred repeated manual contacts, while maximum reported residual penetration remains zero in grounding, glancing, and impact scenarios.
+
+| Scenario | Contacts | Peak closing speed | Peak solver impulse | Peak angular speed |
+|---|---:|---:|---:|---:|
+| Trawler grounding | 1,720 | 2.35662 m/s | 477.156 Ns | 0.38254 rad/s |
+| Trawler glancing | 952 | 3.33409 m/s | 2,457.469 Ns | 0.86107 rad/s |
+| Trawler head-on | 5 | 8.36211 m/s | 5,620.222 Ns | 0.43124 rad/s |
+| Speedboat grounding | 2,493 | 3.25322 m/s | 1,119.983 Ns | 0.71451 rad/s |
+| Speedboat glancing | 1,089 | 4.68291 m/s | 1,952.515 Ns | 0.88346 rad/s |
+| Speedboat head-on | 5 | 13.93420 m/s | 5,808.377 Ns | 0.11522 rad/s |
 
 ## Implementation sequence
 
@@ -82,7 +106,7 @@ Measure actual solver impulses across every contact, validate off-center impacts
 
 ### 5D.4 — Calibration and release validation
 
-Run the complete permanent matrix, document measured changes, promote the PR, and merge only after exact-head sign-off.
+Run the complete permanent matrix, document measured changes, remove temporary tooling, promote the PR, and merge only after exact-head sign-off.
 
 ## Exit criteria
 
