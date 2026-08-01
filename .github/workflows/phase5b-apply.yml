@@ -1,0 +1,78 @@
+name: Apply Phase 5B water and hydrostatics
+
+on:
+  push:
+    branches:
+      - agent/phase-5b-water-hydrostatics
+    paths:
+      - '.github/workflows/phase5b-apply.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: phase5b-apply-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    name: Verify, apply, validate, and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out Phase 5B branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5b-water-hydrostatics
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Reconstruct and verify patch
+        run: |
+          cat scripts/.phase5b-patch/part-* > "$RUNNER_TEMP/phase5b.patch.gz.b64"
+          echo '0a9e07a796f038c7c15e047eef969f3405abcc06f0214084f35c5dd251abecaa  '"$RUNNER_TEMP/phase5b.patch.gz.b64" | sha256sum --check
+          base64 --decode "$RUNNER_TEMP/phase5b.patch.gz.b64" > "$RUNNER_TEMP/phase5b.patch.gz"
+          echo 'c8287e14be2e5116aee665c79bbb253c0c34639c9dc578924220cd039dea5554  '"$RUNNER_TEMP/phase5b.patch.gz" | sha256sum --check
+          gzip -dc "$RUNNER_TEMP/phase5b.patch.gz" > "$RUNNER_TEMP/phase5b.patch"
+          echo '2a2fd1bb5674e79c91309d590feec398abcc76787aa2f2f53b483b35dc933390  '"$RUNNER_TEMP/phase5b.patch" | sha256sum --check
+          git apply --check "$RUNNER_TEMP/phase5b.patch"
+          git apply "$RUNNER_TEMP/phase5b.patch"
+
+      - name: Remove one-use patch transfer chunks
+        run: rm -rf scripts/.phase5b-patch
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run deterministic physics correctness
+        run: npm run test:physics
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build application
+        run: npm run build
+
+      - name: Dependency audit
+        run: npm run audit
+
+      - name: Verify patch hygiene
+        run: git diff --check
+
+      - name: Commit and push validated implementation
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Phase 5B: water-state and hydrostatics foundation'
+          git push origin HEAD:agent/phase-5b-water-hydrostatics
