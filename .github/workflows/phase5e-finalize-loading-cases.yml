@@ -1,0 +1,129 @@
+name: Finalize Phase 5E loading cases
+
+on:
+  push:
+    branches:
+      - agent/phase-5e-independent-physical-calibration
+    paths:
+      - '.github/workflows/phase5e-finalize-loading-cases.yml'
+
+permissions:
+  contents: write
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+concurrency:
+  group: phase5e-finalize-loading-cases-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    name: Patch, validate, and publish loading cases
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out Phase 5E branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5e-independent-physical-calibration
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Finalize loading-case types and artifact output
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          loading = Path('sim/calibration/ReferenceLoadingCases.ts')
+          source = loading.read_text(encoding='utf-8')
+          old = """    (field) => loadingCase.quantities[field]?.value === null,
+          """
+          new = """    (field) =>
+              (loadingCase.quantities as Readonly<Record<string, LoadingCaseQuantity>>)[
+                field
+              ]?.value === null,
+          """
+          if source.count(old) != 2:
+              raise SystemExit(
+                  f'Expected two loading-case index expressions, found {source.count(old)}.'
+              )
+          loading.write_text(source.replace(old, new), encoding='utf-8')
+
+          runner = Path('scripts/physics-calibration.mjs')
+          source = runner.read_text(encoding='utf-8')
+          import_marker = """import {
+            evaluateReferenceVesselConfigurations,
+            REFERENCE_VESSEL_CONFIGURATIONS,
+          } from '../sim/calibration/ReferenceVesselConfigurations.ts';
+          """
+          import_block = import_marker + """import {
+            evaluateReferenceLoadingCases,
+            REFERENCE_LOADING_CASES,
+          } from '../sim/calibration/ReferenceLoadingCases.ts';
+          """
+          if source.count(import_marker) != 1:
+              raise SystemExit('Reference configuration import marker was not found once.')
+          source = source.replace(import_marker, import_block, 1)
+
+          assignment_marker = """report.referenceConfigurations = evaluateReferenceVesselConfigurations(
+            REFERENCE_VESSEL_CONFIGURATIONS,
+          );
+          """
+          assignment_block = assignment_marker + """report.referenceLoadingCases = evaluateReferenceLoadingCases(
+            REFERENCE_LOADING_CASES,
+          );
+          """
+          if source.count(assignment_marker) != 1:
+              raise SystemExit('Reference configuration assignment marker was not found once.')
+          source = source.replace(assignment_marker, assignment_block, 1)
+
+          write_marker = """  fs.writeFile(
+              path.join(outputDirectory, 'reference-configurations.json'),
+              `${JSON.stringify(report.referenceConfigurations, null, 2)}\\n`,
+              'utf8',
+            ),
+          """
+          write_block = write_marker + """  fs.writeFile(
+              path.join(outputDirectory, 'reference-loading-cases.json'),
+              `${JSON.stringify(report.referenceLoadingCases, null, 2)}\\n`,
+              'utf8',
+            ),
+          """
+          if source.count(write_marker) != 1:
+              raise SystemExit('Reference configuration writer marker was not found once.')
+          runner.write_text(source.replace(write_marker, write_block, 1), encoding='utf-8')
+          PY
+          git diff --check
+
+      - name: Remove this one-use workflow
+        run: rm -f .github/workflows/phase5e-finalize-loading-cases.yml
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate source and dependencies
+        run: npm run validate
+
+      - name: Verify artifact hooks and patch hygiene
+        run: |
+          git diff --check
+          grep -q 'reference-loading-cases.json' scripts/physics-calibration.mjs
+          grep -q 'ReferenceLoadingCases.ts' scripts/reference-loading-case-contract.mjs
+          test ! -e .github/workflows/phase5e-finalize-loading-cases.yml
+
+      - name: Commit and push clean checkpoint
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'calibration: validate reference loading cases'
+          git push origin HEAD:agent/phase-5e-independent-physical-calibration
