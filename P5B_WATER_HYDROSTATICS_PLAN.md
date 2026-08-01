@@ -10,56 +10,60 @@ Make vessel equilibrium, wave response, damping, flooding, and slamming emerge f
 
 ### Water-state sampling
 
-- [ ] Return surface position, normal, velocity, and vertical acceleration from the CPU water sampler.
-- [ ] Keep CPU samples aligned with the Gerstner surface rendered by the ocean shader.
-- [ ] Include shoreline, ice, and whirlpool deformation in the sampled surface.
-- [ ] Use local water velocity for every submerged hull section.
-- [ ] Add deterministic finite-difference tests for surface velocity and normal consistency.
+- [x] Return surface position, normal, velocity, and vertical acceleration from the CPU water sampler.
+- [x] Keep CPU samples aligned with the Gerstner surface rendered by the ocean shader.
+- [x] Include shoreline, ice, and whirlpool deformation in the sampled surface.
+- [x] Use local water velocity for every submerged hull section.
+- [x] Add deterministic finite-difference tests for surface velocity and normal consistency.
 
 ### Section-based hydrostatics
 
-- [ ] Replace the point-spring buoyancy calculation with weighted hull sections.
-- [ ] Estimate displaced volume per section from local immersion and hull cross-section geometry.
-- [ ] Apply Archimedes buoyancy using water density and gravity.
-- [ ] Derive a dynamic center of buoyancy from the active sections.
-- [ ] Preserve full six-degree force and torque application through `SixDofBody`.
-- [ ] Keep the model inexpensive enough for the existing 60 Hz browser simulation.
+- [x] Replace the point-spring buoyancy calculation with weighted hull sections.
+- [x] Estimate displaced volume per section from local immersion and hull cross-section geometry.
+- [x] Apply Archimedes buoyancy using water density and gravity.
+- [x] Derive a dynamic center of buoyancy from the active sections.
+- [x] Preserve full six-degree force and torque application through `SixDofBody`.
+- [x] Keep the model allocation-conscious and bounded for the existing 60 Hz browser simulation.
 
 ### Added mass and coupled damping
 
-- [ ] Introduce vessel-specific surge, sway, heave, roll, pitch, and yaw added-mass coefficients.
-- [ ] Evaluate linear and quadratic damping in vessel body axes.
-- [ ] Apply local water-relative velocity rather than world velocity.
-- [ ] Avoid double-counting drag already represented by section forces.
-- [ ] Add finite-state and energy-dissipation regression tests.
+- [x] Introduce vessel-specific surge, sway, heave, roll, pitch, and yaw added-mass coefficients.
+- [x] Evaluate linear and quadratic damping in vessel body axes.
+- [x] Apply local water-relative velocity rather than world velocity.
+- [x] Avoid double-counting drag already represented by section forces.
+- [x] Add finite-state and energy-dissipation regression tests.
 
 ### Flooding foundation
 
-- [ ] Add typed vessel compartments with local position, capacity, and flood susceptibility.
-- [ ] Convert hull damage and water exposure into deterministic compartment flooding.
-- [ ] Add flooded-water mass to effective vessel mass and center of mass.
-- [ ] Reduce reserve buoyancy through displaced internal volume rather than a global draft-sign adjustment.
-- [ ] Add passive pumping and active repair compatibility without instant global recovery.
-- [ ] Expose aggregate flooding telemetry for HUD and validation.
+- [x] Add typed vessel compartments with local position, capacity, and flood susceptibility.
+- [x] Convert hull damage and water exposure into deterministic compartment flooding.
+- [x] Add flooded-water mass to effective vessel mass and center of mass.
+- [x] Reduce reserve buoyancy through displaced internal volume rather than a global draft-sign adjustment.
+- [x] Add passive pumping and active repair compatibility without instant global recovery.
+- [x] Expose aggregate flooding telemetry for HUD and validation.
 
 ### Section-based slamming
 
-- [ ] Detect local air-to-water entry at individual bow, midship, and stern sections.
-- [ ] Base slam load on relative entry velocity, immersion growth, deadrise, and section area.
-- [ ] Apply slam impulses at the impacted section.
-- [ ] Route localized slam severity into hull, engine, and rudder damage.
-- [ ] Remove the aggregate submerged-ratio slam threshold.
+- [x] Detect local air-to-water entry at individual bow, midship, and stern sections.
+- [x] Base slam load on relative entry velocity, immersion growth, deadrise, and section area.
+- [x] Apply slam impulses at the impacted section.
+- [x] Route localized slam severity into hull, engine, and rudder damage.
+- [x] Remove the aggregate submerged-ratio slam threshold.
 
 ### Calibration and validation
 
 - [ ] Add static-equilibrium tests for both vessels from multiple initial heights.
 - [ ] Add heel and pitch restoring tests.
 - [ ] Add still-water decay tests for heave, roll, and pitch.
-- [ ] Add following-current and moving-wave tests using local water velocity.
-- [ ] Add progressive flooding, asymmetric flooding, pump-down, and loss-of-equilibrium tests.
-- [ ] Add bow-versus-stern slam localization tests.
+- [x] Add following-current and moving-wave water-state tests using local water velocity.
+- [ ] Add full dynamic progressive-flooding and loss-of-equilibrium tests; pure asymmetric flooding and pump-down tests are complete.
+- [ ] Add full section-entry bow-versus-stern slam localization tests; force/deadrise scaling tests are complete.
 - [ ] Preserve the existing physics-correctness, collision, visual, product, and release gates.
 - [ ] Record any intentional calibration changes with measured before/after metrics.
+
+## Current checkpoint
+
+The implementation now contains the rich water sampler, sectional Archimedes solver, body-axis added mass and damping, typed flood compartments, dynamic mass/center-of-mass/inertia updates, localized slamming, HUD telemetry, and pure deterministic regressions. Full browser equilibrium, calibration, gameplay, visual, and cross-engine release validation remain the active gate before Phase 5B is complete.
 
 ## Implementation sequence
 

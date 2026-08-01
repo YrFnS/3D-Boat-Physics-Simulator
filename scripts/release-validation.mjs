@@ -324,6 +324,26 @@ async function readPhysicsSnapshot(page) {
       quaternionNorm: number('simQuaternionNorm'),
       directionLength: number('simDirectionLength'),
       submergedRatio: number('simSubmergedRatio'),
+      hydrostatics: {
+        displacedVolumeM3: number('simDisplacedVolumeM3'),
+        floodingRatio: number('simFloodingRatio'),
+        floodedVolumeM3: number('simFloodedVolumeM3'),
+        physicalMassKg: number('simPhysicalMassKg'),
+        displacementBalanceErrorRatio: number(
+          'simDisplacementBalanceErrorRatio',
+        ),
+        centerOfBuoyancy: {
+          x: number('simCenterOfBuoyancyX'),
+          y: number('simCenterOfBuoyancyY'),
+          z: number('simCenterOfBuoyancyZ'),
+        },
+        averageWaterVelocity: {
+          x: number('simAverageWaterVelocityX'),
+          y: number('simAverageWaterVelocityY'),
+          z: number('simAverageWaterVelocityZ'),
+        },
+        maximumSlamSeverity: number('simMaximumSlamSeverity'),
+      },
       droppedTime: number('simDroppedTime'),
       hullHealth: number('simHullHealth'),
       render: {
@@ -364,6 +384,18 @@ function physicsSnapshotIsBounded(snapshot) {
       snapshot.quaternionNorm,
       snapshot.directionLength,
       snapshot.submergedRatio,
+      snapshot.hydrostatics.displacedVolumeM3,
+      snapshot.hydrostatics.floodingRatio,
+      snapshot.hydrostatics.floodedVolumeM3,
+      snapshot.hydrostatics.physicalMassKg,
+      snapshot.hydrostatics.displacementBalanceErrorRatio,
+      snapshot.hydrostatics.centerOfBuoyancy.x,
+      snapshot.hydrostatics.centerOfBuoyancy.y,
+      snapshot.hydrostatics.centerOfBuoyancy.z,
+      snapshot.hydrostatics.averageWaterVelocity.x,
+      snapshot.hydrostatics.averageWaterVelocity.y,
+      snapshot.hydrostatics.averageWaterVelocity.z,
+      snapshot.hydrostatics.maximumSlamSeverity,
       snapshot.droppedTime,
       snapshot.hullHealth,
       snapshot.render.fps,
@@ -391,6 +423,18 @@ function physicsSnapshotIsBounded(snapshot) {
     snapshot.directionLength < 1.1 &&
     snapshot.submergedRatio >= 0 &&
     snapshot.submergedRatio <= 1 &&
+    snapshot.hydrostatics.displacedVolumeM3 >= 0 &&
+    snapshot.hydrostatics.displacedVolumeM3 < 20 &&
+    snapshot.hydrostatics.floodingRatio >= 0 &&
+    snapshot.hydrostatics.floodingRatio <= 1 &&
+    snapshot.hydrostatics.floodedVolumeM3 >= 0 &&
+    snapshot.hydrostatics.floodedVolumeM3 < 10 &&
+    snapshot.hydrostatics.physicalMassKg >= 700 &&
+    snapshot.hydrostatics.physicalMassKg < 5_000 &&
+    snapshot.hydrostatics.displacementBalanceErrorRatio >= 0 &&
+    snapshot.hydrostatics.displacementBalanceErrorRatio < 2 &&
+    snapshot.hydrostatics.maximumSlamSeverity >= 0 &&
+    snapshot.hydrostatics.maximumSlamSeverity <= 8.01 &&
     snapshot.droppedTime >= 0 &&
     snapshot.droppedTime < 10 &&
     snapshot.hullHealth >= 0 &&

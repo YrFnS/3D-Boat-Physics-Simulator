@@ -1,7 +1,11 @@
 import { Euler, MathUtils, Vector3 } from 'three';
 import type { BoatType } from '@/store/useSimStore';
 import type { SixDofBody } from '@/sim/core/SixDofBody';
-import type { WaterHeightSampler } from '@/sim/vessels/DistributedHullForces';
+import type { WaterSurfaceSampler } from '@/sim/water/WaterSurface';
+import { setFlatWaterSample } from '@/sim/water/WaterSurface';
+import {
+  estimateHydrostaticRestingOriginY,
+} from '@/sim/vessels/HydrostaticsMath';
 import type { VesselConfig } from '@/sim/vessels/VesselConfig';
 import type { RapierContactSummary } from '@/sim/collision/RapierCollisionWorld';
 
@@ -31,6 +35,7 @@ interface RestTargets {
   verticalSpeedRmsMaxMps: number;
   rollRmsMaxDeg: number;
   pitchRmsMaxDeg: number;
+  displacementBalanceErrorMaxRatio: number;
 }
 
 interface StabilityTargets {
@@ -75,6 +80,10 @@ export interface CalibrationStepMetrics {
   hullHealth: number;
   engineHealth: number;
   rudderHealth: number;
+  displacedVolumeM3: number;
+  physicalMassKg: number;
+  floodingRatio: number;
+  displacementBalanceErrorRatio: number;
   collisionSummary?: RapierContactSummary;
 }
 
@@ -115,6 +124,7 @@ export const VESSEL_CALIBRATION_TARGETS: Readonly<
       verticalSpeedRmsMaxMps: 0.22,
       rollRmsMaxDeg: 1.5,
       pitchRmsMaxDeg: 1.8,
+      displacementBalanceErrorMaxRatio: 0.08,
     },
     stability: {
       recoveryTimeMaxSeconds: 9,
@@ -146,6 +156,7 @@ export const VESSEL_CALIBRATION_TARGETS: Readonly<
       verticalSpeedRmsMaxMps: 0.28,
       rollRmsMaxDeg: 2,
       pitchRmsMaxDeg: 2.2,
+      displacementBalanceErrorMaxRatio: 0.08,
     },
     stability: {
       recoveryTimeMaxSeconds: 8,
@@ -214,28 +225,11 @@ function roundMetric(value: number | null, digits = 5) {
   return Math.round(value * scale) / scale;
 }
 
-function averageHullPointY(vessel: VesselConfig) {
-  let weightedY = 0;
-  let totalWeight = 0;
-
-  for (const point of vessel.hullForcePoints) {
-    const weight = Math.max(0, point.weight);
-    weightedY += point.localPosition[1] * weight;
-    totalWeight += weight;
-  }
-
-  return totalWeight > 0 ? weightedY / totalWeight : 0;
-}
-
 export function estimateRestingOriginY(vessel: VesselConfig) {
-  const averagePointY = averageHullPointY(vessel);
-  const hydrostaticDepthM = 9.81 / Math.max(1, vessel.buoyancyStiffness);
-
-  return (
-    FLAT_WATER_HEIGHT_M -
-    vessel.baseDraftM -
-    averagePointY -
-    hydrostaticDepthM
+  return estimateHydrostaticRestingOriginY(
+    vessel,
+    vessel.massKg,
+    FLAT_WATER_HEIGHT_M,
   );
 }
 
@@ -268,16 +262,13 @@ export function parseCalibrationRequest(
   };
 }
 
-export const sampleFlatCalibrationWater: WaterHeightSampler = (
+export const sampleFlatCalibrationWater: WaterSurfaceSampler = (
   x,
   z,
   _timeSeconds,
   target,
 ) => {
-  target.x = x;
-  target.y = FLAT_WATER_HEIGHT_M;
-  target.z = z;
-  return target;
+  return setFlatWaterSample(target, x, FLAT_WATER_HEIGHT_M, z);
 };
 
 export class VesselCalibrationRunner {
@@ -294,6 +285,8 @@ export class VesselCalibrationRunner {
   private readonly restVerticalSpeed = new RunningStatistics();
   private readonly restRoll = new RunningStatistics();
   private readonly restPitch = new RunningStatistics();
+  private readonly restDisplacementError = new RunningStatistics();
+  private readonly restFloodingRatio = new RunningStatistics();
   private readonly speedSteady = new RunningStatistics();
 
   private initialized = false;
@@ -422,6 +415,10 @@ export class VesselCalibrationRunner {
           this.restVerticalSpeed.push(metrics.body.linearVelocity.y);
           this.restRoll.push(rollDeg);
           this.restPitch.push(pitchDeg);
+          this.restDisplacementError.push(
+            metrics.displacementBalanceErrorRatio,
+          );
+          this.restFloodingRatio.push(metrics.floodingRatio);
         }
         break;
       case 'stability':
@@ -562,6 +559,10 @@ export class VesselCalibrationRunner {
       finalMetrics.submergedRatio,
       finalMetrics.speedMps,
       finalMetrics.hullHealth,
+      finalMetrics.displacedVolumeM3,
+      finalMetrics.physicalMassKg,
+      finalMetrics.floodingRatio,
+      finalMetrics.displacementBalanceErrorRatio,
     ].every(Number.isFinite);
 
     let metrics: Record<string, number | null>;
@@ -575,6 +576,12 @@ export class VesselCalibrationRunner {
         verticalSpeedRmsMps: roundMetric(this.restVerticalSpeed.rms),
         rollRmsDeg: roundMetric(this.restRoll.rms),
         pitchRmsDeg: roundMetric(this.restPitch.rms),
+        displacementBalanceErrorRatio: roundMetric(
+          this.restDisplacementError.mean,
+        ),
+        floodingRatio: roundMetric(this.restFloodingRatio.mean),
+        physicalMassKg: roundMetric(finalMetrics.physicalMassKg),
+        displacedVolumeM3: roundMetric(finalMetrics.displacedVolumeM3),
       };
       checks = {
         finiteState,
@@ -593,6 +600,10 @@ export class VesselCalibrationRunner {
           this.restRoll.rms <= restTargets.rollRmsMaxDeg,
         pitchSettled:
           this.restPitch.rms <= restTargets.pitchRmsMaxDeg,
+        displacementBalanced:
+          this.restDisplacementError.mean <=
+          restTargets.displacementBalanceErrorMaxRatio,
+        calibrationRemainsDry: this.restFloodingRatio.mean <= 1e-6,
       };
     } else if (this.request.scenario === 'stability') {
       const stabilityTargets = targets as StabilityTargets;

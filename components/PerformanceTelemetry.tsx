@@ -16,6 +16,18 @@ const PHYSICS_DATASET_KEYS = [
   'simQuaternionNorm',
   'simDirectionLength',
   'simSubmergedRatio',
+  'simDisplacedVolumeM3',
+  'simFloodingRatio',
+  'simFloodedVolumeM3',
+  'simPhysicalMassKg',
+  'simDisplacementBalanceErrorRatio',
+  'simCenterOfBuoyancyX',
+  'simCenterOfBuoyancyY',
+  'simCenterOfBuoyancyZ',
+  'simAverageWaterVelocityX',
+  'simAverageWaterVelocityY',
+  'simAverageWaterVelocityZ',
+  'simMaximumSlamSeverity',
   'simDroppedTime',
   'simCollisionReady',
   'simCollisionSequence',
@@ -65,6 +77,38 @@ function publishPhysicsDiagnostics() {
   );
   root.dataset.simDirectionLength = String(sharedPhysics.boatDir.length());
   root.dataset.simSubmergedRatio = String(sharedPhysics.submergedRatio);
+  root.dataset.simDisplacedVolumeM3 = String(
+    sharedPhysics.displacedVolumeM3,
+  );
+  root.dataset.simFloodingRatio = String(sharedPhysics.floodingRatio);
+  root.dataset.simFloodedVolumeM3 = String(
+    sharedPhysics.floodedVolumeM3,
+  );
+  root.dataset.simPhysicalMassKg = String(sharedPhysics.physicalMassKg);
+  root.dataset.simDisplacementBalanceErrorRatio = String(
+    sharedPhysics.displacementBalanceErrorRatio,
+  );
+  root.dataset.simCenterOfBuoyancyX = String(
+    sharedPhysics.centerOfBuoyancy.x,
+  );
+  root.dataset.simCenterOfBuoyancyY = String(
+    sharedPhysics.centerOfBuoyancy.y,
+  );
+  root.dataset.simCenterOfBuoyancyZ = String(
+    sharedPhysics.centerOfBuoyancy.z,
+  );
+  root.dataset.simAverageWaterVelocityX = String(
+    sharedPhysics.averageWaterVelocity.x,
+  );
+  root.dataset.simAverageWaterVelocityY = String(
+    sharedPhysics.averageWaterVelocity.y,
+  );
+  root.dataset.simAverageWaterVelocityZ = String(
+    sharedPhysics.averageWaterVelocity.z,
+  );
+  root.dataset.simMaximumSlamSeverity = String(
+    sharedPhysics.maximumSlamSeverity,
+  );
   root.dataset.simDroppedTime = String(sharedPhysics.droppedSimulationTime);
   root.dataset.simCollisionReady = String(sharedPhysics.collisionReady);
   root.dataset.simCollisionSequence = String(sharedPhysics.collisionSequence);

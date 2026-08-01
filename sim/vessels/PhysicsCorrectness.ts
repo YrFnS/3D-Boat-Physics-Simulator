@@ -15,23 +15,6 @@ function finiteNonNegative(value: number) {
   return Math.max(0, finiteOrZero(value));
 }
 
-/**
- * Converts damage/loading sink offsets into the draft convention used by the
- * point-buoyancy model. A larger returned offset reduces local immersion at a
- * fixed world position, so the vessel must settle lower to recover support.
- */
-export function effectiveDraftOffset(
-  baseDraftM: number,
-  floodingSinkOffsetM: number,
-  loadingSinkOffsetM: number,
-) {
-  return (
-    finiteOrZero(baseDraftM) +
-    finiteNonNegative(floodingSinkOffsetM) +
-    finiteNonNegative(loadingSinkOffsetM)
-  );
-}
-
 export function projectOntoAxis(
   vector: Vector3Like,
   axis: Vector3Like,

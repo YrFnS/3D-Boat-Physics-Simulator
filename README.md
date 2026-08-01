@@ -2,20 +2,23 @@
 
 An interactive browser-based marine simulation built with Next.js, React Three Fiber, Three.js, and Rapier. The project combines procedural water, severe weather, calibrated six-degree vessel handling, route-based missions, free navigation, damage, recovery, and a responsive instrument suite in a local-first web application.
 
-> **Project status:** release candidate. The rendering and performance foundation, calibrated six-degree vessel physics, Rapier contacts, mission gameplay, navigation, onboarding, accessibility, and product settings are complete. Automated Phase 4 validation covers Chromium, Firefox, WebKit, mobile touch, deterministic calibration, runtime recovery, screenshot integrity, the physical-benchmark export path, and the production build. Representative physical-GPU and touch-device measurements remain the final manual sign-off before the first stable tag.
+> **Project status:** Phase 5B validation candidate. The fixed-step, reference-frame, collision, gameplay, rendering, and release foundations are complete. The current branch adds local water-state sampling, sectional Archimedes support, added mass, compartment flooding, and localized slamming while preserving the existing browser and calibration gates. Representative physical-GPU and touch-device measurements remain part of the final release sign-off.
 
 ## Features
 
 ### Marine simulation
 
-- Procedural Gerstner-wave ocean with matching CPU water sampling.
+- Procedural Gerstner-wave ocean with matching CPU position, normal, orbital-velocity, and acceleration sampling.
 - Deterministic 60 Hz vessel simulation separated from display refresh rate.
 - Interpolated vessel rendering between completed physics states.
 - Seeded simulation-only randomness for repeatable damage and hazard behavior.
 - Six-degree-of-freedom vessel motion with world-space linear and angular velocity.
 - Center-of-mass-correct transform integration and principal-axis inertia.
-- Twelve-point vessel-specific hull lattices for buoyancy and hydrodynamic resistance.
-- Point-applied propeller, rudder, wind, planing, buoyancy, and drag forces.
+- Twelve vessel-specific hydrostatic cells with sectional displaced-volume support and a dynamic center of buoyancy.
+- Body-axis added mass plus linear and quadratic surge, sway, heave, roll, pitch, and yaw damping.
+- Typed flood compartments that add retained water mass, shift the center of mass, reduce reserve buoyancy, and support passive or active pumping.
+- Localized bow, midship, and stern slamming based on water-relative entry velocity, wetting rate, area, and deadrise.
+- Point-applied propeller, rudder, wind, planing, hydrostatic, damping, wave-excitation, and environmental forces.
 - Rapier terrain and obstacle manifolds with compound vessel hull proxies.
 - Off-center collision impulses, bounded penetration correction, contact friction, and impact-driven damage.
 - Typed and calibrated trawler and speedboat configurations.
@@ -60,17 +63,32 @@ An interactive browser-based marine simulation built with Next.js, React Three F
 - Torque is transformed into principal body axes for inertia and damping.
 - Euler's rigid-body equation includes the gyroscopic `ω × Iω` term.
 - An offset center of mass is integrated without making the visual origin orbit during pitch and roll.
-- Contact impulses produce linear and angular changes through configured mass and inertia.
+- Contact impulses produce linear and angular changes through configured physical mass, added mass, inertia, and added inertia.
 - A queued safe-spawn transform allows checkpoint recovery to create a fresh authoritative body without mutating an old simulation in place.
 - Finite-state guards and vessel-specific angular limits prevent one invalid force from poisoning later steps.
 
-`sim/vessels/DistributedHullForces.ts` evaluates water interaction:
+`sim/water/WaterSurface.ts` and `sim/water/GerstnerWater.ts` own the CPU water-state contract:
 
-- Each vessel defines four longitudinal hull stations with port, center, and starboard samples.
-- Every sample follows the complete vessel quaternion and queries the Gerstner surface rendered by the ocean shader.
-- Buoyancy is proportional to local immersion and damped by point velocity.
-- Forward and lateral resistance use local point velocity relative to current, so angular motion naturally creates damping torque.
-- Forces are applied at their real world positions, producing heave, pitch, roll, and yaw rather than assigning visual angles.
+- Every query returns surface position, unit normal, orbital velocity, and acceleration.
+- Horizontal Gerstner displacement is inverted so physics samples the same world-space surface rendered by the ocean shader.
+- Shoreline dampening, winter ice suppression, and whirlpool deformation remain aligned with the GPU surface.
+- Deterministic finite-difference tests verify vertical velocity and normal consistency.
+
+`sim/vessels/SectionalHydrostatics.ts` evaluates hull-water interaction:
+
+- Each vessel defines four longitudinal stations split into port, center, and starboard hydrostatic cells.
+- Local immersion produces displaced volume and Archimedes force instead of a tuned vertical spring.
+- The active cells derive a dynamic center of buoyancy, local water exposure, and average water velocity.
+- Point velocity relative to local orbital water velocity drives heave damping, surge/sway resistance, and wave-excitation loads.
+- Local air-to-water entry produces bounded slamming forces and compartment-specific damage.
+
+`sim/vessels/FloodingModel.ts` owns internal water and loading state:
+
+- Hull impacts and severe slams create deterministic compartment breaches.
+- Retained flood water contributes physical mass, center-of-mass shift, and parallel-axis inertia.
+- Flooded sealed volume loses reserve buoyancy independently by compartment, allowing asymmetric heel and trim.
+- Passive pumps and the stopped-vessel repair control remove water over time rather than instantly restoring global draft.
+- Winter deck loading adds mass above the center of gravity instead of changing draft through a sign-adjusted offset.
 
 `sim/collision/RapierCollisionWorld.ts` owns contact geometry and manifold generation:
 
@@ -90,7 +108,7 @@ An interactive browser-based marine simulation built with Next.js, React Three F
 
 `components/CameraRig.tsx` is the sole camera authority for chase, helm, orbit, and cinematic modes. Vessel rendering no longer contains a competing camera tracker.
 
-Simulation-affecting randomness comes from `sim/core/SeededRandom.ts`, not the browser frame loop. Vessel configuration and hull-force layouts live in `sim/vessels/VesselConfig.ts` rather than being scattered through React components.
+Simulation-affecting randomness comes from `sim/core/SeededRandom.ts`, not the browser frame loop. Vessel geometry, hydrodynamic coefficients, flood compartments, and winter loads live in `sim/vessels/VesselConfig.ts` rather than being scattered through React components.
 
 ## Tech stack
 
@@ -123,9 +141,9 @@ Open `http://localhost:3000`.
 npm run validate
 ```
 
-This runs lint, TypeScript checking, the production build, and the full dependency audit. GitHub Actions additionally runs:
+This runs deterministic physics-correctness tests, lint, TypeScript checking, the production build, and the full dependency audit. GitHub Actions additionally runs:
 
-- deterministic trawler and speedboat calibration;
+- deterministic water-state, hydrostatic, added-mass, flooding, slamming, trawler, and speedboat calibration;
 - desktop, mobile, and Rapier-contact smoke tests;
 - session, navigation, gameplay, onboarding, settings, and persistence flows;
 - Chromium, Firefox, and WebKit production-browser validation;
@@ -167,7 +185,7 @@ Append `?benchmark=1` to enter the responsive physical-release harness. Each Cal
 
 A hidden tab invalidates the run. A second-half FPS drop of 15% or more is flagged for thermal or power-mode review. The latest 24 results are kept locally and can be exported as JSON or copied directly as Markdown rows for `RELEASE_CHECKLIST.md`.
 
-The browser suites validate held keyboard and touch input, finite and bounded vessel state, Rapier contact response, responsive layouts, launch/session actions, navigation values, mission outcomes, onboarding, settings persistence, free-route plotting, checkpoint recovery, scenario-record persistence, cross-browser camera presentation, and the physical benchmark export flow.
+The browser suites validate held keyboard and touch input, finite and bounded vessel state, displaced volume, physical mass, flooding telemetry, center of buoyancy, local water velocity, slam bounds, Rapier contact response, responsive layouts, launch/session actions, navigation values, mission outcomes, onboarding, settings persistence, free-route plotting, checkpoint recovery, scenario-record persistence, cross-browser camera presentation, and the physical benchmark export flow.
 
 ## Release candidate status
 
@@ -191,10 +209,11 @@ Deployment-provider quotas are tracked separately from source-code validation. R
 - `components/`: simulation rendering, product shell, HUD, mission systems, weather, wake, camera, recovery, benchmark, and diagnostics
 - `components/boat/`: vessel audio and visual-damage subsystems
 - `sim/core/`: fixed-step timing, deterministic randomness, six-degree integration, and safe body spawning
-- `sim/vessels/`: typed vessel configuration and distributed marine-force models
+- `sim/water/`: CPU water-state contracts and Gerstner position/normal/velocity/acceleration sampling
+- `sim/vessels/`: typed vessel geometry, sectional hydrostatics, added-mass damping, environmental forces, and compartment flooding
 - `sim/collision/`: Rapier geometry, contact manifolds, and custom-body collision response
 - `sim/scenarios/`: mission definitions plus route/entity/checkpoint water-safety resolution
-- `lib/`: deterministic terrain and water helpers
+- `lib/`: deterministic terrain and general helpers
 - `store/`: simulation controls, product settings, navigation planning, records, telemetry, and shared high-frequency values
 - `scripts/`: smoke, gameplay, onboarding/settings, calibration, cross-browser release, screenshot-integrity, and physical-benchmark probes
 - `.github/workflows/`: source validation, production-browser testing, physics calibration, product flows, and release validation

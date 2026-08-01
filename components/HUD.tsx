@@ -23,6 +23,7 @@ import {
   Sunset,
   Thermometer,
   Wind,
+  Waves,
   Wrench,
   X,
 } from 'lucide-react';
@@ -37,7 +38,7 @@ interface HealthBarProps {
   label: string;
   value: number;
   display: string;
-  tone: 'health' | 'temperature';
+  tone: 'health' | 'temperature' | 'hazard';
 }
 
 function HealthBar({ icon: Icon, label, value, display, tone }: HealthBarProps) {
@@ -49,11 +50,17 @@ function HealthBar({ icon: Icon, label, value, display, tone }: HealthBarProps) 
         : normalized < 100
           ? 'bg-amber-500'
           : 'bg-red-600'
-      : normalized > 50
-        ? 'bg-emerald-400'
-        : normalized > 20
-          ? 'bg-amber-400'
-          : 'bg-red-500';
+      : tone === 'hazard'
+        ? normalized < 20
+          ? 'bg-emerald-400'
+          : normalized < 55
+            ? 'bg-amber-400'
+            : 'bg-red-500'
+        : normalized > 50
+          ? 'bg-emerald-400'
+          : normalized > 20
+            ? 'bg-amber-400'
+            : 'bg-red-500';
 
   return (
     <div>
@@ -284,6 +291,8 @@ export default function HUD() {
       engineHealth: store.engineHealth,
       engineTemperature: store.engineTemperature,
       rudderHealth: store.rudderHealth,
+      floodingRatio: store.floodingRatio,
+      floodedVolumeM3: store.floodedVolumeM3,
       targetTime: store.targetTime,
       targetSeason: store.targetSeason,
       keys: store.keys,
@@ -542,6 +551,13 @@ export default function HUD() {
                 value={state.engineTemperature}
                 display={`${state.engineTemperature.toFixed(0)}°C`}
                 tone="temperature"
+              />
+              <HealthBar
+                icon={Waves}
+                label="Flooding"
+                value={state.floodingRatio * 100}
+                display={`${(state.floodingRatio * 100).toFixed(0)}% · ${state.floodedVolumeM3.toFixed(2)}m³`}
+                tone="hazard"
               />
               <HealthBar
                 icon={Navigation2}
