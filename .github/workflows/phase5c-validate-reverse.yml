@@ -40,11 +40,11 @@ jobs:
 
       - name: Reconstruct and apply reverse-maneuvering fixtures
         run: |
-          echo '73429395ff92cfae1352e470247766fea312f3cb4c7de4c49575ce3172fbdb96  scripts/.phase5c-reverse-patch.b64' | sha256sum --check
+          echo '434a82948703ee8fbf7c1daebc50d9ad8c856922c94f8a68dec0e52aac443e71  scripts/.phase5c-reverse-patch.b64' | sha256sum --check
           base64 --decode scripts/.phase5c-reverse-patch.b64 > "$RUNNER_TEMP/phase5c-reverse.patch.gz"
-          echo '956dde8e7ada119ab991c298fd06c765d43fc4ead293a6cabe065e90a945aeb5  '"$RUNNER_TEMP/phase5c-reverse.patch.gz" | sha256sum --check
+          echo '78362a7c15cca02786b49b7d71aff2dbdb329f8b9d06a0a552345b5399bd6b8e  '"$RUNNER_TEMP/phase5c-reverse.patch.gz" | sha256sum --check
           gzip -dc "$RUNNER_TEMP/phase5c-reverse.patch.gz" > "$RUNNER_TEMP/phase5c-reverse.patch"
-          echo '78cf4ee8ded4282a1a66e81019c4b7454b90a6dd9333a8981feacf2934645504  '"$RUNNER_TEMP/phase5c-reverse.patch" | sha256sum --check
+          echo 'd1eb1a8b93c91c6af21fc1219b1f5de588c187a3eec5d4f9fd29a67296e01e63  '"$RUNNER_TEMP/phase5c-reverse.patch" | sha256sum --check
           git apply --check "$RUNNER_TEMP/phase5c-reverse.patch"
           git apply "$RUNNER_TEMP/phase5c-reverse.patch"
           git diff --check
