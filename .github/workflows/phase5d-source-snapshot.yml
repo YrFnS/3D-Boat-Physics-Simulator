@@ -1,6 +1,11 @@
 name: Phase 5D source snapshot
 
 on:
+  pull_request:
+    branches:
+      - agent/phase-4-release-validation
+    paths:
+      - '.github/workflows/phase5d-source-snapshot.yml'
   push:
     branches:
       - agent/phase-5d-collision-authority
@@ -12,7 +17,7 @@ permissions:
 
 jobs:
   snapshot:
-    if: github.actor != 'github-actions[bot]'
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/phase-5d-collision-authority'
     name: Package exact Phase 5D source
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -33,5 +38,3 @@ jobs:
           path: ${{ runner.temp }}/phase5d-source.tar.gz
           include-hidden-files: true
           retention-days: 1
-
-# Triggered for the Phase 5D implementation snapshot.
