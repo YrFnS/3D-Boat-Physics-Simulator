@@ -48,261 +48,230 @@ jobs:
           python <<'PY'
           from pathlib import Path
 
+          def replace_once(source: str, old: str, new: str, label: str) -> str:
+              count = source.count(old)
+              if count < 1:
+                  raise SystemExit(f'{label}: marker not found')
+              return source.replace(old, new, 1)
+
           collision = Path('sim/collision/RapierCollisionWorld.ts')
           source = collision.read_text(encoding='utf-8')
-
-          old = """    const summary = createEmptySummary();
-              const visitedPairs = new Set<string>();
-          """
-          new = """    const summary = createEmptySummary();
-              let terrainStepImpulseNs = 0;
-              let obstacleStepImpulseNs = 0;
-              const visitedPairs = new Set<string>();
-          """
-          if source.count(old) != 1:
-              raise SystemExit('Expected one collision summary initialization block.')
-          source = source.replace(old, new, 1)
-
-          old = """            let maximumImpactSpeedMps = 0;
-                      let maximumSolvedImpulseNs = 0;
-                      for (let index = 0; index < solverContactCount; index += 1) {
-          """
-          new = """            let maximumImpactSpeedMps = 0;
-                      let manifoldNormalImpulseNs = 0;
-                      let manifoldTangentImpulseXNs = 0;
-                      let manifoldTangentImpulseYNs = 0;
-                      for (let index = 0; index < solverContactCount; index += 1) {
-          """
-          if source.count(old) != 1:
-              raise SystemExit('Expected one solver-contact accumulator block.')
-          source = source.replace(old, new, 1)
-
-          old = """              maximumSolvedImpulseNs = Math.max(
-                          maximumSolvedImpulseNs,
-                          Math.hypot(
-                            normalImpulseNs,
-                            tangentImpulseXNs,
-                            tangentImpulseYNs,
-                          ),
-                        );
-          """
-          new = """              manifoldNormalImpulseNs += normalImpulseNs;
-                        manifoldTangentImpulseXNs += tangentImpulseXNs;
-                        manifoldTangentImpulseYNs += tangentImpulseYNs;
-          """
-          if source.count(old) != 1:
-              raise SystemExit('Expected one point-impulse maximum block.')
-          source = source.replace(old, new, 1)
-
-          marker = """            }
-
-                      // Predictive contacts may not yet have a solver point. Preserve a
-          """
-          replacement = """            }
-
-                      // Rapier distributes one physical contact response across every
-                      // solver point in this manifold. Sum components first so telemetry
-                      // reports the manifold's resultant impulse instead of whichever
-                      // individual point happened to be largest.
-                      const manifoldSolvedImpulseNs = Math.hypot(
-                        manifoldNormalImpulseNs,
-                        manifoldTangentImpulseXNs,
-                        manifoldTangentImpulseYNs,
-                      );
-
-                      // Predictive contacts may not yet have a solver point. Preserve a
-          """
-          if source.count(marker) != 1:
-              raise SystemExit('Expected one predictive-contact insertion point.')
-          source = source.replace(marker, replacement, 1)
-
-          old = """              summary.maxTerrainImpulseNs = Math.max(
-                          summary.maxTerrainImpulseNs,
-                          maximumSolvedImpulseNs,
-                        );
-          """
-          new = """              terrainStepImpulseNs += manifoldSolvedImpulseNs;
-          """
-          if source.count(old) != 1:
-              raise SystemExit('Expected one terrain impulse reporting block.')
-          source = source.replace(old, new, 1)
-
-          old = """              summary.maxObstacleImpulseNs = Math.max(
-                          summary.maxObstacleImpulseNs,
-                          maximumSolvedImpulseNs,
-                        );
-          """
-          new = """              obstacleStepImpulseNs += manifoldSolvedImpulseNs;
-          """
-          if source.count(old) != 1:
-              raise SystemExit('Expected one obstacle impulse reporting block.')
-          source = source.replace(old, new, 1)
-
-          marker = """    const solvedTranslation = vesselBody.translation();
-          """
-          replacement = """    // The summary represents one fixed step. Summing the resultant
-              // impulse from every active hull manifold gives the total impulse Rapier
-              // delivered to the vessel during that step, which is the quantity used by
-              // damage, smoke validation, and calibration envelopes.
-              summary.maxTerrainImpulseNs = terrainStepImpulseNs;
-              summary.maxObstacleImpulseNs = obstacleStepImpulseNs;
-
-              const solvedTranslation = vesselBody.translation();
-          """
-          if source.count(marker) != 1:
-              raise SystemExit('Expected one solved-state insertion point.')
-          collision.write_text(source.replace(marker, replacement, 1), encoding='utf-8')
+          source = replace_once(
+              source,
+              '    const summary = createEmptySummary();\n'
+              '    const visitedPairs = new Set<string>();',
+              '    const summary = createEmptySummary();\n'
+              '    let terrainStepImpulseNs = 0;\n'
+              '    let obstacleStepImpulseNs = 0;\n'
+              '    const visitedPairs = new Set<string>();',
+              'collision summary initialization',
+          )
+          source = replace_once(
+              source,
+              '            let maximumImpactSpeedMps = 0;\n'
+              '            let maximumSolvedImpulseNs = 0;\n'
+              '            for (let index = 0; index < solverContactCount; index += 1) {',
+              '            let maximumImpactSpeedMps = 0;\n'
+              '            let manifoldNormalImpulseNs = 0;\n'
+              '            let manifoldTangentImpulseXNs = 0;\n'
+              '            let manifoldTangentImpulseYNs = 0;\n'
+              '            for (let index = 0; index < solverContactCount; index += 1) {',
+              'solver-contact accumulator initialization',
+          )
+          source = replace_once(
+              source,
+              '              maximumSolvedImpulseNs = Math.max(\n'
+              '                maximumSolvedImpulseNs,\n'
+              '                Math.hypot(\n'
+              '                  normalImpulseNs,\n'
+              '                  tangentImpulseXNs,\n'
+              '                  tangentImpulseYNs,\n'
+              '                ),\n'
+              '              );',
+              '              manifoldNormalImpulseNs += normalImpulseNs;\n'
+              '              manifoldTangentImpulseXNs += tangentImpulseXNs;\n'
+              '              manifoldTangentImpulseYNs += tangentImpulseYNs;',
+              'point impulse maximum',
+          )
+          source = replace_once(
+              source,
+              '            }\n\n'
+              '            // Predictive contacts may not yet have a solver point. Preserve a\n',
+              '            }\n\n'
+              '            // Rapier distributes one physical response across every solver\n'
+              '            // point in a manifold. Sum components first so telemetry reports\n'
+              '            // the manifold resultant instead of one arbitrarily largest point.\n'
+              '            const manifoldSolvedImpulseNs = Math.hypot(\n'
+              '              manifoldNormalImpulseNs,\n'
+              '              manifoldTangentImpulseXNs,\n'
+              '              manifoldTangentImpulseYNs,\n'
+              '            );\n\n'
+              '            // Predictive contacts may not yet have a solver point. Preserve a\n',
+              'manifold impulse insertion',
+          )
+          source = replace_once(
+              source,
+              '              summary.maxTerrainImpulseNs = Math.max(\n'
+              '                summary.maxTerrainImpulseNs,\n'
+              '                maximumSolvedImpulseNs,\n'
+              '              );',
+              '              terrainStepImpulseNs += manifoldSolvedImpulseNs;',
+              'terrain impulse reporting',
+          )
+          source = replace_once(
+              source,
+              '              summary.maxObstacleImpulseNs = Math.max(\n'
+              '                summary.maxObstacleImpulseNs,\n'
+              '                maximumSolvedImpulseNs,\n'
+              '              );',
+              '              obstacleStepImpulseNs += manifoldSolvedImpulseNs;',
+              'obstacle impulse reporting',
+          )
+          source = replace_once(
+              source,
+              '    const solvedTranslation = vesselBody.translation();',
+              '    // The summary represents one fixed step. Add the resultant from every\n'
+              '    // active hull manifold so damage and calibration use the total impulse\n'
+              '    // Rapier delivered to the vessel during that step.\n'
+              '    summary.maxTerrainImpulseNs = terrainStepImpulseNs;\n'
+              '    summary.maxObstacleImpulseNs = obstacleStepImpulseNs;\n\n'
+              '    const solvedTranslation = vesselBody.translation();',
+              'step impulse publication',
+          )
+          collision.write_text(source, encoding='utf-8')
 
           regression = Path('scripts/collision-authority.mjs')
           source = regression.read_text(encoding='utf-8')
-          source = source.replace(
-              'function collectMaximumSolverImpulse(\n',
-              'function collectSolverImpulseForStep(\n',
-              1,
+          source = replace_once(
+              source,
+              '  let maximumImpulseNs = 0;\n'
+              '  let solverContactCount = 0;',
+              '  let totalImpulseNs = 0;\n'
+              '  let maximumPointImpulseNs = 0;\n'
+              '  let solverContactCount = 0;',
+              'regression collector initialization',
           )
-
-          old = """  let maximumImpulseNs = 0;
-            let solverContactCount = 0;
-          """
-          new = """  let totalImpulseNs = 0;
-            let maximumPointImpulseNs = 0;
-            let solverContactCount = 0;
-          """
-          if source.count(old) != 1:
-              raise SystemExit('Expected one regression impulse initialization block.')
-          source = source.replace(old, new, 1)
-
-          old = """      world.contactPair(vesselCollider, otherCollider, (manifold) => {
-                  const count = manifold.numSolverContacts();
-                  solverContactCount += count;
-                  for (let index = 0; index < count; index += 1) {
-                    const normalImpulseNs = manifold.contactImpulse(index);
-                    const tangentImpulseXNs = manifold.contactTangentImpulseX(index);
-                    const tangentImpulseYNs = manifold.contactTangentImpulseY(index);
-                    const impulseNs = Math.hypot(
-                      Number.isFinite(normalImpulseNs) ? normalImpulseNs : 0,
-                      Number.isFinite(tangentImpulseXNs) ? tangentImpulseXNs : 0,
-                      Number.isFinite(tangentImpulseYNs) ? tangentImpulseYNs : 0,
-                    );
-                    maximumImpulseNs = Math.max(maximumImpulseNs, impulseNs);
-                  }
-                });
-          """
-          new = """      world.contactPair(vesselCollider, otherCollider, (manifold) => {
-                  const count = manifold.numSolverContacts();
-                  solverContactCount += count;
-                  let manifoldNormalImpulseNs = 0;
-                  let manifoldTangentImpulseXNs = 0;
-                  let manifoldTangentImpulseYNs = 0;
-                  for (let index = 0; index < count; index += 1) {
-                    const normalImpulseNs = manifold.contactImpulse(index);
-                    const tangentImpulseXNs = manifold.contactTangentImpulseX(index);
-                    const tangentImpulseYNs = manifold.contactTangentImpulseY(index);
-                    const safeNormalImpulseNs = Number.isFinite(normalImpulseNs)
-                      ? Math.abs(normalImpulseNs)
-                      : 0;
-                    const safeTangentImpulseXNs = Number.isFinite(tangentImpulseXNs)
-                      ? tangentImpulseXNs
-                      : 0;
-                    const safeTangentImpulseYNs = Number.isFinite(tangentImpulseYNs)
-                      ? tangentImpulseYNs
-                      : 0;
-                    maximumPointImpulseNs = Math.max(
-                      maximumPointImpulseNs,
-                      Math.hypot(
-                        safeNormalImpulseNs,
-                        safeTangentImpulseXNs,
-                        safeTangentImpulseYNs,
-                      ),
-                    );
-                    manifoldNormalImpulseNs += safeNormalImpulseNs;
-                    manifoldTangentImpulseXNs += safeTangentImpulseXNs;
-                    manifoldTangentImpulseYNs += safeTangentImpulseYNs;
-                  }
-                  totalImpulseNs += Math.hypot(
-                    manifoldNormalImpulseNs,
-                    manifoldTangentImpulseXNs,
-                    manifoldTangentImpulseYNs,
-                  );
-                });
-          """
-          if source.count(old) != 1:
-              raise SystemExit('Expected one regression contact-pair block.')
-          source = source.replace(old, new, 1)
-
-          old = """  return { maximumImpulseNs, solverContactCount };
-          """
-          new = """  return { totalImpulseNs, maximumPointImpulseNs, solverContactCount };
-          """
-          if source.count(old) != 1:
-              raise SystemExit('Expected one regression impulse return block.')
-          source = source.replace(old, new, 1)
-
-          old = """  let maximumImpulseNs = 0;
-            let solverContactCount = 0;
-            for (let step = 0; step < SIMULATION_STEPS; step += 1) {
-              world.step();
-              const contact = collectMaximumSolverImpulse(
-          """
-          new = """  let maximumImpulseNs = 0;
-            let maximumPointImpulseNs = 0;
-            let solverContactCount = 0;
-            for (let step = 0; step < SIMULATION_STEPS; step += 1) {
-              world.step();
-              const contact = collectSolverImpulseForStep(
-          """
-          if source.count(old) != 1:
-              raise SystemExit('Expected one regression simulation loop header.')
-          source = source.replace(old, new, 1)
-
-          old = """    maximumImpulseNs = Math.max(
-                  maximumImpulseNs,
-                  contact.maximumImpulseNs,
-                );
-                solverContactCount += contact.solverContactCount;
-          """
-          new = """    maximumImpulseNs = Math.max(
-                  maximumImpulseNs,
-                  contact.totalImpulseNs,
-                );
-                maximumPointImpulseNs = Math.max(
-                  maximumPointImpulseNs,
-                  contact.maximumPointImpulseNs,
-                );
-                solverContactCount += contact.solverContactCount;
-          """
-          if source.count(old) != 1:
-              raise SystemExit('Expected one regression peak impulse block.')
-          source = source.replace(old, new, 1)
-
-          old = """    maximumImpulseNs,
-                solverContactCount,
-          """
-          new = """    maximumImpulseNs,
-                maximumPointImpulseNs,
-                solverContactCount,
-          """
-          if source.count(old) != 1:
-              raise SystemExit('Expected one regression result impulse block.')
-          source = source.replace(old, new, 1)
-
-          marker = """  assert.ok(
-                result.maximumImpulseNs > 25,
-                `${name} scenario must record a real solver impulse`,
-              );
-          """
-          replacement = """  assert.ok(
-                result.maximumImpulseNs > 25,
-                `${name} scenario must record a real solver impulse`,
-              );
-              assert.ok(
-                result.maximumImpulseNs + 1e-9 >= result.maximumPointImpulseNs,
-                `${name} aggregate impulse must include every solver point`,
-              );
-          """
-          if source.count(marker) != 1:
-              raise SystemExit('Expected one regression impulse assertion block.')
-          regression.write_text(source.replace(marker, replacement, 1), encoding='utf-8')
+          source = replace_once(
+              source,
+              '      world.contactPair(vesselCollider, otherCollider, (manifold) => {\n'
+              '        const count = manifold.numSolverContacts();\n'
+              '        solverContactCount += count;\n'
+              '        for (let index = 0; index < count; index += 1) {\n'
+              '          const normalImpulseNs = manifold.contactImpulse(index);\n'
+              '          const tangentImpulseXNs = manifold.contactTangentImpulseX(index);\n'
+              '          const tangentImpulseYNs = manifold.contactTangentImpulseY(index);\n'
+              '          const impulseNs = Math.hypot(\n'
+              '            Number.isFinite(normalImpulseNs) ? normalImpulseNs : 0,\n'
+              '            Number.isFinite(tangentImpulseXNs) ? tangentImpulseXNs : 0,\n'
+              '            Number.isFinite(tangentImpulseYNs) ? tangentImpulseYNs : 0,\n'
+              '          );\n'
+              '          maximumImpulseNs = Math.max(maximumImpulseNs, impulseNs);\n'
+              '        }\n'
+              '      });',
+              '      world.contactPair(vesselCollider, otherCollider, (manifold) => {\n'
+              '        const count = manifold.numSolverContacts();\n'
+              '        solverContactCount += count;\n'
+              '        let manifoldNormalImpulseNs = 0;\n'
+              '        let manifoldTangentImpulseXNs = 0;\n'
+              '        let manifoldTangentImpulseYNs = 0;\n'
+              '        for (let index = 0; index < count; index += 1) {\n'
+              '          const normalImpulseNs = manifold.contactImpulse(index);\n'
+              '          const tangentImpulseXNs = manifold.contactTangentImpulseX(index);\n'
+              '          const tangentImpulseYNs = manifold.contactTangentImpulseY(index);\n'
+              '          const safeNormalImpulseNs = Number.isFinite(normalImpulseNs)\n'
+              '            ? Math.abs(normalImpulseNs)\n'
+              '            : 0;\n'
+              '          const safeTangentImpulseXNs = Number.isFinite(tangentImpulseXNs)\n'
+              '            ? tangentImpulseXNs\n'
+              '            : 0;\n'
+              '          const safeTangentImpulseYNs = Number.isFinite(tangentImpulseYNs)\n'
+              '            ? tangentImpulseYNs\n'
+              '            : 0;\n'
+              '          maximumPointImpulseNs = Math.max(\n'
+              '            maximumPointImpulseNs,\n'
+              '            Math.hypot(\n'
+              '              safeNormalImpulseNs,\n'
+              '              safeTangentImpulseXNs,\n'
+              '              safeTangentImpulseYNs,\n'
+              '            ),\n'
+              '          );\n'
+              '          manifoldNormalImpulseNs += safeNormalImpulseNs;\n'
+              '          manifoldTangentImpulseXNs += safeTangentImpulseXNs;\n'
+              '          manifoldTangentImpulseYNs += safeTangentImpulseYNs;\n'
+              '        }\n'
+              '        totalImpulseNs += Math.hypot(\n'
+              '          manifoldNormalImpulseNs,\n'
+              '          manifoldTangentImpulseXNs,\n'
+              '          manifoldTangentImpulseYNs,\n'
+              '        );\n'
+              '      });',
+              'regression contact aggregation',
+          )
+          source = replace_once(
+              source,
+              '  return { maximumImpulseNs, solverContactCount };',
+              '  return { totalImpulseNs, maximumPointImpulseNs, solverContactCount };',
+              'regression collector return',
+          )
+          source = replace_once(
+              source,
+              '  let maximumImpulseNs = 0;\n'
+              '  let solverContactCount = 0;\n'
+              '  for (let step = 0; step < SIMULATION_STEPS; step += 1) {\n'
+              '    world.step();\n'
+              '    const contact = collectMaximumSolverImpulse(',
+              '  let maximumImpulseNs = 0;\n'
+              '  let maximumPointImpulseNs = 0;\n'
+              '  let solverContactCount = 0;\n'
+              '  for (let step = 0; step < SIMULATION_STEPS; step += 1) {\n'
+              '    world.step();\n'
+              '    const contact = collectMaximumSolverImpulse(',
+              'regression simulation loop',
+          )
+          source = replace_once(
+              source,
+              '    maximumImpulseNs = Math.max(\n'
+              '      maximumImpulseNs,\n'
+              '      contact.maximumImpulseNs,\n'
+              '    );\n'
+              '    solverContactCount += contact.solverContactCount;',
+              '    maximumImpulseNs = Math.max(\n'
+              '      maximumImpulseNs,\n'
+              '      contact.totalImpulseNs,\n'
+              '    );\n'
+              '    maximumPointImpulseNs = Math.max(\n'
+              '      maximumPointImpulseNs,\n'
+              '      contact.maximumPointImpulseNs,\n'
+              '    );\n'
+              '    solverContactCount += contact.solverContactCount;',
+              'regression peak impulse tracking',
+          )
+          source = replace_once(
+              source,
+              '    maximumImpulseNs,\n'
+              '    solverContactCount,',
+              '    maximumImpulseNs,\n'
+              '    maximumPointImpulseNs,\n'
+              '    solverContactCount,',
+              'regression result publication',
+          )
+          source = replace_once(
+              source,
+              '  assert.ok(\n'
+              '    result.maximumImpulseNs > 25,\n'
+              '    `${name} scenario must record a real solver impulse`,\n'
+              '  );',
+              '  assert.ok(\n'
+              '    result.maximumImpulseNs > 25,\n'
+              '    `${name} scenario must record a real solver impulse`,\n'
+              '  );\n'
+              '  assert.ok(\n'
+              '    result.maximumImpulseNs + 1e-9 >= result.maximumPointImpulseNs,\n'
+              '    `${name} aggregate impulse must include every solver point`,\n'
+              '  );',
+              'regression aggregate assertion',
+          )
+          regression.write_text(source, encoding='utf-8')
           PY
           git diff --check
 
