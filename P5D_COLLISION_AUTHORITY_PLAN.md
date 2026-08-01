@@ -42,27 +42,29 @@ This preserves the existing hydrodynamic equations while replacing the custom co
 
 - [ ] Verify bow, stern, side, grounding, glancing, and head-on response use effective angular mass.
 - [x] Keep friction bounded by Rapier material coefficients rather than independent hand-tuned impulse caps.
-- [ ] Ensure contact outcome no longer depends on vessel-collider iteration order.
+- [x] Ensure contact outcome no longer depends on vessel-collider iteration order within the deterministic test tolerance.
 - [ ] Keep residual overlap bounded without directly translating the custom body.
 - [ ] Preserve damage and flooding decisions using measured closing speed and solved impulse.
 
 ### Validation
 
 - [x] Add no-contact trajectory parity tests.
-- [ ] Add off-center impulse and angular-response tests.
-- [ ] Add contact-order invariance coverage.
-- [ ] Add momentum/energy sanity bounds for glancing and head-on fixtures.
+- [x] Add off-center impulse and angular-response tests.
+- [x] Add contact-order invariance coverage.
+- [x] Add momentum and kinetic-energy sanity bounds for direct and glancing contacts.
 - [ ] Preserve all 20 vessel calibration scenarios.
 - [ ] Preserve desktop, mobile, product-experience, and Chromium/Firefox/WebKit release gates.
 - [ ] Record before/after collision metrics and any deliberate envelope changes.
 
 ## Current checkpoint
 
-The first dynamic-authority implementation is published at `040b8ba332d4a9cc6a7a4e8e4dfaae824a2bcfae`.
+The cleaned dynamic-authority implementation is published through `203f77262bf870ed6319ae6ee449df2631ce2076`. The present documentation commit is the exact-head trigger for the permanent repository matrix.
 
-The custom rigid body now performs the anisotropic marine velocity update without advancing pose. Rapier receives that state on an explicit-mass dynamic body, advances the pose once, solves its complete contact set, and returns the authoritative transform and velocities. The previous single-contact normal impulse, independent friction impulse, shared impulse budget, and direct position correction have been removed.
+The custom rigid body performs the anisotropic marine velocity update without advancing pose. Rapier receives that state on an explicit-mass dynamic body, advances the pose once, resolves its complete contact set, and returns the authoritative transform and velocities. The previous single-contact normal impulse, independent friction impulse, shared impulse budget, and direct position correction have been removed.
 
-The implementation passed deterministic physics regressions, zero-warning lint, TypeScript checking, the production build, dependency audit, and patch-hygiene checks before publication. The permanent 20-scenario vessel, visual, product, and cross-browser matrices are now the active gate for contact calibration and robustness work.
+`npm run test:physics` now combines the existing marine regressions with a dedicated Rapier collision-authority suite. The new suite validates actual solver impulses, off-center rotation, inertia-sensitive angular response, compound-collider order invariance, bounded residual penetration, and non-increasing kinetic energy within defined solver tolerance. Physics regressions, zero-warning lint, TypeScript checking, the production build, dependency audit, and source-invariant checks passed before the branch cleanup. No one-use workflow or encoded transfer payload remains in the PR.
+
+The permanent 20-scenario vessel, visual smoke, product experience, and cross-browser release matrices are now the active gate before the remaining contact-quality items are marked complete.
 
 ## Implementation sequence
 
@@ -80,7 +82,7 @@ Measure actual solver impulses across every contact, validate off-center impacts
 
 ### 5D.4 — Calibration and release validation
 
-Run the complete permanent matrix, document measured changes, remove temporary tooling, promote the PR, and merge only after exact-head sign-off.
+Run the complete permanent matrix, document measured changes, promote the PR, and merge only after exact-head sign-off.
 
 ## Exit criteria
 
