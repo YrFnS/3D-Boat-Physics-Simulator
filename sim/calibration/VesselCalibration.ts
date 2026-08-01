@@ -13,8 +13,10 @@ export const CALIBRATION_SCENARIOS = [
   'rest',
   'stability',
   'speed',
+  'reverse-speed',
   'stop',
   'turn',
+  'reverse-turn',
 ] as const;
 
 export type CalibrationScenario = (typeof CALIBRATION_SCENARIOS)[number];
@@ -52,6 +54,15 @@ interface SpeedTargets {
   maximumPitchDeg: number;
 }
 
+interface ReverseSpeedTargets {
+  steadyAsternSpeedMps: NumericRange;
+  maximumAsternSpeedMaxMps: number;
+  timeToMinimumAsternMaxSeconds: number;
+  maximumWrongWayForwardSpeedMps: number;
+  maximumRollDeg: number;
+  maximumPitchDeg: number;
+}
+
 interface StopTargets {
   cutoffSpeedMps: NumericRange;
   stoppingTimeSeconds: NumericRange;
@@ -66,18 +77,29 @@ interface TurnTargets {
   maximumRollDeg: number;
 }
 
+interface ReverseTurnTargets {
+  entryAsternSpeedMps: NumericRange;
+  headingChangeMinDeg: number;
+  turnRadiusM: NumericRange;
+  maximumRollDeg: number;
+  maximumPitchDeg: number;
+}
+
 export interface VesselCalibrationTargets {
   rest: RestTargets;
   stability: StabilityTargets;
   speed: SpeedTargets;
+  'reverse-speed': ReverseSpeedTargets;
   stop: StopTargets;
   turn: TurnTargets;
+  'reverse-turn': ReverseTurnTargets;
 }
 
 export interface CalibrationStepMetrics {
   body: SixDofBody;
   submergedRatio: number;
   speedMps: number;
+  forwardSpeedMps: number;
   headingRadians: number;
   hullHealth: number;
   engineHealth: number;
@@ -101,19 +123,24 @@ export interface CalibrationResult {
     | RestTargets
     | StabilityTargets
     | SpeedTargets
+    | ReverseSpeedTargets
     | StopTargets
-    | TurnTargets;
+    | TurnTargets
+    | ReverseTurnTargets;
 }
 
 const FLAT_WATER_HEIGHT_M = -1;
 const INITIAL_ROLL_DEG = 12;
 const REST_SAMPLE_START_SECONDS = 10;
 const SPEED_SAMPLE_START_SECONDS = 19;
+const REVERSE_SPEED_SAMPLE_START_SECONDS = 19;
 const STOP_CUTOFF_SECONDS = 14;
 const TURN_START_SECONDS = 12;
+const REVERSE_TURN_START_SECONDS = 12;
 const STOP_SPEED_THRESHOLD_MPS = 0.5;
 const STABILITY_RECOVERY_ROLL_DEG = 2;
 const TURN_MEASUREMENT_RADIANS = Math.PI;
+const REVERSE_TURN_MEASUREMENT_RADIANS = Math.PI / 2;
 const STEPS_PER_RENDER_FRAME = 240;
 
 export const VESSEL_CALIBRATION_TARGETS: Readonly<
@@ -140,6 +167,14 @@ export const VESSEL_CALIBRATION_TARGETS: Readonly<
       maximumRollDeg: 10,
       maximumPitchDeg: 12,
     },
+    'reverse-speed': {
+      steadyAsternSpeedMps: { min: 4, max: 10 },
+      maximumAsternSpeedMaxMps: 12,
+      timeToMinimumAsternMaxSeconds: 20,
+      maximumWrongWayForwardSpeedMps: 0.75,
+      maximumRollDeg: 12,
+      maximumPitchDeg: 15,
+    },
     stop: {
       cutoffSpeedMps: { min: 8, max: 19 },
       stoppingTimeSeconds: { min: 1.5, max: 18 },
@@ -151,6 +186,13 @@ export const VESSEL_CALIBRATION_TARGETS: Readonly<
       headingChangeMinDeg: 100,
       turnRadiusM: { min: 3, max: 24 },
       maximumRollDeg: 24,
+    },
+    'reverse-turn': {
+      entryAsternSpeedMps: { min: 3, max: 10 },
+      headingChangeMinDeg: 70,
+      turnRadiusM: { min: 3, max: 35 },
+      maximumRollDeg: 24,
+      maximumPitchDeg: 18,
     },
   },
   speedboat: {
@@ -174,6 +216,14 @@ export const VESSEL_CALIBRATION_TARGETS: Readonly<
       maximumRollDeg: 25,
       maximumPitchDeg: 35,
     },
+    'reverse-speed': {
+      steadyAsternSpeedMps: { min: 6, max: 16 },
+      maximumAsternSpeedMaxMps: 20,
+      timeToMinimumAsternMaxSeconds: 20,
+      maximumWrongWayForwardSpeedMps: 1,
+      maximumRollDeg: 25,
+      maximumPitchDeg: 35,
+    },
     stop: {
       cutoffSpeedMps: { min: 15, max: 37 },
       stoppingTimeSeconds: { min: 1.5, max: 20 },
@@ -185,6 +235,13 @@ export const VESSEL_CALIBRATION_TARGETS: Readonly<
       headingChangeMinDeg: 110,
       turnRadiusM: { min: 4, max: 34 },
       maximumRollDeg: 30,
+    },
+    'reverse-turn': {
+      entryAsternSpeedMps: { min: 5, max: 16 },
+      headingChangeMinDeg: 80,
+      turnRadiusM: { min: 4, max: 45 },
+      maximumRollDeg: 30,
+      maximumPitchDeg: 40,
     },
   },
 };
@@ -294,6 +351,7 @@ export class VesselCalibrationRunner {
   private readonly restDisplacementError = new RunningStatistics();
   private readonly restFloodingRatio = new RunningStatistics();
   private readonly speedSteady = new RunningStatistics();
+  private readonly reverseSpeedSteady = new RunningStatistics();
 
   private initialized = false;
   private completed = false;
@@ -304,15 +362,20 @@ export class VesselCalibrationRunner {
   private recoveryTimeSeconds: number | null = null;
   private maximumSpeedMps = 0;
   private timeToMinimumCruiseSeconds: number | null = null;
+  private maximumAsternSpeedMps = 0;
+  private maximumWrongWayForwardSpeedMps = 0;
+  private timeToMinimumAsternSeconds: number | null = null;
   private cutoffSpeedMps = 0;
   private stoppingTimeSeconds: number | null = null;
   private stoppingDistanceM = 0;
   private finalSpeedMps = 0;
   private turnEntrySpeedMps = 0;
+  private reverseTurnEntryAsternSpeedMps = 0;
   private turnPathDistanceM = 0;
   private accumulatedHeadingRadians = 0;
   private previousHeadingRadians = 0;
   private maximumTurnRollDeg = 0;
+  private maximumTurnPitchDeg = 0;
   private stopTrackingInitialized = false;
   private turnTrackingInitialized = false;
   private turnMeasurementComplete = false;
@@ -323,7 +386,8 @@ export class VesselCalibrationRunner {
         ? 18
         : request.scenario === 'stability'
           ? 14
-          : request.scenario === 'speed'
+          : request.scenario === 'speed' ||
+            request.scenario === 'reverse-speed'
             ? 24
             : request.scenario === 'stop'
               ? 32
@@ -373,6 +437,9 @@ export class VesselCalibrationRunner {
     if (this.request.scenario === 'speed') {
       return { throttle: 1, steer: 0 };
     }
+    if (this.request.scenario === 'reverse-speed') {
+      return { throttle: -1, steer: 0 };
+    }
     if (this.request.scenario === 'stop') {
       return {
         throttle: timeSeconds < STOP_CUTOFF_SECONDS ? 1 : 0,
@@ -396,6 +463,17 @@ export class VesselCalibrationRunner {
         steer: timeSeconds < TURN_START_SECONDS ? 0 : 1,
       };
     }
+    if (this.request.scenario === 'reverse-turn') {
+      const approachThrottle =
+        this.request.vessel === 'speedboat' ? -0.76 : -0.85;
+      if (this.turnMeasurementComplete) {
+        return { throttle: -0.3, steer: 0 };
+      }
+      return {
+        throttle: approachThrottle,
+        steer: timeSeconds < REVERSE_TURN_START_SECONDS ? 0 : 1,
+      };
+    }
     return { throttle: 0, steer: 0 };
   }
 
@@ -409,6 +487,14 @@ export class VesselCalibrationRunner {
     this.maximumSpeedMps = Math.max(
       this.maximumSpeedMps,
       metrics.speedMps,
+    );
+    this.maximumAsternSpeedMps = Math.max(
+      this.maximumAsternSpeedMps,
+      Math.max(0, -metrics.forwardSpeedMps),
+    );
+    this.maximumWrongWayForwardSpeedMps = Math.max(
+      this.maximumWrongWayForwardSpeedMps,
+      Math.max(0, metrics.forwardSpeedMps),
     );
 
     this.euler.setFromQuaternion(metrics.body.quaternion, 'YXZ');
@@ -460,11 +546,31 @@ export class VesselCalibrationRunner {
         }
         break;
       }
+      case 'reverse-speed': {
+        const asternSpeedMps = Math.max(0, -metrics.forwardSpeedMps);
+        const minimumAsternSpeed =
+          VESSEL_CALIBRATION_TARGETS[this.request.vessel][
+            'reverse-speed'
+          ].steadyAsternSpeedMps.min;
+        if (
+          this.timeToMinimumAsternSeconds === null &&
+          asternSpeedMps >= minimumAsternSpeed
+        ) {
+          this.timeToMinimumAsternSeconds = timeSeconds;
+        }
+        if (timeSeconds >= REVERSE_SPEED_SAMPLE_START_SECONDS) {
+          this.reverseSpeedSteady.push(asternSpeedMps);
+        }
+        break;
+      }
       case 'stop':
         this.recordStop(timeSeconds, metrics);
         break;
       case 'turn':
-        this.recordTurn(timeSeconds, metrics, rollDeg);
+        this.recordTurn(timeSeconds, metrics, rollDeg, pitchDeg, false);
+        break;
+      case 'reverse-turn':
+        this.recordTurn(timeSeconds, metrics, rollDeg, pitchDeg, true);
         break;
     }
 
@@ -516,13 +622,25 @@ export class VesselCalibrationRunner {
     timeSeconds: number,
     metrics: CalibrationStepMetrics,
     rollDeg: number,
+    pitchDeg: number,
+    reverse: boolean,
   ) {
+    const turnStartSeconds = reverse
+      ? REVERSE_TURN_START_SECONDS
+      : TURN_START_SECONDS;
     if (
       !this.turnTrackingInitialized &&
-      timeSeconds >= TURN_START_SECONDS
+      timeSeconds >= turnStartSeconds
     ) {
       this.turnTrackingInitialized = true;
-      this.turnEntrySpeedMps = metrics.speedMps;
+      if (reverse) {
+        this.reverseTurnEntryAsternSpeedMps = Math.max(
+          0,
+          -metrics.forwardSpeedMps,
+        );
+      } else {
+        this.turnEntrySpeedMps = metrics.speedMps;
+      }
       this.previousHeadingRadians = metrics.headingRadians;
       this.previousPosition.copy(metrics.body.position);
     }
@@ -545,9 +663,15 @@ export class VesselCalibrationRunner {
       this.maximumTurnRollDeg,
       Math.abs(rollDeg),
     );
+    this.maximumTurnPitchDeg = Math.max(
+      this.maximumTurnPitchDeg,
+      Math.abs(pitchDeg),
+    );
     if (
       Math.abs(this.accumulatedHeadingRadians) >=
-      TURN_MEASUREMENT_RADIANS
+      (reverse
+        ? REVERSE_TURN_MEASUREMENT_RADIANS
+        : TURN_MEASUREMENT_RADIANS)
     ) {
       this.turnMeasurementComplete = true;
     }
@@ -572,6 +696,7 @@ export class VesselCalibrationRunner {
       finalMetrics.body.angularVelocity.z,
       finalMetrics.submergedRatio,
       finalMetrics.speedMps,
+      finalMetrics.forwardSpeedMps,
       finalMetrics.hullHealth,
       finalMetrics.displacedVolumeM3,
       finalMetrics.physicalMassKg,
@@ -667,6 +792,41 @@ export class VesselCalibrationRunner {
         pitchBounded:
           this.maximumPitchDeg <= speedTargets.maximumPitchDeg,
       };
+    } else if (this.request.scenario === 'reverse-speed') {
+      const reverseSpeedTargets = targets as ReverseSpeedTargets;
+      metrics = {
+        steadyAsternSpeedMps: roundMetric(this.reverseSpeedSteady.mean),
+        maximumAsternSpeedMps: roundMetric(this.maximumAsternSpeedMps),
+        timeToMinimumAsternSeconds: roundMetric(
+          this.timeToMinimumAsternSeconds,
+        ),
+        maximumWrongWayForwardSpeedMps: roundMetric(
+          this.maximumWrongWayForwardSpeedMps,
+        ),
+        maximumRollDeg: roundMetric(this.peakRollDeg),
+        maximumPitchDeg: roundMetric(this.maximumPitchDeg),
+      };
+      checks = {
+        finiteState,
+        steadyAsternSpeedWithinEnvelope: rangeContains(
+          reverseSpeedTargets.steadyAsternSpeedMps,
+          this.reverseSpeedSteady.mean,
+        ),
+        maximumAsternSpeedBounded:
+          this.maximumAsternSpeedMps <=
+          reverseSpeedTargets.maximumAsternSpeedMaxMps,
+        reachedMinimumAsternSpeed:
+          this.timeToMinimumAsternSeconds !== null &&
+          this.timeToMinimumAsternSeconds <=
+            reverseSpeedTargets.timeToMinimumAsternMaxSeconds,
+        wrongWayForwardMotionBounded:
+          this.maximumWrongWayForwardSpeedMps <=
+          reverseSpeedTargets.maximumWrongWayForwardSpeedMps,
+        rollBounded:
+          this.peakRollDeg <= reverseSpeedTargets.maximumRollDeg,
+        pitchBounded:
+          this.maximumPitchDeg <= reverseSpeedTargets.maximumPitchDeg,
+      };
     } else if (this.request.scenario === 'stop') {
       const stopTargets = targets as StopTargets;
       metrics = {
@@ -694,7 +854,7 @@ export class VesselCalibrationRunner {
         finalSpeedBounded:
           this.finalSpeedMps <= stopTargets.finalSpeedMaxMps,
       };
-    } else {
+    } else if (this.request.scenario === 'turn') {
       const turnTargets = targets as TurnTargets;
       const headingChangeDeg = Math.abs(
         MathUtils.radToDeg(this.accumulatedHeadingRadians),
@@ -726,6 +886,45 @@ export class VesselCalibrationRunner {
         rollBounded:
           this.maximumTurnRollDeg <=
           turnTargets.maximumRollDeg,
+      };
+    } else {
+      const reverseTurnTargets = targets as ReverseTurnTargets;
+      const headingChangeDeg = Math.abs(
+        MathUtils.radToDeg(this.accumulatedHeadingRadians),
+      );
+      const turnRadiusM =
+        Math.abs(this.accumulatedHeadingRadians) > 0.1
+          ? this.turnPathDistanceM /
+            Math.abs(this.accumulatedHeadingRadians)
+          : Number.NaN;
+      metrics = {
+        entryAsternSpeedMps: roundMetric(
+          this.reverseTurnEntryAsternSpeedMps,
+        ),
+        headingChangeDeg: roundMetric(headingChangeDeg),
+        pathDistanceM: roundMetric(this.turnPathDistanceM),
+        turnRadiusM: roundMetric(turnRadiusM),
+        maximumRollDeg: roundMetric(this.maximumTurnRollDeg),
+        maximumPitchDeg: roundMetric(this.maximumTurnPitchDeg),
+      };
+      checks = {
+        finiteState,
+        asternEntrySpeedWithinEnvelope: rangeContains(
+          reverseTurnTargets.entryAsternSpeedMps,
+          this.reverseTurnEntryAsternSpeedMps,
+        ),
+        headingChangeReached:
+          headingChangeDeg >= reverseTurnTargets.headingChangeMinDeg,
+        turnRadiusWithinEnvelope: rangeContains(
+          reverseTurnTargets.turnRadiusM,
+          turnRadiusM,
+        ),
+        rollBounded:
+          this.maximumTurnRollDeg <=
+          reverseTurnTargets.maximumRollDeg,
+        pitchBounded:
+          this.maximumTurnPitchDeg <=
+          reverseTurnTargets.maximumPitchDeg,
       };
     }
 

@@ -1028,6 +1028,7 @@ export default function Boat() {
       body,
       submergedRatio,
       speedMps: speed2D,
+      forwardSpeedMps: vRelForward,
       headingRadians: MathUtils.degToRad(headingDeg),
       hullHealth: hullHealth.current,
       engineHealth: engineHealth.current,
