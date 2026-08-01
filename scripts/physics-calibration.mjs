@@ -9,6 +9,10 @@ import {
   evaluateReferenceVesselConfigurations,
   REFERENCE_VESSEL_CONFIGURATIONS,
 } from '../sim/calibration/ReferenceVesselConfigurations.ts';
+import {
+  evaluateReferenceLoadingCases,
+  REFERENCE_LOADING_CASES,
+} from '../sim/calibration/ReferenceLoadingCases.ts';
 import { getVesselConfig } from '../sim/vessels/VesselConfig.ts';
 
 const baseUrl = process.env.CALIBRATION_BASE_URL ?? 'http://127.0.0.1:3000';
@@ -192,6 +196,9 @@ report.physicalCalibration = evaluatePhysicalCalibrationReport(
 report.referenceConfigurations = evaluateReferenceVesselConfigurations(
   REFERENCE_VESSEL_CONFIGURATIONS,
 );
+report.referenceLoadingCases = evaluateReferenceLoadingCases(
+  REFERENCE_LOADING_CASES,
+);
 
 await Promise.all([
   fs.writeFile(
@@ -207,6 +214,11 @@ await Promise.all([
   fs.writeFile(
     path.join(outputDirectory, 'reference-configurations.json'),
     `${JSON.stringify(report.referenceConfigurations, null, 2)}\n`,
+    'utf8',
+  ),
+  fs.writeFile(
+    path.join(outputDirectory, 'reference-loading-cases.json'),
+    `${JSON.stringify(report.referenceLoadingCases, null, 2)}\n`,
     'utf8',
   ),
 ]);

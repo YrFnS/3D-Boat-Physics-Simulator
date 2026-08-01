@@ -259,7 +259,10 @@ export function validateReferenceLoadingCase(loadingCase: ReferenceLoadingCase) 
   }
 
   const missingRequiredFields = loadingCase.requiredFields.filter(
-    (field) => loadingCase.quantities[field]?.value === null,
+    (field) =>
+    (loadingCase.quantities as Readonly<Record<string, LoadingCaseQuantity>>)[
+      field
+    ]?.value === null,
   );
   if (loadingCase.status === 'trial-ready' && missingRequiredFields.length > 0) {
     errors.push(
@@ -279,7 +282,10 @@ export function evaluateReferenceLoadingCase(
   ).length;
   const totalFieldCount = quantities.length;
   const missingRequiredFields = loadingCase.requiredFields.filter(
-    (field) => loadingCase.quantities[field]?.value === null,
+    (field) =>
+    (loadingCase.quantities as Readonly<Record<string, LoadingCaseQuantity>>)[
+      field
+    ]?.value === null,
   );
   const requiredFieldCount = loadingCase.requiredFields.length;
   const knownRequiredFieldCount = requiredFieldCount - missingRequiredFields.length;
