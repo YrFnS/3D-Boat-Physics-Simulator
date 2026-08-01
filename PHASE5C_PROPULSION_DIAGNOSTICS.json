@@ -1,0 +1,440 @@
+{
+  "generatedAt": "2026-08-01T07:46:31.039Z",
+  "baseUrl": "http://127.0.0.1:3000",
+  "probes": [
+    {
+      "vessel": "trawler",
+      "scenario": "speed",
+      "responseStatus": 200,
+      "samples": [
+        {
+          "ready": true,
+          "calibrationReady": false,
+          "calibrationPassed": false,
+          "simulationTime": 7.999999999999977,
+          "speedMps": 3.6699160577585506,
+          "boatY": -0.5035942377759973,
+          "submergedRatio": 0.8177321058330007,
+          "engineRpm": 4860,
+          "shaftRpm": 2025,
+          "deliveredShaftPowerKw": 127.96055999999999,
+          "absorbedShaftPowerKw": 61.275236646742265,
+          "propellerThrustN": 2038.17086999213,
+          "advanceRatio": 0.1371116689894262,
+          "loadRatio": 0.47886033514344006,
+          "cavitationFactor": 0.8086817387709185,
+          "ventilationFactor": 0.08,
+          "propWashSpeedMps": 3.115713904159205,
+          "rudderAngleDeg": 0,
+          "rudderForceN": 43.37064279331901,
+          "rudderFlowSpeedMps": 5.911675074716725,
+          "rudderAngleOfAttackDeg": 0.4680869310104923,
+          "calibrationResult": ""
+        },
+        {
+          "ready": true,
+          "calibrationReady": false,
+          "calibrationPassed": false,
+          "simulationTime": 16.000000000000373,
+          "speedMps": 3.795470298492767,
+          "boatY": -0.5034066671201165,
+          "submergedRatio": 0.8177134694166563,
+          "engineRpm": 4860,
+          "shaftRpm": 2025,
+          "deliveredShaftPowerKw": 127.96055999999999,
+          "absorbedShaftPowerKw": 61.12843014597081,
+          "propellerThrustN": 2032.068557300892,
+          "advanceRatio": 0.14163324264312485,
+          "loadRatio": 0.477713055850731,
+          "cavitationFactor": 0.8086817387709185,
+          "ventilationFactor": 0.08,
+          "propWashSpeedMps": 3.1110461617564966,
+          "rudderAngleDeg": 0,
+          "rudderForceN": 82.5599141118818,
+          "rudderFlowSpeedMps": 6.034478900712929,
+          "rudderAngleOfAttackDeg": 2.4314090986615513,
+          "calibrationResult": ""
+        },
+        {
+          "ready": true,
+          "calibrationReady": true,
+          "calibrationPassed": false,
+          "simulationTime": 24.016666666666584,
+          "speedMps": 3.7269240845551472,
+          "boatY": -0.5030915941598337,
+          "submergedRatio": 0.8177171420494161,
+          "engineRpm": 4860,
+          "shaftRpm": 2025,
+          "deliveredShaftPowerKw": 127.96055999999999,
+          "absorbedShaftPowerKw": 61.23685973890299,
+          "propellerThrustN": 2036.575567910746,
+          "advanceRatio": 0.13829440843768148,
+          "loadRatio": 0.4785604231405599,
+          "cavitationFactor": 0.8086817387709185,
+          "ventilationFactor": 0.08,
+          "propWashSpeedMps": 3.1144943111531522,
+          "rudderAngleDeg": 0,
+          "rudderForceN": 145.6929907641062,
+          "rudderFlowSpeedMps": 5.964265226595597,
+          "rudderAngleOfAttackDeg": 4.929126847700834,
+          "calibrationResult": "{\"version\":1,\"vessel\":\"trawler\",\"scenario\":\"speed\",\"durationSeconds\":24,\"passed\":false,\"checks\":{\"finiteState\":true,\"steadySpeedWithinEnvelope\":false,\"maximumSpeedBounded\":true,\"reachedMinimumCruise\":false},\"metrics\":{\"steadySpeedMps\":3.74911,\"maximumSpeedMps\":3.80684,\"timeToMinimumCruiseSeconds\":null},\"targets\":{\"steadySpeedMps\":{\"min\":9,\"max\":18},\"maximumSpeedMaxMps\":20,\"timeToMinimumCruiseMaxSeconds\":18}}"
+        }
+      ],
+      "calibrationResult": {
+        "version": 1,
+        "vessel": "trawler",
+        "scenario": "speed",
+        "durationSeconds": 24,
+        "passed": false,
+        "checks": {
+          "finiteState": true,
+          "steadySpeedWithinEnvelope": false,
+          "maximumSpeedBounded": true,
+          "reachedMinimumCruise": false
+        },
+        "metrics": {
+          "steadySpeedMps": 3.74911,
+          "maximumSpeedMps": 3.80684,
+          "timeToMinimumCruiseSeconds": null
+        },
+        "targets": {
+          "steadySpeedMps": {
+            "min": 9,
+            "max": 18
+          },
+          "maximumSpeedMaxMps": 20,
+          "timeToMinimumCruiseMaxSeconds": 18
+        }
+      }
+    },
+    {
+      "vessel": "trawler",
+      "scenario": "turn",
+      "responseStatus": 200,
+      "samples": [
+        {
+          "ready": true,
+          "calibrationReady": false,
+          "calibrationPassed": false,
+          "simulationTime": 7.999999999999977,
+          "speedMps": 3.5808072236403063,
+          "boatY": -0.5036266517012334,
+          "submergedRatio": 0.8177318075122864,
+          "engineRpm": 4551.068224474335,
+          "shaftRpm": 1896.2784268643063,
+          "deliveredShaftPowerKw": 107.36608664636003,
+          "absorbedShaftPowerKw": 52.63832446669328,
+          "propellerThrustN": 1960.4727327604362,
+          "advanceRatio": 0.14286408118850333,
+          "loadRatio": 0.49026956379692027,
+          "cavitationFactor": 0.8904334189384132,
+          "ventilationFactor": 0.08,
+          "propWashSpeedMps": 3.0557490146789124,
+          "rudderAngleDeg": 0,
+          "rudderForceN": 41.00317557291008,
+          "rudderFlowSpeedMps": 5.779393036906942,
+          "rudderAngleOfAttackDeg": 0.4083075084425154,
+          "calibrationResult": ""
+        },
+        {
+          "ready": true,
+          "calibrationReady": false,
+          "calibrationPassed": false,
+          "simulationTime": 16.000000000000373,
+          "speedMps": 3.2526363396865396,
+          "boatY": -0.5033367267906648,
+          "submergedRatio": 0.8177052213048994,
+          "engineRpm": 4153.947013315788,
+          "shaftRpm": 1730.8112555482453,
+          "deliveredShaftPowerKw": 91.611256317853,
+          "absorbedShaftPowerKw": 41.86366583292761,
+          "propellerThrustN": 1785.4550338159236,
+          "advanceRatio": 0.141178281424297,
+          "loadRatio": 0.45697076446237217,
+          "cavitationFactor": 0.9723162203691432,
+          "ventilationFactor": 0.08,
+          "propWashSpeedMps": 2.916162599915474,
+          "rudderAngleDeg": 45.836623610465864,
+          "rudderForceN": 292.4531220389545,
+          "rudderFlowSpeedMps": 5.347553125592969,
+          "rudderAngleOfAttackDeg": 50.755298994676174,
+          "calibrationResult": ""
+        },
+        {
+          "ready": true,
+          "calibrationReady": true,
+          "calibrationPassed": false,
+          "simulationTime": 26.01666666666647,
+          "speedMps": 3.1725642450214298,
+          "boatY": -0.5033178642801746,
+          "submergedRatio": 0.8177116343764025,
+          "engineRpm": 4153.947013315788,
+          "shaftRpm": 1730.8112555482453,
+          "deliveredShaftPowerKw": 91.611256317853,
+          "absorbedShaftPowerKw": 41.94209275067122,
+          "propellerThrustN": 1789.6372259949342,
+          "advanceRatio": 0.1376504032416745,
+          "loadRatio": 0.457826848320359,
+          "cavitationFactor": 0.9723162203691432,
+          "ventilationFactor": 0.08,
+          "propWashSpeedMps": 2.9195759647687516,
+          "rudderAngleDeg": 45.836623610465864,
+          "rudderForceN": 283.9072647517797,
+          "rudderFlowSpeedMps": 5.2688426586668475,
+          "rudderAngleOfAttackDeg": 50.7272808849609,
+          "calibrationResult": "{\"version\":1,\"vessel\":\"trawler\",\"scenario\":\"turn\",\"durationSeconds\":26,\"passed\":false,\"checks\":{\"finiteState\":true,\"entrySpeedWithinEnvelope\":false,\"headingChangeReached\":false,\"turnRadiusWithinEnvelope\":false,\"rollBounded\":true},\"metrics\":{\"entrySpeedMps\":3.71815,\"headingChangeDeg\":23.74477,\"pathDistanceM\":45.64156,\"turnRadiusM\":110.13241,\"maximumRollDeg\":0.37679},\"targets\":{\"entrySpeedMps\":{\"min\":7,\"max\":19},\"headingChangeMinDeg\":100,\"turnRadiusM\":{\"min\":3,\"max\":24},\"maximumRollDeg\":24}}"
+        }
+      ],
+      "calibrationResult": {
+        "version": 1,
+        "vessel": "trawler",
+        "scenario": "turn",
+        "durationSeconds": 26,
+        "passed": false,
+        "checks": {
+          "finiteState": true,
+          "entrySpeedWithinEnvelope": false,
+          "headingChangeReached": false,
+          "turnRadiusWithinEnvelope": false,
+          "rollBounded": true
+        },
+        "metrics": {
+          "entrySpeedMps": 3.71815,
+          "headingChangeDeg": 23.74477,
+          "pathDistanceM": 45.64156,
+          "turnRadiusM": 110.13241,
+          "maximumRollDeg": 0.37679
+        },
+        "targets": {
+          "entrySpeedMps": {
+            "min": 7,
+            "max": 19
+          },
+          "headingChangeMinDeg": 100,
+          "turnRadiusM": {
+            "min": 3,
+            "max": 24
+          },
+          "maximumRollDeg": 24
+        }
+      }
+    },
+    {
+      "vessel": "speedboat",
+      "scenario": "speed",
+      "responseStatus": 200,
+      "samples": [
+        {
+          "ready": true,
+          "calibrationReady": false,
+          "calibrationPassed": false,
+          "simulationTime": 3.9999999999999907,
+          "speedMps": 4.11010343567844,
+          "boatY": -0.8286331804637057,
+          "submergedRatio": 0.7977069723865386,
+          "engineRpm": 6923.411361827574,
+          "shaftRpm": 2239.421498470835,
+          "deliveredShaftPowerKw": 291.37771105049404,
+          "absorbedShaftPowerKw": 290.83671735697993,
+          "propellerThrustN": 16051.053417795976,
+          "advanceRatio": -0.06669503767144119,
+          "loadRatio": 0.9981433250622921,
+          "cavitationFactor": 1,
+          "ventilationFactor": 1,
+          "propWashSpeedMps": 13.155842245222653,
+          "rudderAngleDeg": 0,
+          "rudderForceN": 13095.306880144992,
+          "rudderFlowSpeedMps": 11.141276524561894,
+          "rudderAngleOfAttackDeg": 32.22402092034098,
+          "calibrationResult": ""
+        },
+        {
+          "ready": true,
+          "calibrationReady": false,
+          "calibrationPassed": false,
+          "simulationTime": 12.000000000000176,
+          "speedMps": 3.7633129518750597,
+          "boatY": -0.806427715809018,
+          "submergedRatio": 0.7667679589091503,
+          "engineRpm": 6923.57172177697,
+          "shaftRpm": 2241.328664944248,
+          "deliveredShaftPowerKw": 291.3631081900141,
+          "absorbedShaftPowerKw": 290.7768983870582,
+          "propellerThrustN": 16125.010949561218,
+          "advanceRatio": -0.07236422617136049,
+          "loadRatio": 0.9979880438309522,
+          "cavitationFactor": 1,
+          "ventilationFactor": 1,
+          "propWashSpeedMps": 13.186116127915078,
+          "rudderAngleDeg": 0,
+          "rudderForceN": 12832.409885955534,
+          "rudderFlowSpeedMps": 11.0122867650825,
+          "rudderAngleOfAttackDeg": 31.930344265536352,
+          "calibrationResult": ""
+        },
+        {
+          "ready": true,
+          "calibrationReady": true,
+          "calibrationPassed": false,
+          "simulationTime": 24.016666666666584,
+          "speedMps": 3.763303524602258,
+          "boatY": -0.8064278939475793,
+          "submergedRatio": 0.7667714753494593,
+          "engineRpm": 6923.571822927565,
+          "shaftRpm": 2241.3300014283086,
+          "deliveredShaftPowerKw": 291.36309897907546,
+          "absorbedShaftPowerKw": 290.77685771500387,
+          "propellerThrustN": 16125.062631825984,
+          "advanceRatio": -0.07236817838995382,
+          "loadRatio": 0.9979879357882803,
+          "cavitationFactor": 1,
+          "ventilationFactor": 1,
+          "propWashSpeedMps": 13.186137259305346,
+          "rudderAngleDeg": 0,
+          "rudderForceN": 12832.706434387068,
+          "rudderFlowSpeedMps": 11.012223605849508,
+          "rudderAngleOfAttackDeg": 31.930392562878357,
+          "calibrationResult": "{\"version\":1,\"vessel\":\"speedboat\",\"scenario\":\"speed\",\"durationSeconds\":24,\"passed\":false,\"checks\":{\"finiteState\":true,\"steadySpeedWithinEnvelope\":false,\"maximumSpeedBounded\":true,\"reachedMinimumCruise\":false},\"metrics\":{\"steadySpeedMps\":3.7633,\"maximumSpeedMps\":9.64754,\"timeToMinimumCruiseSeconds\":null},\"targets\":{\"steadySpeedMps\":{\"min\":15,\"max\":36},\"maximumSpeedMaxMps\":40,\"timeToMinimumCruiseMaxSeconds\":18}}"
+        }
+      ],
+      "calibrationResult": {
+        "version": 1,
+        "vessel": "speedboat",
+        "scenario": "speed",
+        "durationSeconds": 24,
+        "passed": false,
+        "checks": {
+          "finiteState": true,
+          "steadySpeedWithinEnvelope": false,
+          "maximumSpeedBounded": true,
+          "reachedMinimumCruise": false
+        },
+        "metrics": {
+          "steadySpeedMps": 3.7633,
+          "maximumSpeedMps": 9.64754,
+          "timeToMinimumCruiseSeconds": null
+        },
+        "targets": {
+          "steadySpeedMps": {
+            "min": 15,
+            "max": 36
+          },
+          "maximumSpeedMaxMps": 40,
+          "timeToMinimumCruiseMaxSeconds": 18
+        }
+      }
+    },
+    {
+      "vessel": "speedboat",
+      "scenario": "turn",
+      "responseStatus": 200,
+      "samples": [
+        {
+          "ready": true,
+          "calibrationReady": false,
+          "calibrationPassed": false,
+          "simulationTime": 3.9999999999999907,
+          "speedMps": 2.9130679768043204,
+          "boatY": -0.8624734220018022,
+          "submergedRatio": 0.8404380190623087,
+          "engineRpm": 3742.8018753314896,
+          "shaftRpm": 1333.7108377801733,
+          "deliveredShaftPowerKw": 62.392077646856066,
+          "absorbedShaftPowerKw": 61.67839600923997,
+          "propellerThrustN": 5318.288622371716,
+          "advanceRatio": 0.05857249696686429,
+          "loadRatio": 0.9885613420079454,
+          "cavitationFactor": 1,
+          "ventilationFactor": 1,
+          "propWashSpeedMps": 7.572736377909374,
+          "rudderAngleDeg": 0,
+          "rudderForceN": 3479.0876163082994,
+          "rudderFlowSpeedMps": 7.823250622999276,
+          "rudderAngleOfAttackDeg": 28.059983263597548,
+          "calibrationResult": ""
+        },
+        {
+          "ready": true,
+          "calibrationReady": false,
+          "calibrationPassed": false,
+          "simulationTime": 12.000000000000176,
+          "speedMps": 3.0505384345177937,
+          "boatY": -0.859252364803559,
+          "submergedRatio": 0.8388965533785623,
+          "engineRpm": 3681.5087230556283,
+          "shaftRpm": 1239.4631652041307,
+          "deliveredShaftPowerKw": 50.26519080821778,
+          "absorbedShaftPowerKw": 49.765681203195136,
+          "propellerThrustN": 4622.190062870892,
+          "advanceRatio": 0.04761967740425743,
+          "loadRatio": 0.9900625144957973,
+          "cavitationFactor": 1,
+          "ventilationFactor": 1,
+          "propWashSpeedMps": 7.05977381091322,
+          "rudderAngleDeg": 2.4828171122335676,
+          "rudderForceN": 3515.6984527900986,
+          "rudderFlowSpeedMps": 7.4766561559159515,
+          "rudderAngleOfAttackDeg": 34.86637831823256,
+          "calibrationResult": ""
+        },
+        {
+          "ready": true,
+          "calibrationReady": true,
+          "calibrationPassed": false,
+          "simulationTime": 26.01666666666647,
+          "speedMps": 2.0974168240285915,
+          "boatY": -0.8623571535893443,
+          "submergedRatio": 0.8434705447389056,
+          "engineRpm": 3436.3347143972023,
+          "shaftRpm": 1223.1326522829736,
+          "deliveredShaftPowerKw": 46.917726696764355,
+          "absorbedShaftPowerKw": 45.485199523396545,
+          "propellerThrustN": 4237.868073971008,
+          "advanceRatio": 0.1479694379498733,
+          "loadRatio": 0.9694672509896648,
+          "cavitationFactor": 1,
+          "ventilationFactor": 1,
+          "propWashSpeedMps": 6.7599051691515974,
+          "rudderAngleDeg": 28.64788975654116,
+          "rudderForceN": 3735.936981928042,
+          "rudderFlowSpeedMps": 7.322276975744251,
+          "rudderAngleOfAttackDeg": 41.01508567785839,
+          "calibrationResult": "{\"version\":1,\"vessel\":\"speedboat\",\"scenario\":\"turn\",\"durationSeconds\":26,\"passed\":false,\"checks\":{\"finiteState\":true,\"entrySpeedWithinEnvelope\":false,\"headingChangeReached\":true,\"turnRadiusWithinEnvelope\":true,\"rollBounded\":true},\"metrics\":{\"entrySpeedMps\":3.05054,\"headingChangeDeg\":126.47166,\"pathDistanceM\":29.00511,\"turnRadiusM\":13.14026,\"maximumRollDeg\":0.88162},\"targets\":{\"entrySpeedMps\":{\"min\":14,\"max\":37},\"headingChangeMinDeg\":110,\"turnRadiusM\":{\"min\":4,\"max\":34},\"maximumRollDeg\":30}}"
+        }
+      ],
+      "calibrationResult": {
+        "version": 1,
+        "vessel": "speedboat",
+        "scenario": "turn",
+        "durationSeconds": 26,
+        "passed": false,
+        "checks": {
+          "finiteState": true,
+          "entrySpeedWithinEnvelope": false,
+          "headingChangeReached": true,
+          "turnRadiusWithinEnvelope": true,
+          "rollBounded": true
+        },
+        "metrics": {
+          "entrySpeedMps": 3.05054,
+          "headingChangeDeg": 126.47166,
+          "pathDistanceM": 29.00511,
+          "turnRadiusM": 13.14026,
+          "maximumRollDeg": 0.88162
+        },
+        "targets": {
+          "entrySpeedMps": {
+            "min": 14,
+            "max": 37
+          },
+          "headingChangeMinDeg": 110,
+          "turnRadiusM": {
+            "min": 4,
+            "max": 34
+          },
+          "maximumRollDeg": 30
+        }
+      }
+    }
+  ]
+}
