@@ -7,6 +7,12 @@ on:
     paths:
       - '.github/workflows/phase5d-finalize.yml'
       - 'scripts/.phase5d-finalize-patch/**'
+  pull_request:
+    branches:
+      - agent/phase-4-release-validation
+    paths:
+      - '.github/workflows/phase5d-finalize.yml'
+      - 'scripts/.phase5d-finalize-patch/**'
 
 permissions:
   contents: write
@@ -16,12 +22,12 @@ env:
   NEXT_TELEMETRY_DISABLED: 1
 
 concurrency:
-  group: phase5d-finalize-${{ github.ref }}
-  cancel-in-progress: false
+  group: phase5d-finalize-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   finalize:
-    if: github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]' && (github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/phase-5d-collision-authority')
     name: Harden, validate, and publish collision authority
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -51,11 +57,15 @@ jobs:
           git apply "$RUNNER_TEMP/phase5d-finalize.patch"
           git diff --check
 
-      - name: Remove one-use transfer and snapshot tooling
+      - name: Remove all one-use Phase 5D transfer tooling
         run: |
           rm -rf scripts/.phase5d-patch
           rm -rf scripts/.phase5d-finalize-patch
+          rm -rf scripts/.phase5d-refinement
           rm -f .github/workflows/phase5d-apply.yml
+          rm -f .github/workflows/phase5d-current-snapshot.yml
+          rm -f .github/workflows/phase5d-inspect-staged-patch.yml
+          rm -f .github/workflows/phase5d-publish-refinement.yml
           rm -f .github/workflows/phase5d-review-snapshot.yml
           rm -f .github/workflows/phase5d-source-snapshot.yml
           rm -f .github/workflows/phase5d-finalize.yml
@@ -78,8 +88,13 @@ jobs:
       - name: Dependency audit
         run: npm run audit
 
-      - name: Verify final patch hygiene
-        run: git diff --check
+      - name: Verify collision-authority invariants
+        run: |
+          git diff --check
+          ! grep -R "applyPositionCorrection\|setNextKinematic\|kinematicPositionBased\|remainingNormalImpulseNs" sim components scripts
+          grep -q "RigidBodyDesc.dynamic" sim/collision/RapierCollisionWorld.ts
+          grep -q "importExternalSolverState" sim/collision/RapierCollisionWorld.ts
+          grep -q "collision-authority.mjs" package.json
 
       - name: Commit and push validated robustness work
         run: |
