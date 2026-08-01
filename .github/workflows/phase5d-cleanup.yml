@@ -1,0 +1,40 @@
+name: Clean Phase 5D transfer artifacts
+
+on:
+  push:
+    branches:
+      - agent/phase-5d-collision-authority
+    paths:
+      - '.github/workflows/phase5d-cleanup.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    name: Remove leftover one-use files
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out Phase 5D branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5d-collision-authority
+          fetch-depth: 0
+
+      - name: Remove leftover transfer files
+        run: |
+          rm -f .github/workflows/phase5d-robustness.yml
+          rm -f scripts/.phase5d-robustness.patch.b64
+          rm -f .github/workflows/phase5d-cleanup.yml
+          git diff --check
+
+      - name: Commit clean branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'chore: remove Phase 5D transfer artifacts'
+          git push origin HEAD:agent/phase-5d-collision-authority
