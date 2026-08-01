@@ -112,11 +112,42 @@ This checkpoint proves that the procedural proxies operate in plausible referenc
 
 ### 5E.3 — Hydrostatics and stability calibration
 
-- [ ] Reconcile displacement, draft, waterplane area, center of mass, and center of buoyancy.
-- [ ] Add static heel/righting-moment probes.
-- [ ] Add roll-decay period and damping-ratio probes.
-- [ ] Add pitch-decay and trim-response probes.
-- [ ] Separate source-backed targets from engineering ranges where public manufacturer data is unavailable.
+- [x] Reconcile simulator-model displacement, draft, configured waterplane cells, center of mass, and center of buoyancy.
+- [x] Add static heel and righting-moment probes at ±2°, ±5°, and ±10°.
+- [x] Add nonlinear roll-decay recovery, period, and damping probes.
+- [x] Add nonlinear pitch-decay, equilibrium-trim, period, and damping probes.
+- [x] Separate source-backed vessel targets from engineering-derived simulator evidence.
+- [ ] Replace or supplement engineering-derived envelopes with manufacturer hydrostatic tables, inclining-test data, or full-scale decay trials when traceable data becomes available.
+
+## Validated hydrostatic and stability checkpoint
+
+Commit `e069742244908d5d68b141d1b4920e40815a778b` promotes the permanent hydrostatic evaluator and nonlinear decay probes after the one-use transfer job verified source hashes, ran the complete source test command, linted, typechecked, built the production application, audited dependencies, generated the evidence artifact, and removed its own transfer files.
+
+The evaluator uses the same sectional hydrostatic cells as runtime. It solves heave equilibrium by displaced volume, finds zero-torque roll and pitch equilibrium, samples nonlinear righting moments, derives small-angle stiffness and linearized periods, and then independently integrates a 36-second nonlinear decay response at 120 Hz with the configured linear, quadratic, and body angular damping.
+
+### Static equilibrium
+
+| Vessel | Upright origin Y | Deepest immersed draft | Displaced volume | Balance error |
+|---|---:|---:|---:|---:|
+| Trawler | −0.502082 m | 0.302082 m | 1.463415 m³ | ≤1×10⁻⁹ |
+| Speedboat | −0.874108 m | 0.274108 m | 0.780488 m³ | ≤1×10⁻⁹ |
+
+### Restoring and decay measurements
+
+| Vessel / axis | Equilibrium angle | Stiffness | Linearized damping ratio | Linearized damped period | Measured recovery | Measured period | Measured decay ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Trawler roll | 0.000000° | 15,534.166689 Nm/rad | 0.574799 | 2.734382 s | 0.975000 s | 2.753106 s | 0.579018 |
+| Trawler pitch | −0.534919° | 77,816.185665 Nm/rad | 0.221458 | 1.475349 s | 1.400000 s | 1.471748 s | 0.223263 |
+| Speedboat roll | 0.000000° | 4,457.241172 Nm/rad | 0.946823 | 13.113519 s | 1.958333 s | 13.125259 s | Not resolved after later peaks reached numerical zero |
+| Speedboat pitch | 1.356684° | 29,444.494620 Nm/rad | 0.269584 | 1.674800 s | 1.500000 s | 1.563322 s | 0.264201 |
+
+All sampled offsets produce restoring moments. Roll port/starboard symmetry stays within 5%. Pitch permits a documented 35% fore-aft asymmetry limit because the configured bow, cockpit, and transom stations are intentionally not longitudinally symmetric. The measured trawler and speedboat pitch behavior and trawler roll behavior closely agree with the independently linearized periods and damping ratios. The speedboat roll response is near critically damped: it settles successfully, but later same-sign extrema become too small for a meaningful logarithmic-decrement ratio.
+
+### Evidence boundary
+
+These results are classified `engineering-derived`. They validate the simulator's own hydrostatic geometry, static equilibrium, restoring signs, stiffness, damping configuration, and nonlinear settling behavior. They are not Nordhavn or Axopar hydrostatic tables, inclining experiments, model-basin measurements, or full-scale decay trials. External hydrostatic evidence remains an explicit unresolved data requirement rather than being inferred from passing simulator probes.
+
+The machine-readable report is generated at `artifacts/physics-calibration/hydrostatic-stability.json` and is part of the permanent `npm run test:physics` gate.
 
 ### 5E.4 — Maneuvering and sea-state calibration
 
