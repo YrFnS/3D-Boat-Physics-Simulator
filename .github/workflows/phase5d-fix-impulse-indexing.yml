@@ -1,0 +1,291 @@
+name: Fix Phase 5D contact impulse indexing
+
+on:
+  push:
+    branches:
+      - agent/phase-5d-collision-authority
+    paths:
+      - '.github/workflows/phase5d-fix-impulse-indexing.yml'
+
+permissions:
+  contents: write
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+concurrency:
+  group: phase5d-fix-impulse-indexing-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    name: Correct, calibrate, and publish impulse telemetry
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out Phase 5D branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5d-collision-authority
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Correct geometric-contact impulse indexing
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          collision = Path('sim/collision/RapierCollisionWorld.ts')
+          source = collision.read_text(encoding='utf-8')
+          start = source.index('            let maximumPenetrationM = 0;')
+          end = source.index(
+              '            // Predictive contacts may not yet have a solver point.',
+              start,
+          )
+          replacement = '''            let maximumPenetrationM = 0;
+            let maximumSolvedImpulseNs = 0;
+            for (let index = 0; index < geometricContactCount; index += 1) {
+              const signedDistanceM = manifold.contactDist(index);
+              if (Number.isFinite(signedDistanceM)) {
+                maximumPenetrationM = Math.max(
+                  maximumPenetrationM,
+                  Math.max(0, -signedDistanceM),
+                );
+              }
+
+              // Rapier stores solved impulses on the geometric contacts. The
+              // solver-contact list is separate and is used below only for
+              // world-space contact points and closing-speed diagnostics.
+              const rawNormalImpulseNs = manifold.contactImpulse(index);
+              const rawTangentImpulseXNs =
+                manifold.contactTangentImpulseX(index);
+              const rawTangentImpulseYNs =
+                manifold.contactTangentImpulseY(index);
+              const normalImpulseNs = Number.isFinite(rawNormalImpulseNs)
+                ? Math.abs(rawNormalImpulseNs)
+                : 0;
+              const tangentImpulseXNs = Number.isFinite(
+                rawTangentImpulseXNs,
+              )
+                ? rawTangentImpulseXNs
+                : 0;
+              const tangentImpulseYNs = Number.isFinite(
+                rawTangentImpulseYNs,
+              )
+                ? rawTangentImpulseYNs
+                : 0;
+              maximumSolvedImpulseNs = Math.max(
+                maximumSolvedImpulseNs,
+                Math.hypot(
+                  normalImpulseNs,
+                  tangentImpulseXNs,
+                  tangentImpulseYNs,
+                ),
+              );
+            }
+
+            let maximumImpactSpeedMps = 0;
+            for (let index = 0; index < solverContactCount; index += 1) {
+              const rawPoint = manifold.solverContactPoint(index);
+              this.contactPoint.set(rawPoint.x, rawPoint.y, rawPoint.z);
+              this.pointOffset
+                .copy(this.contactPoint)
+                .sub(this.preStepCenterOfMass);
+              this.pointVelocity
+                .copy(this.preStepAngularVelocity)
+                .cross(this.pointOffset)
+                .add(this.preStepLinearVelocity);
+              maximumImpactSpeedMps = Math.max(
+                maximumImpactSpeedMps,
+                Math.max(0, -this.pointVelocity.dot(this.normal)),
+              );
+            }
+
+'''
+          collision.write_text(source[:start] + replacement + source[end:], encoding='utf-8')
+
+          regression = Path('scripts/collision-authority.mjs')
+          source = regression.read_text(encoding='utf-8')
+          function_start = source.index('function collectMaximumSolverImpulse(')
+          function_end = source.index('function runImpactScenario(', function_start)
+          function = '''function collectMaximumContactImpulse(
+            world,
+            vesselColliders,
+            vesselColliderHandles,
+          ) {
+            let maximumImpulseNs = 0;
+            let geometricContactCount = 0;
+            let solverContactCount = 0;
+
+            for (const vesselCollider of vesselColliders) {
+              world.contactPairsWith(vesselCollider, (otherCollider) => {
+                if (vesselColliderHandles.has(otherCollider.handle)) return;
+                world.contactPair(vesselCollider, otherCollider, (manifold) => {
+                  const contactCount = manifold.numContacts();
+                  const solverCount = manifold.numSolverContacts();
+                  geometricContactCount += contactCount;
+                  solverContactCount += solverCount;
+
+                  // Impulses are attached to geometric contacts. Solver contacts
+                  // expose the reduced point set used by the constraint solver.
+                  for (let index = 0; index < contactCount; index += 1) {
+                    const normalImpulseNs = manifold.contactImpulse(index);
+                    const tangentImpulseXNs =
+                      manifold.contactTangentImpulseX(index);
+                    const tangentImpulseYNs =
+                      manifold.contactTangentImpulseY(index);
+                    const impulseNs = Math.hypot(
+                      Number.isFinite(normalImpulseNs) ? normalImpulseNs : 0,
+                      Number.isFinite(tangentImpulseXNs)
+                        ? tangentImpulseXNs
+                        : 0,
+                      Number.isFinite(tangentImpulseYNs)
+                        ? tangentImpulseYNs
+                        : 0,
+                    );
+                    maximumImpulseNs = Math.max(maximumImpulseNs, impulseNs);
+                  }
+                });
+              });
+            }
+
+            return {
+              maximumImpulseNs,
+              geometricContactCount,
+              solverContactCount,
+            };
+          }
+
+'''
+          source = source[:function_start] + function + source[function_end:]
+          source = source.replace(
+              '    const contact = collectMaximumSolverImpulse(\n',
+              '    const contact = collectMaximumContactImpulse(\n',
+              1,
+          )
+          marker = '''  let maximumImpulseNs = 0;
+            let solverContactCount = 0;
+            for (let step = 0; step < SIMULATION_STEPS; step += 1) {
+          '''
+          replacement = '''  let maximumImpulseNs = 0;
+            let geometricContactCount = 0;
+            let solverContactCount = 0;
+            for (let step = 0; step < SIMULATION_STEPS; step += 1) {
+          '''
+          if source.count(marker) != 1:
+              raise SystemExit('Expected one collision-regression counter block.')
+          source = source.replace(marker, replacement, 1)
+          marker = '''    solverContactCount += contact.solverContactCount;
+            }
+          '''
+          replacement = '''    geometricContactCount += contact.geometricContactCount;
+              solverContactCount += contact.solverContactCount;
+            }
+          '''
+          if source.count(marker) != 1:
+              raise SystemExit('Expected one collision-regression accumulator block.')
+          source = source.replace(marker, replacement, 1)
+          marker = '''    maximumImpulseNs,
+              solverContactCount,
+          '''
+          replacement = '''    maximumImpulseNs,
+              geometricContactCount,
+              solverContactCount,
+          '''
+          if source.count(marker) != 1:
+              raise SystemExit('Expected one collision-regression result block.')
+          source = source.replace(marker, replacement, 1)
+          marker = '''  assert.ok(
+              result.solverContactCount > 0,
+              `${name} scenario must generate solver contacts`,
+            );
+          '''
+          replacement = '''  assert.ok(
+              result.geometricContactCount > 0,
+              `${name} scenario must generate geometric contacts`,
+            );
+            assert.ok(
+              result.solverContactCount > 0,
+              `${name} scenario must generate solver contacts`,
+            );
+          '''
+          if source.count(marker) != 1:
+              raise SystemExit('Expected one collision-regression assertion block.')
+          regression.write_text(source.replace(marker, replacement, 1), encoding='utf-8')
+          PY
+          git diff --check
+
+      - name: Remove this one-use workflow
+        run: rm -f .github/workflows/phase5d-fix-impulse-indexing.yml
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run deterministic physics regressions
+        run: npm run test:physics
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build application
+        run: npm run build
+
+      - name: Dependency audit
+        run: npm run audit
+
+      - name: Install calibration browser without changing lockfile
+        run: |
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Prepare standalone production server
+        run: |
+          if [ -d public ]; then
+            cp -R public .next/standalone/public
+          fi
+          mkdir -p .next/standalone/.next
+          cp -R .next/static .next/standalone/.next/static
+
+      - name: Start production server
+        run: |
+          HOSTNAME=127.0.0.1 PORT=3000 node .next/standalone/server.js > /tmp/phase5d-impulse-server.log 2>&1 &
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:3000/ > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/phase5d-impulse-server.log
+          exit 1
+
+      - name: Run twenty-scenario calibration
+        run: node scripts/physics-calibration.mjs
+
+      - name: Run collision visual smoke
+        run: node scripts/visual-smoke.mjs
+
+      - name: Verify final source invariants
+        run: |
+          git diff --check
+          ! grep -R "numSolverContacts().*contactImpulse\|remainingNormalImpulseNs\|applyPositionCorrection" sim components scripts
+          grep -q "index < geometricContactCount" sim/collision/RapierCollisionWorld.ts
+          grep -q "index < contactCount" scripts/collision-authority.mjs
+
+      - name: Commit and push calibrated correction
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: read Rapier impulses from geometric contacts'
+          git push origin HEAD:agent/phase-5d-collision-authority
