@@ -30,36 +30,52 @@ function kineticEnergyJ(linearVelocity, angularVelocity, inertiaKgM2) {
   );
 }
 
-function collectSolverImpulseForStep(
+function collectMaximumContactImpulse(
   world,
   vesselColliders,
   vesselColliderHandles,
 ) {
-  let totalImpulseNs = 0;
+  let maximumImpulseNs = 0;
+  let geometricContactCount = 0;
   let solverContactCount = 0;
 
   for (const vesselCollider of vesselColliders) {
     world.contactPairsWith(vesselCollider, (otherCollider) => {
       if (vesselColliderHandles.has(otherCollider.handle)) return;
       world.contactPair(vesselCollider, otherCollider, (manifold) => {
-        const count = manifold.numSolverContacts();
-        solverContactCount += count;
-        for (let index = 0; index < count; index += 1) {
+        const contactCount = manifold.numContacts();
+        const solverCount = manifold.numSolverContacts();
+        geometricContactCount += contactCount;
+        solverContactCount += solverCount;
+
+        // Rapier stores solved impulses on geometric contacts. Solver
+        // contacts expose the reduced world-space point set.
+        for (let index = 0; index < contactCount; index += 1) {
           const normalImpulseNs = manifold.contactImpulse(index);
-          const tangentImpulseXNs = manifold.contactTangentImpulseX(index);
-          const tangentImpulseYNs = manifold.contactTangentImpulseY(index);
+          const tangentImpulseXNs =
+            manifold.contactTangentImpulseX(index);
+          const tangentImpulseYNs =
+            manifold.contactTangentImpulseY(index);
           const impulseNs = Math.hypot(
             Number.isFinite(normalImpulseNs) ? normalImpulseNs : 0,
-            Number.isFinite(tangentImpulseXNs) ? tangentImpulseXNs : 0,
-            Number.isFinite(tangentImpulseYNs) ? tangentImpulseYNs : 0,
+            Number.isFinite(tangentImpulseXNs)
+              ? tangentImpulseXNs
+              : 0,
+            Number.isFinite(tangentImpulseYNs)
+              ? tangentImpulseYNs
+              : 0,
           );
-          totalImpulseNs += impulseNs;
+          maximumImpulseNs = Math.max(maximumImpulseNs, impulseNs);
         }
       });
     });
   }
 
-  return { totalImpulseNs, solverContactCount };
+  return {
+    maximumImpulseNs,
+    geometricContactCount,
+    solverContactCount,
+  };
 }
 
 function runImpactScenario({
@@ -128,18 +144,20 @@ function runImpactScenario({
     vesselColliders.map((collider) => collider.handle),
   );
   let maximumImpulseNs = 0;
+  let geometricContactCount = 0;
   let solverContactCount = 0;
   for (let step = 0; step < SIMULATION_STEPS; step += 1) {
     world.step();
-    const contact = collectSolverImpulseForStep(
+    const contact = collectMaximumContactImpulse(
       world,
       vesselColliders,
       vesselColliderHandles,
     );
     maximumImpulseNs = Math.max(
       maximumImpulseNs,
-      contact.totalImpulseNs,
+      contact.maximumImpulseNs,
     );
+    geometricContactCount += contact.geometricContactCount;
     solverContactCount += contact.solverContactCount;
   }
 
@@ -183,6 +201,7 @@ function runImpactScenario({
     },
     angularSpeedRadPerSecond: vectorLength(angularVelocity),
     maximumImpulseNs,
+    geometricContactCount,
     solverContactCount,
     initialEnergyJ,
     finalEnergyJ,
@@ -245,6 +264,10 @@ for (const [name, result] of [
   ['high-inertia', highInertia],
   ['reversed-order', reversedOrder],
 ]) {
+  assert.ok(
+    result.geometricContactCount > 0,
+    `${name} scenario must generate geometric contacts`,
+  );
   assert.ok(
     result.solverContactCount > 0,
     `${name} scenario must generate solver contacts`,

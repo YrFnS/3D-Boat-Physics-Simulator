@@ -383,6 +383,7 @@ export class RapierCollisionWorld {
             }
 
             let maximumPenetrationM = 0;
+            let maximumSolvedImpulseNs = 0;
             for (let index = 0; index < geometricContactCount; index += 1) {
               const signedDistanceM = manifold.contactDist(index);
               if (Number.isFinite(signedDistanceM)) {
@@ -391,28 +392,10 @@ export class RapierCollisionWorld {
                   Math.max(0, -signedDistanceM),
                 );
               }
-            }
 
-            let maximumImpactSpeedMps = 0;
-            let totalSolvedImpulseNs = 0;
-            for (let index = 0; index < solverContactCount; index += 1) {
-              const rawPoint = manifold.solverContactPoint(index);
-              this.contactPoint.set(rawPoint.x, rawPoint.y, rawPoint.z);
-              this.pointOffset
-                .copy(this.contactPoint)
-                .sub(this.preStepCenterOfMass);
-              this.pointVelocity
-                .copy(this.preStepAngularVelocity)
-                .cross(this.pointOffset)
-                .add(this.preStepLinearVelocity);
-              maximumImpactSpeedMps = Math.max(
-                maximumImpactSpeedMps,
-                Math.max(0, -this.pointVelocity.dot(this.normal)),
-              );
-
-              // Impulse accessors are indexed by solver contacts, not by the
-              // geometric contact count. Keep diagnostics finite even if a
-              // future Rapier build omits one tangent component.
+              // Rapier stores solved impulses on the geometric contacts. The
+              // solver-contact list is separate and is used below only for
+              // world-space contact points and closing-speed diagnostics.
               const rawNormalImpulseNs = manifold.contactImpulse(index);
               const rawTangentImpulseXNs =
                 manifold.contactTangentImpulseX(index);
@@ -431,12 +414,30 @@ export class RapierCollisionWorld {
               )
                 ? rawTangentImpulseYNs
                 : 0;
-              // Calibration compares the complete momentum exchange for
-              // this fixed step, not the largest individual contact point.
-              totalSolvedImpulseNs += Math.hypot(
-                normalImpulseNs,
-                tangentImpulseXNs,
-                tangentImpulseYNs,
+              maximumSolvedImpulseNs = Math.max(
+                maximumSolvedImpulseNs,
+                Math.hypot(
+                  normalImpulseNs,
+                  tangentImpulseXNs,
+                  tangentImpulseYNs,
+                ),
+              );
+            }
+
+            let maximumImpactSpeedMps = 0;
+            for (let index = 0; index < solverContactCount; index += 1) {
+              const rawPoint = manifold.solverContactPoint(index);
+              this.contactPoint.set(rawPoint.x, rawPoint.y, rawPoint.z);
+              this.pointOffset
+                .copy(this.contactPoint)
+                .sub(this.preStepCenterOfMass);
+              this.pointVelocity
+                .copy(this.preStepAngularVelocity)
+                .cross(this.pointOffset)
+                .add(this.preStepLinearVelocity);
+              maximumImpactSpeedMps = Math.max(
+                maximumImpactSpeedMps,
+                Math.max(0, -this.pointVelocity.dot(this.normal)),
               );
             }
 
@@ -477,7 +478,10 @@ export class RapierCollisionWorld {
                 summary.maxTerrainImpactSpeedMps,
                 maximumImpactSpeedMps,
               );
-              summary.maxTerrainImpulseNs += totalSolvedImpulseNs;
+              summary.maxTerrainImpulseNs = Math.max(
+                summary.maxTerrainImpulseNs,
+                maximumSolvedImpulseNs,
+              );
             } else {
               summary.obstacleContactCount += reportedContactCount;
               summary.maxObstacleHeadOnFactor = Math.max(
@@ -488,7 +492,10 @@ export class RapierCollisionWorld {
                 summary.maxObstacleImpactSpeedMps,
                 maximumImpactSpeedMps,
               );
-              summary.maxObstacleImpulseNs += totalSolvedImpulseNs;
+              summary.maxObstacleImpulseNs = Math.max(
+                summary.maxObstacleImpulseNs,
+                maximumSolvedImpulseNs,
+              );
               if (isDebugProbe) {
                 summary.debugProbeContactCount += reportedContactCount;
               }
