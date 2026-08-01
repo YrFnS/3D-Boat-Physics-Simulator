@@ -497,11 +497,25 @@ function testPowerLimitedPropulsionAndSignedManeuvering() {
       `${vesselType} ventilation must reduce propeller thrust`,
     );
 
+    const cavitationTestRevolutionsPerSecond =
+      (vessel.propeller.cavitationTipSpeedMps * 1.25) /
+      (Math.PI * vessel.propeller.diameterM);
+    const cavitationDiskAreaM2 =
+      Math.PI * vessel.propeller.diameterM ** 2 * 0.25;
+    const cavitationReferenceDynamicPressurePa =
+      0.5 *
+      vessel.waterDensityKgM3 *
+      vessel.propeller.cavitationReferenceSpeedMps ** 2;
+    const cavitationTestThrustN =
+      cavitationDiskAreaM2 *
+      cavitationReferenceDynamicPressurePa *
+      vessel.propeller.cavitationLoadingThreshold *
+      1.25;
     const cavitating = propellerCavitationFactor(
       vessel.propeller,
       vessel.waterDensityKgM3,
-      Math.abs(ahead.shaftRpm) / 30,
-      vessel.propeller.maximumThrustN * 3,
+      cavitationTestRevolutionsPerSecond,
+      cavitationTestThrustN,
     );
     assert.ok(cavitating < 1);
     assert.ok(cavitating >= vessel.propeller.minimumCavitationFactor);
@@ -585,6 +599,18 @@ function testPowerLimitedPropulsionAndSignedManeuvering() {
       asternRudder,
       -6,
       0,
+    );
+    assert.ok(
+      vessel.rudder.asternAuthorityFactor > 0 &&
+        vessel.rudder.asternAuthorityFactor <= 1,
+      `${vesselType} astern rudder authority must remain physically bounded`,
+    );
+    assert.ok(
+      asternRudder.forceMagnitudeN <=
+        aheadRudder.forceMagnitudeN *
+          vessel.rudder.asternAuthorityFactor *
+          1.001,
+      `${vesselType} astern rudder authority must respect its configured reduction`,
     );
     assert.ok(
       Math.sign(asternComponents.rightN) ===

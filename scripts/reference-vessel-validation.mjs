@@ -109,9 +109,13 @@ for (const vesselType of ['trawler', 'speedboat']) {
   // Phase 5E.1 is an observational baseline. It must detect, rather than hide,
   // the two principal v1 calibration gaps that Phase 5E.2 will retune.
   assert.equal(comparison.withinReferenceSpeedRegime, false);
-  assert.equal(comparison.withinReferenceSpecificPower, false);
+  assert.equal(
+    comparison.withinReferenceSpecificPower,
+    true,
+    `${vesselType} reference-driven rated power must remain inside the official power-to-mass range`,
+  );
   assert.ok(comparison.gaps.includes('maximum-froude-number'));
-  assert.ok(comparison.gaps.includes('specific-power'));
+  assert.ok(!comparison.gaps.includes('specific-power'));
 
   comparisons.push({
     profile,

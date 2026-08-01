@@ -169,7 +169,7 @@ export class RapierCollisionWorld {
         terrain.indices,
         rapier.TriMeshFlags.FIX_INTERNAL_EDGES,
       )
-        .setFriction(0.55)
+        .setFriction(0.18)
         .setRestitution(0.02)
         .setContactSkin(CONTACT_PREDICTION_M)
         .setActiveCollisionTypes(rapier.ActiveCollisionTypes.ALL),
@@ -738,7 +738,7 @@ export class RapierCollisionWorld {
             this.fixturePosition.z,
           )
           .setRotation(this.fixtureRotation)
-          .setFriction(0.82)
+          .setFriction(0.18)
           .setRestitution(0.01)
           .setContactSkin(CONTACT_PREDICTION_M)
           .setActiveCollisionTypes(this.rapier.ActiveCollisionTypes.ALL),
