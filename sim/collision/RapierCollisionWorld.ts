@@ -141,8 +141,12 @@ export class RapierCollisionWorld {
   private readonly normal = new Vector3();
   private readonly separation = new Vector3();
   private readonly contactPoint = new Vector3();
+  private readonly pointOffset = new Vector3();
   private readonly pointVelocity = new Vector3();
-  private readonly vesselCenterOfMass = new Vector3();
+  private readonly preStepCenterOfMass = new Vector3();
+  private readonly preStepLinearVelocity = new Vector3();
+  private readonly preStepAngularVelocity = new Vector3();
+  private readonly preStepForward = new Vector3();
   private readonly centerOfMassLocal = new Vector3();
   private readonly principalInertia = new Vector3();
   private readonly debugProbePosition = new Vector3();
@@ -206,12 +210,29 @@ export class RapierCollisionWorld {
       : vessel.massKg;
     body.getCenterOfMassLocal(this.centerOfMassLocal);
     body.getPrincipalInertia(this.principalInertia);
+    this.principalInertia.set(
+      Number.isFinite(this.principalInertia.x)
+        ? Math.max(1e-6, this.principalInertia.x)
+        : 1,
+      Number.isFinite(this.principalInertia.y)
+        ? Math.max(1e-6, this.principalInertia.y)
+        : 1,
+      Number.isFinite(this.principalInertia.z)
+        ? Math.max(1e-6, this.principalInertia.z)
+        : 1,
+    );
     vesselBody.setAdditionalMassProperties(
       contactMassKg,
       {
-        x: this.centerOfMassLocal.x,
-        y: this.centerOfMassLocal.y,
-        z: this.centerOfMassLocal.z,
+        x: Number.isFinite(this.centerOfMassLocal.x)
+          ? this.centerOfMassLocal.x
+          : 0,
+        y: Number.isFinite(this.centerOfMassLocal.y)
+          ? this.centerOfMassLocal.y
+          : 0,
+        z: Number.isFinite(this.centerOfMassLocal.z)
+          ? this.centerOfMassLocal.z
+          : 0,
       },
       {
         x: this.principalInertia.x,
@@ -223,23 +244,49 @@ export class RapierCollisionWorld {
     );
     vesselBody.resetForces(true);
     vesselBody.resetTorques(true);
-    vesselBody.setTranslation(
-      {
-        x: body.position.x,
-        y: body.position.y,
-        z: body.position.z,
-      },
-      true,
+
+    // The solved Rapier transform was imported after the previous step. Avoid
+    // rewriting an already-synchronized dynamic pose so CCD and contact-cache
+    // history remain continuous. Explicitly resynchronize only after a reset,
+    // teleport, or other external pose change.
+    const currentTranslation = vesselBody.translation();
+    const positionErrorSquared =
+      (currentTranslation.x - body.position.x) ** 2 +
+      (currentTranslation.y - body.position.y) ** 2 +
+      (currentTranslation.z - body.position.z) ** 2;
+    if (!Number.isFinite(positionErrorSquared) || positionErrorSquared > 1e-12) {
+      vesselBody.setTranslation(
+        {
+          x: body.position.x,
+          y: body.position.y,
+          z: body.position.z,
+        },
+        true,
+      );
+    }
+
+    const currentRotation = vesselBody.rotation();
+    const rotationAlignment = Math.abs(
+      currentRotation.x * body.quaternion.x +
+        currentRotation.y * body.quaternion.y +
+        currentRotation.z * body.quaternion.z +
+        currentRotation.w * body.quaternion.w,
     );
-    vesselBody.setRotation(
-      {
-        x: body.quaternion.x,
-        y: body.quaternion.y,
-        z: body.quaternion.z,
-        w: body.quaternion.w,
-      },
-      true,
-    );
+    if (
+      !Number.isFinite(rotationAlignment) ||
+      1 - Math.min(1, rotationAlignment) > 1e-10
+    ) {
+      vesselBody.setRotation(
+        {
+          x: body.quaternion.x,
+          y: body.quaternion.y,
+          z: body.quaternion.z,
+          w: body.quaternion.w,
+        },
+        true,
+      );
+    }
+
     vesselBody.setLinvel(
       {
         x: body.linearVelocity.x,
@@ -256,6 +303,16 @@ export class RapierCollisionWorld {
       },
       true,
     );
+
+    // Capture the unsolved state once. Contact diagnostics must never depend on
+    // manifold iteration order or on velocities already modified by Rapier.
+    body.getWorldCenterOfMass(this.preStepCenterOfMass);
+    this.preStepLinearVelocity.copy(body.linearVelocity);
+    this.preStepAngularVelocity.copy(body.angularVelocity);
+    this.preStepForward
+      .set(0, 0, -1)
+      .applyQuaternion(body.quaternion)
+      .normalize();
 
     this.world.timestep = MathUtils.clamp(deltaSeconds, 1 / 240, 1 / 20);
     this.world.step();
@@ -283,8 +340,9 @@ export class RapierCollisionWorld {
           vesselCollider,
           otherCollider,
           (manifold, flipped) => {
-            const contactCount = manifold.numContacts();
-            if (contactCount <= 0) return;
+            const geometricContactCount = manifold.numContacts();
+            const solverContactCount = manifold.numSolverContacts();
+            if (geometricContactCount <= 0 && solverContactCount <= 0) return;
 
             const isCalibrationFixture =
               otherCollider.handle === this.calibrationFixtureCollider?.handle;
@@ -303,86 +361,143 @@ export class RapierCollisionWorld {
             if (this.normal.lengthSq() <= 1e-8) return;
             this.normal.normalize();
 
-            const solverContactCount = manifold.numSolverContacts();
-            for (let index = 0; index < contactCount; index += 1) {
-              const signedContactDistanceM = manifold.contactDist(index);
-              const penetrationM = Math.max(0, -signedContactDistanceM);
+            // Orient the manifold normal once using the first solver point.
+            // Reorienting it inside the contact loop made diagnostics depend on
+            // contact ordering when one compound hull piece had several points.
+            if (solverContactCount > 0) {
+              const rawPoint = manifold.solverContactPoint(0);
+              this.contactPoint.set(rawPoint.x, rawPoint.y, rawPoint.z);
+            } else {
+              const colliderPosition = vesselCollider.translation();
+              this.contactPoint.set(
+                colliderPosition.x,
+                colliderPosition.y,
+                colliderPosition.z,
+              );
+            }
+            this.separation
+              .copy(this.preStepCenterOfMass)
+              .sub(this.contactPoint);
+            if (this.normal.dot(this.separation) < 0) {
+              this.normal.negate();
+            }
 
-              if (solverContactCount > 0) {
-                const rawPoint = manifold.solverContactPoint(
-                  Math.min(index, solverContactCount - 1),
-                );
-                this.contactPoint.set(rawPoint.x, rawPoint.y, rawPoint.z);
-              } else {
-                const colliderPosition = vesselCollider.translation();
-                this.contactPoint.set(
-                  colliderPosition.x,
-                  colliderPosition.y,
-                  colliderPosition.z,
+            let maximumPenetrationM = 0;
+            for (let index = 0; index < geometricContactCount; index += 1) {
+              const signedDistanceM = manifold.contactDist(index);
+              if (Number.isFinite(signedDistanceM)) {
+                maximumPenetrationM = Math.max(
+                  maximumPenetrationM,
+                  Math.max(0, -signedDistanceM),
                 );
               }
+            }
 
-              body.getWorldCenterOfMass(this.vesselCenterOfMass);
-              this.separation
-                .copy(this.vesselCenterOfMass)
-                .sub(this.contactPoint);
-              if (this.normal.dot(this.separation) < 0) {
-                this.normal.negate();
-              }
-
-              // SixDofBody still contains the pre-solve velocity here, so the
-              // measured closing speed is not contaminated by the response.
-              body.velocityAtPoint(this.contactPoint, this.pointVelocity);
-              const normalSpeedMps = this.pointVelocity.dot(this.normal);
-              const impactSpeedMps = Math.max(0, -normalSpeedMps);
-              const normalImpulseNs = Math.abs(
-                manifold.contactImpulse(index),
-              );
-              const solvedImpulseNs = Math.hypot(
-                normalImpulseNs,
-                manifold.contactTangentImpulseX(index),
-                manifold.contactTangentImpulseY(index),
+            let maximumImpactSpeedMps = 0;
+            let maximumSolvedImpulseNs = 0;
+            for (let index = 0; index < solverContactCount; index += 1) {
+              const rawPoint = manifold.solverContactPoint(index);
+              this.contactPoint.set(rawPoint.x, rawPoint.y, rawPoint.z);
+              this.pointOffset
+                .copy(this.contactPoint)
+                .sub(this.preStepCenterOfMass);
+              this.pointVelocity
+                .copy(this.preStepAngularVelocity)
+                .cross(this.pointOffset)
+                .add(this.preStepLinearVelocity);
+              maximumImpactSpeedMps = Math.max(
+                maximumImpactSpeedMps,
+                Math.max(0, -this.pointVelocity.dot(this.normal)),
               );
 
-              summary.contactCount += 1;
-              summary.maxPenetrationM = Math.max(
-                summary.maxPenetrationM,
-                penetrationM,
+              // Impulse accessors are indexed by solver contacts, not by the
+              // geometric contact count. Keep diagnostics finite even if a
+              // future Rapier build omits one tangent component.
+              const rawNormalImpulseNs = manifold.contactImpulse(index);
+              const rawTangentImpulseXNs =
+                manifold.contactTangentImpulseX(index);
+              const rawTangentImpulseYNs =
+                manifold.contactTangentImpulseY(index);
+              const normalImpulseNs = Number.isFinite(rawNormalImpulseNs)
+                ? Math.abs(rawNormalImpulseNs)
+                : 0;
+              const tangentImpulseXNs = Number.isFinite(
+                rawTangentImpulseXNs,
+              )
+                ? rawTangentImpulseXNs
+                : 0;
+              const tangentImpulseYNs = Number.isFinite(
+                rawTangentImpulseYNs,
+              )
+                ? rawTangentImpulseYNs
+                : 0;
+              maximumSolvedImpulseNs = Math.max(
+                maximumSolvedImpulseNs,
+                Math.hypot(
+                  normalImpulseNs,
+                  tangentImpulseXNs,
+                  tangentImpulseYNs,
+                ),
               );
-              if (isCalibrationFixture) {
-                summary.fixtureContactCount += 1;
-                summary.fixtureKind = this.calibrationFixtureKind;
-              }
+            }
 
-              if (isTerrain) {
-                summary.terrainContactCount += 1;
-                summary.maxTerrainImpactSpeedMps = Math.max(
-                  summary.maxTerrainImpactSpeedMps,
-                  impactSpeedMps,
-                );
-                summary.maxTerrainImpulseNs = Math.max(
-                  summary.maxTerrainImpulseNs,
-                  solvedImpulseNs,
-                );
-              } else {
-                summary.obstacleContactCount += 1;
-                this.forward
-                  .set(0, 0, -1)
-                  .applyQuaternion(body.quaternion)
-                  .normalize();
-                summary.maxObstacleHeadOnFactor = Math.max(
-                  summary.maxObstacleHeadOnFactor,
-                  Math.abs(this.normal.dot(this.forward)),
-                );
-                summary.maxObstacleImpactSpeedMps = Math.max(
-                  summary.maxObstacleImpactSpeedMps,
-                  impactSpeedMps,
-                );
-                summary.maxObstacleImpulseNs = Math.max(
-                  summary.maxObstacleImpulseNs,
-                  solvedImpulseNs,
-                );
-                if (isDebugProbe) summary.debugProbeContactCount += 1;
+            // Predictive contacts may not yet have a solver point. Preserve a
+            // closing-speed diagnostic without inventing an impulse.
+            if (solverContactCount <= 0) {
+              this.pointOffset
+                .copy(this.contactPoint)
+                .sub(this.preStepCenterOfMass);
+              this.pointVelocity
+                .copy(this.preStepAngularVelocity)
+                .cross(this.pointOffset)
+                .add(this.preStepLinearVelocity);
+              maximumImpactSpeedMps = Math.max(
+                0,
+                -this.pointVelocity.dot(this.normal),
+              );
+            }
+
+            const reportedContactCount = Math.max(
+              1,
+              geometricContactCount,
+              solverContactCount,
+            );
+            summary.contactCount += reportedContactCount;
+            summary.maxPenetrationM = Math.max(
+              summary.maxPenetrationM,
+              maximumPenetrationM,
+            );
+            if (isCalibrationFixture) {
+              summary.fixtureContactCount += reportedContactCount;
+              summary.fixtureKind = this.calibrationFixtureKind;
+            }
+
+            if (isTerrain) {
+              summary.terrainContactCount += reportedContactCount;
+              summary.maxTerrainImpactSpeedMps = Math.max(
+                summary.maxTerrainImpactSpeedMps,
+                maximumImpactSpeedMps,
+              );
+              summary.maxTerrainImpulseNs = Math.max(
+                summary.maxTerrainImpulseNs,
+                maximumSolvedImpulseNs,
+              );
+            } else {
+              summary.obstacleContactCount += reportedContactCount;
+              summary.maxObstacleHeadOnFactor = Math.max(
+                summary.maxObstacleHeadOnFactor,
+                Math.abs(this.normal.dot(this.preStepForward)),
+              );
+              summary.maxObstacleImpactSpeedMps = Math.max(
+                summary.maxObstacleImpactSpeedMps,
+                maximumImpactSpeedMps,
+              );
+              summary.maxObstacleImpulseNs = Math.max(
+                summary.maxObstacleImpulseNs,
+                maximumSolvedImpulseNs,
+              );
+              if (isDebugProbe) {
+                summary.debugProbeContactCount += reportedContactCount;
               }
             }
           },
