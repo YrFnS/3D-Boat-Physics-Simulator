@@ -17,7 +17,8 @@ Phase 5E introduces an evidence-first calibration layer so a metric can only be 
 5. **Separate method references from vessel evidence.** A manoeuvring standard can define how to measure a turn without proving the correct target for a small craft.
 6. **Tune bounded parameter groups, not isolated constants.** Any later optimizer must preserve physical signs, limits, and cross-scenario behavior.
 7. **Report coverage as well as score.** Missing evidence must remain visible instead of being silently ignored.
-8. **Do not mutate the v1 vessels in place.** Evidence-oriented reference configurations will be separate from the stable gameplay configurations.
+8. **Do not mutate the v1 vessels in place.** Evidence-oriented reference configurations remain separate from the stable gameplay configurations.
+9. **Do not merge model-year data silently.** Conflicting current-product and historical owner-manual quantities remain separate loading or configuration records.
 
 ## Reference methodology
 
@@ -47,9 +48,12 @@ The framework follows the measurement and traceability principles used by recogn
 - [x] Record manufacturer-published length, beam, weight, draft, power, hull type, and available speed quantities.
 - [x] Store original source identifiers, access dates, evidence class, confidence, uncertainty notes, and normalized machine-readable profiles.
 - [x] Compare external quantities with deterministic measurements of the current v1 vessel configurations.
-- [x] Reject evidence-backed and certified status while required vessel or trial evidence is missing.
-- [ ] Acquire matched loading condition, engine mass, fuel, payload, trim, and water-density data.
-- [ ] Acquire center-of-gravity, gearbox, propeller, rudder, and shaft-arrangement data.
+- [x] Add evidence-oriented reference configuration records with all important unknown fields represented explicitly.
+- [x] Add a Tomboy published-capacity case and an Axopar model-year 2021–2023 maximum-load case.
+- [x] Record published hull/lightship mass, engine mass where available, displacement, load, persons, liquids, tank capacity, and draft without inventing missing inventory data.
+- [x] Reject evidence-backed, trial-ready, and certified status while required vessel or trial evidence is missing.
+- [ ] Acquire a matched performance loading condition for each vessel, including engine, fuel, payload, trim, and water density.
+- [ ] Acquire center-of-gravity, gearbox, propeller, steering, and shaft-arrangement data.
 - [ ] Acquire wind, waves, depth, instrumentation, repeatability, and uncertainty for every performance trial.
 - [ ] Replace provisional manufacturer-only profiles with full evidence-backed profiles.
 
@@ -57,7 +61,8 @@ The framework follows the measurement and traceability principles used by recogn
 
 - [x] Add configuration measurements for length, beam, mass, draft, power, propeller diameter, water density, and planing classification.
 - [x] Add quantity-specific manufacturer comparison without allowing missing trials to disappear from coverage.
-- [ ] Add matched static draft and displacement checks against external loading data.
+- [x] Add machine-readable configuration and loading-case completeness reports.
+- [ ] Add matched static draft and displacement checks using a complete loading case with water density, CG, and trim.
 - [ ] Add a Tomboy 26 bollard-pull trial contract and measured simulator trial.
 - [ ] Add an Axopar 22 matched 27-knot cruise-condition trial.
 - [ ] Add roll-decay period, damping ratio, and optional pitch-decay checks.
@@ -69,7 +74,8 @@ The framework follows the measurement and traceability principles used by recogn
 
 ### 5E.4 — Sensitivity and bounded calibration
 
-- [ ] Add separate calibration-only Tomboy 26 and Axopar 22 configuration records.
+- [x] Add separate evidence-oriented Tomboy 26 and Axopar 22 configuration records.
+- [ ] Convert those records into runnable calibration-only `VesselConfig` instances after the required trial inputs are complete.
 - [ ] Compute finite-difference sensitivity of each measured metric to each tunable parameter group.
 - [ ] Identify unobservable and over-coupled parameters before optimization.
 - [ ] Add bounded multi-objective fitting with holdout scenarios.
@@ -82,6 +88,7 @@ The framework follows the measurement and traceability principles used by recogn
 - [x] Support calibration, holdout, and informational target roles.
 - [x] Keep v1 gameplay envelopes and physical-reference results side by side.
 - [x] Document which quantities are manufacturer-published, simulator-measured, estimated, or still missing.
+- [x] Require configuration and loading-case readiness before a reference vessel can enter fitting.
 - [ ] Add independent holdout trials that were not used for fitting.
 - [ ] Publish uncertainty-aware physical scores, residual tables, and residual plots.
 - [ ] Promote a profile to `evidence-backed` only after the required external trial evidence exists.
@@ -101,7 +108,36 @@ The current v1 configurations remain unchanged and all 20 simulator regression s
 
 The Tomboy comparison exposes a vessel-scale, displacement, power, draft, and speed mismatch. The Axopar comparison confirms only the planing classification and that the current speed is below the published 45-knot ceiling; geometry, mass, draft, and power do not match. Missing bollard-pull and matched cruise trials remain visible as unmeasured holdouts.
 
-These results are evidence that separate reference configurations are required. They are not a reason to force the stable v1 gameplay vessels into unrelated manufacturer envelopes.
+### Reference-configuration readiness
+
+| Configuration | Published fields | Published coverage | Matched-trial fields | Trial readiness | Trial ready |
+|---|---:|---:|---:|---:|---:|
+| Tomboy 26 | 9 / 30 | 30.0% | 4 / 15 | 26.7% | No |
+| Axopar 22 Spyder | 13 / 30 | 43.3% | 4 / 15 | 26.7% | No |
+
+Both configurations still lack a matched test displacement, water density, longitudinal and vertical CG, trim, gear ratio, propeller geometry, shaft angle, and steering geometry.
+
+### Published loading-case readiness
+
+| Loading case | Published fields | Published coverage | Static-trial fields | Readiness | Trial ready |
+|---|---:|---:|---:|---:|---:|
+| Tomboy published capacity data | 5 / 14 | 35.7% | 1 / 6 | 16.7% | No |
+| Axopar 22 MY2021–2023 maximum load | 8 / 14 | 57.1% | 2 / 6 | 33.3% | No |
+
+The Axopar owner manual provides a useful maximum-load pair—2,620 kg and 0.95 m draft—plus 1,100 kg hull weight, 261 kg maximum engine weight, 823 kg recommended load, 525 kg persons, 203 kg consumable liquids, and 230 L tank capacity. CG, trim, water density, and the loading used for the published speed claims remain unknown. The current product page and the 2021–2023 manual are preserved as separate source contexts rather than blended.
+
+These results are evidence that separate runnable reference vessels require more data. They are not a reason to force the stable v1 gameplay vessels into unrelated manufacturer envelopes.
+
+## Generated calibration evidence
+
+The physics-calibration artifact now contains:
+
+- `report.json` — original 20-scenario simulator report plus all Phase 5E summaries;
+- `physical-comparison.json` — metric scores, coverage, and certification status;
+- `reference-configurations.json` — published configuration coverage and missing matched-trial inputs;
+- `reference-loading-cases.json` — loading-case coverage, static-trial readiness, and missing fields.
+
+The simulator result remains independent from physical certification. Missing evidence cannot fail the v1 gameplay suite, and a gameplay pass cannot be presented as real-vessel validation.
 
 ## Evidence classes
 
@@ -117,9 +153,9 @@ These results are evidence that separate reference configurations are required. 
 
 ## Current implementation boundary
 
-Phase 5E now includes the scoring foundation and the first traceable manufacturer profiles. It still does **not** retune vessel coefficients or claim full-vessel validation.
+Phase 5E now includes the scoring foundation, traceable manufacturer profiles, evidence-oriented reference configurations, and partial published loading cases. It still does **not** retune vessel coefficients or claim full-vessel validation.
 
-Manufacturer data can support the exact quantities stated by the source, but it does not provide the matched loading, center of gravity, appendage geometry, acceleration curves, stopping trials, turning trials, roll decay, or sea-state response required for a complete calibration. Both selected profiles therefore remain `provisional`, certification-ineligible, and uncertified.
+Manufacturer data can support the exact quantities stated by the source, but it does not provide the matched loading, center of gravity, appendage geometry, acceleration curves, stopping trials, turning trials, roll decay, or sea-state response required for a complete calibration. Both selected profiles therefore remain `provisional`, certification-ineligible, uncertified, and not ready for fitting.
 
 ## Exit criteria
 
