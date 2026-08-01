@@ -47,9 +47,18 @@ jobs:
         run: |
           echo 'd161be7a89f34f87f5d342dac52e0c0d7379d88b89307d95c9f121905836b87e  scripts/.phase5d-refinement/part-00' | sha256sum --check
           echo 'ea68b4dee2136d2f480d0f0838ed936cf4dbb183a946602e6260b82ac6d7afba  scripts/.phase5d-refinement/part-01' | sha256sum --check
-          echo '3048204b10302bf8a5b68fd5873e69b08404d5205e10c6dfa1c15ffd1154b42f  scripts/.phase5d-refinement/part-02' | sha256sum --check
+          echo 'bd9701135b273268522a25baa483da3abb62b6fbbe4e4137b3a0029f3910878c  scripts/.phase5d-refinement/part-02-00' | sha256sum --check
+          echo '2a10015db007ae4593a173618e7e850a2e94a9f778f896b28398b532a09b6cb3  scripts/.phase5d-refinement/part-02-01' | sha256sum --check
+          echo '6260bc5e36c46fefb5dfb2082bc528a07d4726748054110614831f5eb782e4d1  scripts/.phase5d-refinement/part-02-rest' | sha256sum --check
           echo '4d70f25134bf42794a8597b4e19d9ac565d19d0f19e755261f932fbd15723a62  scripts/.phase5d-refinement/part-03' | sha256sum --check
-          cat scripts/.phase5d-refinement/part-* > "$RUNNER_TEMP/phase5d-refinement.tar.gz.b64"
+          cat \
+            scripts/.phase5d-refinement/part-00 \
+            scripts/.phase5d-refinement/part-01 \
+            scripts/.phase5d-refinement/part-02-00 \
+            scripts/.phase5d-refinement/part-02-01 \
+            scripts/.phase5d-refinement/part-02-rest \
+            scripts/.phase5d-refinement/part-03 \
+            > "$RUNNER_TEMP/phase5d-refinement.tar.gz.b64"
           echo '875f2222f11ddb04784dfc48e26a2a5dd71cefe01636521c72e545211f992c54  '"$RUNNER_TEMP/phase5d-refinement.tar.gz.b64" | sha256sum --check
           base64 --decode "$RUNNER_TEMP/phase5d-refinement.tar.gz.b64" > "$RUNNER_TEMP/phase5d-refinement.tar.gz"
           echo 'c375a3982f95f735164917b5bf134944caa258a783c38818d6a59ddf10498cee  '"$RUNNER_TEMP/phase5d-refinement.tar.gz" | sha256sum --check
