@@ -1,9 +1,5 @@
 import type { PhysicalCalibrationMeasurement } from './PhysicalCalibration';
-import {
-  getVesselConfig,
-  type VesselConfig,
-  type VesselType,
-} from '../vessels/VesselConfig.ts';
+import type { VesselConfig } from '../vessels/VesselConfig';
 
 /**
  * Convert the current simulator configuration into a deterministic measurement
@@ -29,9 +25,8 @@ export function createVesselConfigurationMeasurement(
   };
 }
 
-const VESSEL_TYPES: readonly VesselType[] = ['trawler', 'speedboat'];
-
-export const VESSEL_CONFIGURATION_MEASUREMENTS:
-  readonly PhysicalCalibrationMeasurement[] = VESSEL_TYPES.map((type) =>
-    createVesselConfigurationMeasurement(getVesselConfig(type)),
-  );
+export function createVesselConfigurationMeasurements(
+  vessels: readonly VesselConfig[],
+): readonly PhysicalCalibrationMeasurement[] {
+  return vessels.map(createVesselConfigurationMeasurement);
+}
