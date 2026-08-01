@@ -94,29 +94,25 @@ jobs:
 
           boat = Path('components/Boat.tsx')
           source = boat.read_text(encoding='utf-8')
-          old = """    let targetRudder =
-            steerRaw * vessel.rudder.maximumAngleRad * rudderHealthRatio;
+          rudder_start = source.index('    let targetRudder =')
+          rudder_end = source.index('    if (rudderHealth.current', rudder_start)
+          rudder_block = """    // Positive input means port/left in the UI, while positive physical
+          // rudder angle is starboard/right in the body-axis hydrodynamic model.
+          let targetRudder =
+            -steerRaw * vessel.rudder.maximumAngleRad * rudderHealthRatio;
           """
-          new = """    // Positive input means port/left in the UI, while positive physical
-            // rudder angle is starboard/right in the body-axis hydrodynamic model.
-            let targetRudder =
-              -steerRaw * vessel.rudder.maximumAngleRad * rudderHealthRatio;
-          """
-          if source.count(old) != 1:
-              raise SystemExit('Expected one live rudder target.')
-          source = source.replace(old, new, 1)
-          old = """            !calibration &&
-              collisionTestEnabled.current &&
-              Math.abs(thrustRaw) > 0.1,
-          """
-          new = """            !calibration &&
+          source = source[:rudder_start] + rudder_block + source[rudder_end:]
+
+          collision_anchor = source.index('collisionTestEnabled.current')
+          collision_start = source.rfind('            !calibration &&', 0, collision_anchor)
+          collision_end = source.index(',\n', collision_anchor) + 2
+          collision_block = """            !calibration &&
               collisionTestEnabled.current &&
               thrustRaw > 0.1 &&
               vRelForward > 0.35,
           """
-          if source.count(old) != 1:
-              raise SystemExit('Expected one collision-probe enable condition.')
-          boat.write_text(source.replace(old, new, 1), encoding='utf-8')
+          source = source[:collision_start] + collision_block + source[collision_end:]
+          boat.write_text(source, encoding='utf-8')
 
           config = Path('sim/vessels/VesselConfig.ts')
           source = config.read_text(encoding='utf-8')
@@ -145,38 +141,33 @@ jobs:
               '      rudderAngleRad: -vessel.rudder.maximumAngleRad * 0.6,\n',
               2,
           )
-          marker = """    assert.ok(aheadRudder.forceMagnitudeN > 0);
-            assert.ok(aheadComponents.rightN < 0);
+          assertion_start = source.index('    assert.ok(aheadRudder.forceMagnitudeN > 0);')
+          astern_start = source.index('    const asternRudder = computeRudderHydrodynamics({', assertion_start)
+          assertion_block = """    assert.ok(aheadRudder.forceMagnitudeN > 0);
+          assert.ok(aheadComponents.rightN < 0);
 
-            const asternRudder = computeRudderHydrodynamics({
+          const neutralSideslip = computeRudderHydrodynamics({
+            config: vessel.rudder,
+            waterDensityKgM3: vessel.waterDensityKgM3,
+            forwardFlowMps: 6,
+            rightFlowMps: 1.5,
+            rudderAngleRad: 0,
+            submergenceM: vessel.rudder.ventilationFullSubmergenceM,
+            healthRatio: 1,
+          });
+          const neutralSideslipComponents = resolveRudderForceComponents(
+            neutralSideslip,
+            6,
+            1.5,
+          );
+          assert.ok(
+            neutralSideslipComponents.rightN < 0,
+            `${vesselType} neutral rudder must damp starboard sideslip`,
+          );
+
           """
-          replacement = """    assert.ok(aheadRudder.forceMagnitudeN > 0);
-            assert.ok(aheadComponents.rightN < 0);
-
-            const neutralSideslip = computeRudderHydrodynamics({
-              config: vessel.rudder,
-              waterDensityKgM3: vessel.waterDensityKgM3,
-              forwardFlowMps: 6,
-              rightFlowMps: 1.5,
-              rudderAngleRad: 0,
-              submergenceM: vessel.rudder.ventilationFullSubmergenceM,
-              healthRatio: 1,
-            });
-            const neutralSideslipComponents = resolveRudderForceComponents(
-              neutralSideslip,
-              6,
-              1.5,
-            );
-            assert.ok(
-              neutralSideslipComponents.rightN < 0,
-              `${vesselType} neutral rudder must damp starboard sideslip`,
-            );
-
-            const asternRudder = computeRudderHydrodynamics({
-          """
-          if source.count(marker) != 1:
-              raise SystemExit('Expected the rudder regression insertion point.')
-          tests.write_text(source.replace(marker, replacement, 1), encoding='utf-8')
+          source = source[:assertion_start] + assertion_block + source[astern_start:]
+          tests.write_text(source, encoding='utf-8')
           PY
 
       - name: Remove temporary diagnostics and this workflow
