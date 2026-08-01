@@ -70,7 +70,7 @@ jobs:
           config = Path('sim/vessels/VesselConfig.ts')
           config_text = config.read_text(encoding='utf-8')
           old_astern = "      asternAuthorityFactor: 0.78,\n"
-          new_astern = "      asternAuthorityFactor: 0.71,\n"
+          new_astern = "      asternAuthorityFactor: 0.70,\n"
           if config_text.count(old_astern) != 1:
               raise SystemExit('expected one speedboat astern-authority value')
           config.write_text(
