@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from textwrap import dedent
 
@@ -7,6 +8,13 @@ def replace_once(source: str, old: str, new: str, label: str) -> str:
     if count != 1:
         raise SystemExit(f"{label}: expected one match, found {count}.")
     return source.replace(old, new, 1)
+
+
+def substitute_once(source: str, pattern: str, replacement: str, label: str) -> str:
+    updated, count = re.subn(pattern, replacement, source, count=1)
+    if count != 1:
+        raise SystemExit(f"{label}: expected one match, found {count}.")
+    return updated
 
 
 collision = Path("sim/collision/RapierCollisionWorld.ts")
@@ -87,27 +95,19 @@ source = source[:start] + replacement + source[end:]
 source = replace_once(
     source,
     "              summary.maxTerrainImpulseNs += totalSolvedImpulseNs;\n",
-    dedent(
-        """\
-                      summary.maxTerrainImpulseNs = Math.max(
-                        summary.maxTerrainImpulseNs,
-                        maximumSolvedImpulseNs,
-                      );
-        """
-    ),
+    "              summary.maxTerrainImpulseNs = Math.max(\n"
+    "                summary.maxTerrainImpulseNs,\n"
+    "                maximumSolvedImpulseNs,\n"
+    "              );\n",
     "terrain peak impulse reporting",
 )
 source = replace_once(
     source,
     "              summary.maxObstacleImpulseNs += totalSolvedImpulseNs;\n",
-    dedent(
-        """\
-                      summary.maxObstacleImpulseNs = Math.max(
-                        summary.maxObstacleImpulseNs,
-                        maximumSolvedImpulseNs,
-                      );
-        """
-    ),
+    "              summary.maxObstacleImpulseNs = Math.max(\n"
+    "                summary.maxObstacleImpulseNs,\n"
+    "                maximumSolvedImpulseNs,\n"
+    "              );\n",
     "obstacle peak impulse reporting",
 )
 collision.write_text(source, encoding="utf-8")
@@ -175,87 +175,53 @@ source = replace_once(
     "    const contact = collectMaximumContactImpulse(\n",
     "regression collector call",
 )
-source = replace_once(
+source = substitute_once(
     source,
-    dedent(
-        """\
-          let maximumImpulseNs = 0;
-          let solverContactCount = 0;
-          for (let step = 0; step < SIMULATION_STEPS; step += 1) {
-        """
-    ),
-    dedent(
-        """\
-          let maximumImpulseNs = 0;
-          let geometricContactCount = 0;
-          let solverContactCount = 0;
-          for (let step = 0; step < SIMULATION_STEPS; step += 1) {
-        """
-    ),
+    r"  let maximumImpulseNs = 0;\n"
+    r"  let solverContactCount = 0;\n"
+    r"  for \(let step = 0; step < SIMULATION_STEPS; step \+= 1\) \{",
+    "  let maximumImpulseNs = 0;\n"
+    "  let geometricContactCount = 0;\n"
+    "  let solverContactCount = 0;\n"
+    "  for (let step = 0; step < SIMULATION_STEPS; step += 1) {",
     "regression counters",
 )
-source = replace_once(
+source = substitute_once(
     source,
-    dedent(
-        """\
-            maximumImpulseNs = Math.max(
-              maximumImpulseNs,
-              contact.totalImpulseNs,
-            );
-            solverContactCount += contact.solverContactCount;
-        """
-    ),
-    dedent(
-        """\
-            maximumImpulseNs = Math.max(
-              maximumImpulseNs,
-              contact.maximumImpulseNs,
-            );
-            geometricContactCount += contact.geometricContactCount;
-            solverContactCount += contact.solverContactCount;
-        """
-    ),
+    r"    maximumImpulseNs = Math\.max\(\n"
+    r"      maximumImpulseNs,\n"
+    r"      contact\.totalImpulseNs,\n"
+    r"    \);\n"
+    r"    solverContactCount \+= contact\.solverContactCount;",
+    "    maximumImpulseNs = Math.max(\n"
+    "      maximumImpulseNs,\n"
+    "      contact.maximumImpulseNs,\n"
+    "    );\n"
+    "    geometricContactCount += contact.geometricContactCount;\n"
+    "    solverContactCount += contact.solverContactCount;",
     "regression peak impulse accumulation",
 )
 source = replace_once(
     source,
-    dedent(
-        """\
-            maximumImpulseNs,
-            solverContactCount,
-        """
-    ),
-    dedent(
-        """\
-            maximumImpulseNs,
-            geometricContactCount,
-            solverContactCount,
-        """
-    ),
+    "    maximumImpulseNs,\n    solverContactCount,\n",
+    "    maximumImpulseNs,\n    geometricContactCount,\n"
+    "    solverContactCount,\n",
     "regression result fields",
 )
 source = replace_once(
     source,
-    dedent(
-        """\
-          assert.ok(
-            result.solverContactCount > 0,
-            `${name} scenario must generate solver contacts`,
-          );
-        """
-    ),
-    dedent(
-        """\
-          assert.ok(
-            result.geometricContactCount > 0,
-            `${name} scenario must generate geometric contacts`,
-          );
-          assert.ok(
-            result.solverContactCount > 0,
-            `${name} scenario must generate solver contacts`,
-          );
-        """
-    ),
+    "  assert.ok(\n"
+    "    result.solverContactCount > 0,\n"
+    "    `${name} scenario must generate solver contacts`,\n"
+    "  );\n",
+    "  assert.ok(\n"
+    "    result.geometricContactCount > 0,\n"
+    "    `${name} scenario must generate geometric contacts`,\n"
+    "  );\n"
+    "  assert.ok(\n"
+    "    result.solverContactCount > 0,\n"
+    "    `${name} scenario must generate solver contacts`,\n"
+    "  );\n",
     "regression contact assertions",
 )
 regression.write_text(source, encoding="utf-8")
