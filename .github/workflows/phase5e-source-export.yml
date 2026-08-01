@@ -1,6 +1,11 @@
 name: Phase 5E exact source export
 
 on:
+  pull_request:
+    branches:
+      - agent/phase-4-release-validation
+    paths:
+      - '.github/workflows/phase5e-source-export.yml'
   push:
     branches:
       - agent/phase-5e-physical-calibration
@@ -12,6 +17,7 @@ permissions:
 
 jobs:
   export:
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/phase-5e-physical-calibration'
     name: Package exact Phase 5E source
     runs-on: ubuntu-latest
     timeout-minutes: 5
