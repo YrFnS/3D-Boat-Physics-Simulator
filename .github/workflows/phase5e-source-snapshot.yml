@@ -6,13 +6,13 @@ on:
       - agent/phase-4-release-validation
     paths:
       - '.github/workflows/phase5e-source-snapshot.yml'
-      - 'scripts/.phase5e-tuning.patch.gz.hex'
+      - 'scripts/.phase5e-tuning.patch.gz'
   push:
     branches:
       - agent/phase-5e-physical-calibration
     paths:
       - '.github/workflows/phase5e-source-snapshot.yml'
-      - 'scripts/.phase5e-tuning.patch.gz.hex'
+      - 'scripts/.phase5e-tuning.patch.gz'
 
 permissions:
   contents: read
@@ -44,16 +44,11 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Reconstruct and apply tuning patch
+      - name: Verify and apply tuning patch
         run: |
-          python <<'PY'
-          from pathlib import Path
-          encoded = Path('scripts/.phase5e-tuning.patch.gz.hex').read_text(encoding='utf-8')
-          Path('${{ runner.temp }}/phase5e-tuning.patch.gz').write_bytes(bytes.fromhex(encoded.strip()))
-          PY
-          echo '0bcc920e6c293b2cb7d2b89663603caf871d2fcafbb48abdb1632f02d45a3032  '"$RUNNER_TEMP/phase5e-tuning.patch.gz" | sha256sum --check
-          gzip -dc "$RUNNER_TEMP/phase5e-tuning.patch.gz" > "$RUNNER_TEMP/phase5e-tuning.patch"
-          echo '1d9c6cda3392a87b26f76bbc9b6b4b13b1a00a08a7b257dda8c6cc3bc480898a  '"$RUNNER_TEMP/phase5e-tuning.patch" | sha256sum --check
+          echo 'ea67ce77d01059501b9233cb1d29f4097b4ae8d67aa6685826649036223d9e7b  scripts/.phase5e-tuning.patch.gz' | sha256sum --check
+          gzip -dc scripts/.phase5e-tuning.patch.gz > "$RUNNER_TEMP/phase5e-tuning.patch"
+          echo 'd475888d2f0b7ca6ebae6969d998cd4eebbd3c215871d573e76b1f7c2edbbc49  '"$RUNNER_TEMP/phase5e-tuning.patch" | sha256sum --check
           git apply --check "$RUNNER_TEMP/phase5e-tuning.patch"
           git apply "$RUNNER_TEMP/phase5e-tuning.patch"
           git diff --check
