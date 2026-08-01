@@ -1,6 +1,11 @@
 name: Inspect staged Phase 5D patch
 
 on:
+  pull_request:
+    branches:
+      - agent/phase-4-release-validation
+    paths:
+      - '.github/workflows/phase5d-inspect-staged-patch.yml'
   push:
     branches:
       - agent/phase-5d-collision-authority
@@ -12,6 +17,7 @@ permissions:
 
 jobs:
   inspect:
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/phase-5d-collision-authority'
     name: Decode staged Phase 5D patch
     runs-on: ubuntu-latest
     timeout-minutes: 5
