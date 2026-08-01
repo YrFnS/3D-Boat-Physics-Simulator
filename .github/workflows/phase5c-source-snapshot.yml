@@ -1,0 +1,35 @@
+name: Phase 5C source snapshot
+
+on:
+  pull_request:
+    branches:
+      - agent/phase-4-release-validation
+    paths:
+      - '.github/workflows/phase5c-source-snapshot.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    if: github.event.pull_request.head.ref == 'agent/phase-5c-propulsion-maneuvering'
+    name: Package exact Phase 5C source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out Phase 5C branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5c-propulsion-maneuvering
+
+      - name: Package source
+        run: tar --exclude=.git --exclude=node_modules --exclude=.next -czf "$RUNNER_TEMP/phase5c-source.tar.gz" .
+
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase5c-source-snapshot
+          path: ${{ runner.temp }}/phase5c-source.tar.gz
+          include-hidden-files: true
+          retention-days: 1
