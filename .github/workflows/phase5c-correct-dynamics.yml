@@ -1,0 +1,235 @@
+name: Correct Phase 5C drivetrain dynamics
+
+on:
+  push:
+    branches:
+      - agent/phase-5c-propulsion-maneuvering
+    paths:
+      - '.github/workflows/phase5c-correct-dynamics.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: phase5c-correct-dynamics-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  correct:
+    if: github.actor != 'github-actions[bot]'
+    name: Correct, validate, and publish drivetrain dynamics
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out Phase 5C branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5c-propulsion-maneuvering
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Correct governor, rudder force, immersion, and smoke probe
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          propulsion = Path('sim/vessels/PropulsionSystem.ts')
+          source = propulsion.read_text(encoding='utf-8')
+          old = """    let targetRpm = engine.idleRpm;
+              if (gearSign !== 0 && healthRatio > 0) {
+                const commandCurve = Math.sqrt(normalizedCommand);
+                targetRpm =
+                  engine.idleRpm +
+                  commandCurve * (engine.maximumRpm - engine.idleRpm);
+                const loadDroop = Math.max(0, this.previousLoadRatio - 0.92);
+                targetRpm *= 1 - loadDroop * engine.loadDroopFraction;
+                targetRpm +=
+                  (1 - ventilationFactor) *
+                  normalizedCommand *
+                  (engine.maximumRpm - engine.ratedRpm) *
+                  engine.unloadedOverRevFraction;
+              }
+          """
+          new = """    let targetRpm = engine.idleRpm;
+              if (gearSign !== 0 && healthRatio > 0) {
+                const commandCurve = Math.sqrt(normalizedCommand);
+                targetRpm =
+                  engine.idleRpm +
+                  commandCurve * (engine.ratedRpm - engine.idleRpm);
+
+                // A loaded marine engine should govern near rated RPM. Only a genuinely
+                // unloaded or ventilated propeller is allowed to spin toward the limiter.
+                const unloadedFraction = clamp(1 - this.previousLoadRatio, 0, 1);
+                targetRpm +=
+                  unloadedFraction *
+                  normalizedCommand *
+                  (engine.maximumRpm - engine.ratedRpm) *
+                  engine.unloadedOverRevFraction;
+                const loadDroop = Math.max(0, this.previousLoadRatio - 1);
+                targetRpm *= 1 - loadDroop * engine.loadDroopFraction;
+                targetRpm +=
+                  (1 - ventilationFactor) *
+                  normalizedCommand *
+                  (engine.maximumRpm - engine.ratedRpm) *
+                  engine.unloadedOverRevFraction;
+              }
+          """
+          if source.count(old) != 1:
+              raise SystemExit('Expected one engine-governor block.')
+          source = source.replace(old, new, 1)
+
+          old = """  return {
+              forwardN:
+                hydrodynamics.liftN * rightUnit -
+                hydrodynamics.dragN * forwardUnit,
+              rightN:
+                -hydrodynamics.liftN * forwardUnit -
+                hydrodynamics.dragN * rightUnit,
+            };
+          """
+          new = """  return {
+              // Lift is perpendicular to the incoming flow while drag opposes it. This
+              // orientation also makes a neutral rudder damp sideslip instead of
+              // amplifying it.
+              forwardN:
+                -hydrodynamics.liftN * rightUnit -
+                hydrodynamics.dragN * forwardUnit,
+              rightN:
+                hydrodynamics.liftN * forwardUnit -
+                hydrodynamics.dragN * rightUnit,
+            };
+          """
+          if source.count(old) != 1:
+              raise SystemExit('Expected one rudder-force resolution block.')
+          propulsion.write_text(source.replace(old, new, 1), encoding='utf-8')
+
+          boat = Path('components/Boat.tsx')
+          source = boat.read_text(encoding='utf-8')
+          old = """    let targetRudder =
+              steerRaw * vessel.rudder.maximumAngleRad * rudderHealthRatio;
+          """
+          new = """    // Positive input means port/left in the UI, while positive physical
+              // rudder angle is starboard/right in the body-axis hydrodynamic model.
+              let targetRudder =
+                -steerRaw * vessel.rudder.maximumAngleRad * rudderHealthRatio;
+          """
+          if source.count(old) != 1:
+              raise SystemExit('Expected one live rudder target.')
+          source = source.replace(old, new, 1)
+          old = """            !calibration &&
+                        collisionTestEnabled.current &&
+                        Math.abs(thrustRaw) > 0.1,
+          """
+          new = """            !calibration &&
+                        collisionTestEnabled.current &&
+                        thrustRaw > 0.1 &&
+                        vRelForward > 0.35,
+          """
+          if source.count(old) != 1:
+              raise SystemExit('Expected one collision-probe enable condition.')
+          boat.write_text(source.replace(old, new, 1), encoding='utf-8')
+
+          config = Path('sim/vessels/VesselConfig.ts')
+          source = config.read_text(encoding='utf-8')
+          if source.count("pointLocal: [0, -0.45, 2.25],") != 1:
+              raise SystemExit('Expected the original trawler propeller point.')
+          if source.count("pointLocal: [0, -0.35, 2.1],") != 1:
+              raise SystemExit('Expected the original trawler rudder point.')
+          source = source.replace(
+              "pointLocal: [0, -0.45, 2.25],",
+              "pointLocal: [0, -0.85, 2.25],",
+              1,
+          ).replace(
+              "pointLocal: [0, -0.35, 2.1],",
+              "pointLocal: [0, -0.8, 2.1],",
+              1,
+          )
+          config.write_text(source, encoding='utf-8')
+
+          tests = Path('scripts/physics-correctness.mjs')
+          source = tests.read_text(encoding='utf-8')
+          old = """      rudderAngleRad: vessel.rudder.maximumAngleRad * 0.6,
+          """
+          if source.count(old) != 2:
+              raise SystemExit('Expected ahead and astern rudder fixtures.')
+          source = source.replace(
+              old,
+              """      rudderAngleRad: -vessel.rudder.maximumAngleRad * 0.6,
+          """,
+              2,
+          )
+          marker = """    assert.ok(aheadRudder.forceMagnitudeN > 0);
+              assert.ok(aheadComponents.rightN < 0);
+
+              const asternRudder = computeRudderHydrodynamics({
+          """
+          replacement = """    assert.ok(aheadRudder.forceMagnitudeN > 0);
+              assert.ok(aheadComponents.rightN < 0);
+
+              const neutralSideslip = computeRudderHydrodynamics({
+                config: vessel.rudder,
+                waterDensityKgM3: vessel.waterDensityKgM3,
+                forwardFlowMps: 6,
+                rightFlowMps: 1.5,
+                rudderAngleRad: 0,
+                submergenceM: vessel.rudder.ventilationFullSubmergenceM,
+                healthRatio: 1,
+              });
+              const neutralSideslipComponents = resolveRudderForceComponents(
+                neutralSideslip,
+                6,
+                1.5,
+              );
+              assert.ok(
+                neutralSideslipComponents.rightN < 0,
+                `${vesselType} neutral rudder must damp starboard sideslip`,
+              );
+
+              const asternRudder = computeRudderHydrodynamics({
+          """
+          if source.count(marker) != 1:
+              raise SystemExit('Expected the rudder regression insertion point.')
+          tests.write_text(source.replace(marker, replacement, 1), encoding='utf-8')
+          PY
+
+      - name: Remove temporary diagnostics and this workflow
+        run: |
+          rm -f PHASE5C_PROPULSION_DIAGNOSTICS.json
+          rm -f scripts/phase5c-propulsion-diagnostics.mjs
+          rm -f .github/workflows/phase5c-propulsion-diagnostics.yml
+          rm -f .github/workflows/phase5c-correct-dynamics.yml
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run deterministic physics correctness
+        run: npm run test:physics
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build application
+        run: npm run build
+
+      - name: Dependency audit
+        run: npm run audit
+
+      - name: Verify patch hygiene
+        run: git diff --check
+
+      - name: Commit and push validated corrections
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: correct Phase 5C immersion and rudder dynamics'
+          git push origin HEAD:agent/phase-5c-propulsion-maneuvering
