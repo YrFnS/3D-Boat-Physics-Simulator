@@ -80,6 +80,38 @@ jobs:
           git apply --check "$RUNNER_TEMP/phase5.patch"
           git apply "$RUNNER_TEMP/phase5.patch"
 
+      - name: Store mutable motion limits in a ref
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path('components/Boat.tsx')
+          source = path.read_text()
+          replacements = [
+              (
+                  "  const calibrationSimulationTime = useRef(0);\n\n  const scratch = useMemo(\n",
+                  "  const calibrationSimulationTime = useRef(0);\n  const motionLimits = useRef({\n    maxHorizontalSpeedMps: 80,\n    maxVerticalSpeedMps: 40,\n    maxAngularSpeedRadPerSecond: 4,\n  });\n\n  const scratch = useMemo(\n",
+              ),
+              (
+                  "      worldUp: new Vector3(0, 1, 0),\n      motionLimits: {\n        maxHorizontalSpeedMps: 80,\n        maxVerticalSpeedMps: 40,\n        maxAngularSpeedRadPerSecond: 4,\n      },\n",
+                  "      worldUp: new Vector3(0, 1, 0),\n",
+              ),
+              (
+                  "    const motionLimits = scratch.motionLimits;\n    motionLimits.maxAngularSpeedRadPerSecond =\n      vessel.maxAngularSpeedRadPerSecond;\n\n    // --- Integrate the accumulated six-degree-of-freedom forces ---\n    body.integrate(dt);\n    body.enforceMotionLimits(motionLimits);\n",
+                  "    motionLimits.current.maxAngularSpeedRadPerSecond =\n      vessel.maxAngularSpeedRadPerSecond;\n\n    // --- Integrate the accumulated six-degree-of-freedom forces ---\n    body.integrate(dt);\n    body.enforceMotionLimits(motionLimits.current);\n",
+              ),
+              (
+                  "    body.enforceMotionLimits(motionLimits);\n\n    if (collisionSummary) {\n",
+                  "    body.enforceMotionLimits(motionLimits.current);\n\n    if (collisionSummary) {\n",
+              ),
+          ]
+          for old, new in replacements:
+              if source.count(old) != 1:
+                  raise SystemExit(f'expected exactly one source match: {old[:80]!r}')
+              source = source.replace(old, new, 1)
+          path.write_text(source)
+          PY
+
       - name: Remove one-use transfer helpers
         run: |
           rm -rf scripts/.phase5-patch
