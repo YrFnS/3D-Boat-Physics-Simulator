@@ -6,13 +6,18 @@ on:
       - agent/phase-5d-collision-authority
     paths:
       - '.github/workflows/phase5d-publish-refinement.yml'
+  pull_request:
+    branches:
+      - agent/phase-4-release-validation
+    paths:
+      - '.github/workflows/phase5d-publish-refinement.yml'
 
 permissions:
   contents: write
 
 concurrency:
-  group: phase5d-publish-refinement-${{ github.ref }}
-  cancel-in-progress: false
+  group: phase5d-publish-refinement-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
 
 env:
   CI: 1
@@ -20,7 +25,7 @@ env:
 
 jobs:
   publish:
-    if: github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]' && (github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/phase-5d-collision-authority')
     name: Reconstruct, validate, clean, and publish
     runs-on: ubuntu-latest
     timeout-minutes: 30
