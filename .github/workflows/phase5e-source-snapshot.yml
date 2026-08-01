@@ -51,9 +51,9 @@ jobs:
           encoded = Path('scripts/.phase5e-tuning.patch.gz.hex').read_text(encoding='utf-8')
           Path('${{ runner.temp }}/phase5e-tuning.patch.gz').write_bytes(bytes.fromhex(encoded.strip()))
           PY
-          echo 'ce0b64213f0a6aba1893067dc1e80e22028774a27103a70957ece489c31c66e9  '"$RUNNER_TEMP/phase5e-tuning.patch.gz" | sha256sum --check
+          echo '0bcc920e6c293b2cb7d2b89663603caf871d2fcafbb48abdb1632f02d45a3032  '"$RUNNER_TEMP/phase5e-tuning.patch.gz" | sha256sum --check
           gzip -dc "$RUNNER_TEMP/phase5e-tuning.patch.gz" > "$RUNNER_TEMP/phase5e-tuning.patch"
-          echo 'b448ee3bd81e3ef3f79f7c2fe08e7874cda3a3684b9d04d9dfe793dc474f018f  '"$RUNNER_TEMP/phase5e-tuning.patch" | sha256sum --check
+          echo '1d9c6cda3392a87b26f76bbc9b6b4b13b1a00a08a7b257dda8c6cc3bc480898a  '"$RUNNER_TEMP/phase5e-tuning.patch" | sha256sum --check
           git apply --check "$RUNNER_TEMP/phase5e-tuning.patch"
           git apply "$RUNNER_TEMP/phase5e-tuning.patch"
           git diff --check
