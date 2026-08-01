@@ -50,7 +50,13 @@ Make acceleration, maximum speed, reverse handling, prop wash, steering authorit
 
 ## Current checkpoint
 
-The live vessel force path now uses a typed engine, gearbox, open-water propeller, signed prop wash, and local-flow rudder model. The deterministic propulsion regressions, lint, TypeScript checking, production build, dependency audit, and patch-hygiene checks pass. Permanent vessel calibration and cross-browser gates are running before any coefficient or fixture adjustment is considered.
+The live vessel force path now uses a typed engine, gearbox, open-water propeller, signed prop wash, and local-flow rudder model. The first browser diagnostics exposed three concrete integration defects that are now corrected at `bd78909debabb4d1ee3da66ffcce12ec9cef583a`:
+
+- The displacement trawler’s propeller and rudder centers are now below its calibrated static waterline instead of being nearly fully ventilated.
+- A neutral rudder now damps lateral sideslip rather than amplifying it, and UI steering input is mapped to the physical rudder-angle sign.
+- A loaded engine now governs near rated RPM; only an unloaded or ventilated propeller is allowed to approach the limiter.
+
+The collision smoke probe also waits for measurable ahead water-relative speed, so it validates a real propulsion-driven impact rather than touching the fixture during engine spool-up. Deterministic propulsion regressions, lint, TypeScript checking, production build, dependency audit, and patch-hygiene checks pass on the corrected source. The permanent vessel-calibration and cross-browser matrix is now the active gate before reverse fixtures are added.
 
 ## Implementation sequence
 
