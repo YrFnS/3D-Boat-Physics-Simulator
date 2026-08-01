@@ -11,6 +11,12 @@ export interface SixDofBodySpawn {
   headingDeg: number;
 }
 
+export interface SixDofMotionLimits {
+  maxHorizontalSpeedMps: number;
+  maxVerticalSpeedMps: number;
+  maxAngularSpeedRadPerSecond: number;
+}
+
 let queuedBodySpawn: SixDofBodySpawn | null = null;
 
 export function queueNextSixDofBodySpawn(spawn: SixDofBodySpawn) {
@@ -46,8 +52,21 @@ function quaternionIsFinite(value: Quaternion) {
     Number.isFinite(value.x) &&
     Number.isFinite(value.y) &&
     Number.isFinite(value.z) &&
-    Number.isFinite(value.w)
+    Number.isFinite(value.w) &&
+    value.lengthSq() > EPSILON
   );
+}
+
+function finitePositive(value: number, fallback: number) {
+  return Number.isFinite(value) && value > EPSILON ? value : fallback;
+}
+
+function finiteNonNegative(value: number) {
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function finiteLimit(value: number) {
+  return Number.isFinite(value) ? Math.max(0, value) : Number.POSITIVE_INFINITY;
 }
 
 /**
@@ -87,18 +106,25 @@ export class SixDofBody extends Object3D {
   private readonly rotationAxis = new Vector3();
   private readonly pointOffset = new Vector3();
 
+  private readonly lastValidPosition = new Vector3();
+  private readonly lastValidQuaternion = new Quaternion();
+  private readonly lastValidLinearVelocity = new Vector3();
+  private readonly lastValidAngularVelocity = new Vector3();
+  private hasLastValidState = false;
+
   private inverseMass = 1;
 
   constructor() {
     super();
     const spawn = consumeQueuedBodySpawn();
-    if (!spawn) return;
-
-    this.position.set(spawn.x, spawn.y, spawn.z);
-    this.quaternion.setFromAxisAngle(
-      WORLD_UP,
-      (-spawn.headingDeg * Math.PI) / 180,
-    );
+    if (spawn) {
+      this.position.set(spawn.x, spawn.y, spawn.z);
+      this.quaternion.setFromAxisAngle(
+        WORLD_UP,
+        (-spawn.headingDeg * Math.PI) / 180,
+      );
+    }
+    this.captureValidState();
   }
 
   setMassProperties(
@@ -107,24 +133,37 @@ export class SixDofBody extends Object3D {
     angularDampingPerSecond: readonly [number, number, number],
     centerOfMassLocal: readonly [number, number, number] = [0, 0, 0],
   ) {
-    const safeMassKg = Math.max(EPSILON, massKg);
+    const safeMassKg = finitePositive(massKg, 1);
     this.inverseMass = 1 / safeMassKg;
 
     this.principalInertia.set(
-      Math.max(EPSILON, principalInertiaKgM2[0]),
-      Math.max(EPSILON, principalInertiaKgM2[1]),
-      Math.max(EPSILON, principalInertiaKgM2[2]),
+      finitePositive(principalInertiaKgM2[0], 1),
+      finitePositive(principalInertiaKgM2[1], 1),
+      finitePositive(principalInertiaKgM2[2], 1),
     );
     this.inversePrincipalInertia.set(
       1 / this.principalInertia.x,
       1 / this.principalInertia.y,
       1 / this.principalInertia.z,
     );
-    this.angularDamping.fromArray(angularDampingPerSecond);
-    this.centerOfMassLocal.fromArray(centerOfMassLocal);
+    this.angularDamping.set(
+      finiteNonNegative(angularDampingPerSecond[0]),
+      finiteNonNegative(angularDampingPerSecond[1]),
+      finiteNonNegative(angularDampingPerSecond[2]),
+    );
+    this.centerOfMassLocal.set(
+      Number.isFinite(centerOfMassLocal[0]) ? centerOfMassLocal[0] : 0,
+      Number.isFinite(centerOfMassLocal[1]) ? centerOfMassLocal[1] : 0,
+      Number.isFinite(centerOfMassLocal[2]) ? centerOfMassLocal[2] : 0,
+    );
   }
 
   beginStep() {
+    if (this.hasFiniteState()) {
+      this.captureValidState();
+    } else {
+      this.restoreLastValidState();
+    }
     this.accumulatedForce.set(0, 0, 0);
     this.accumulatedTorque.set(0, 0, 0);
   }
@@ -200,8 +239,64 @@ export class SixDofBody extends Object3D {
       .add(this.linearVelocity);
   }
 
+  hasFiniteState() {
+    return (
+      vectorIsFinite(this.position) &&
+      quaternionIsFinite(this.quaternion) &&
+      vectorIsFinite(this.linearVelocity) &&
+      vectorIsFinite(this.angularVelocity)
+    );
+  }
+
+  enforceMotionLimits(limits: SixDofMotionLimits) {
+    if (!this.hasFiniteState()) {
+      this.restoreLastValidState();
+      return false;
+    }
+
+    const maxHorizontalSpeedMps = finiteLimit(
+      limits.maxHorizontalSpeedMps,
+    );
+    const horizontalSpeedMps = Math.hypot(
+      this.linearVelocity.x,
+      this.linearVelocity.z,
+    );
+    if (
+      horizontalSpeedMps > maxHorizontalSpeedMps &&
+      horizontalSpeedMps > EPSILON
+    ) {
+      const scale = maxHorizontalSpeedMps / horizontalSpeedMps;
+      this.linearVelocity.x *= scale;
+      this.linearVelocity.z *= scale;
+    }
+
+    const maxVerticalSpeedMps = finiteLimit(limits.maxVerticalSpeedMps);
+    this.linearVelocity.y = Math.max(
+      -maxVerticalSpeedMps,
+      Math.min(maxVerticalSpeedMps, this.linearVelocity.y),
+    );
+
+    const maxAngularSpeedRadPerSecond = finiteLimit(
+      limits.maxAngularSpeedRadPerSecond,
+    );
+    const angularSpeedRadPerSecond = this.angularVelocity.length();
+    if (
+      angularSpeedRadPerSecond > maxAngularSpeedRadPerSecond &&
+      angularSpeedRadPerSecond > EPSILON
+    ) {
+      this.angularVelocity.multiplyScalar(
+        maxAngularSpeedRadPerSecond / angularSpeedRadPerSecond,
+      );
+    }
+
+    this.captureValidState();
+    return true;
+  }
+
   integrate(deltaSeconds: number) {
-    const dt = Math.max(0, deltaSeconds);
+    const dt = Number.isFinite(deltaSeconds)
+      ? Math.max(0, deltaSeconds)
+      : 0;
     if (dt <= 0) return;
 
     // Integrate the center of mass, then reconstruct the model origin after
@@ -280,18 +375,40 @@ export class SixDofBody extends Object3D {
       .copy(this.worldCenterOfMass)
       .sub(this.centerOfMassOffsetWorld);
 
-    // A single invalid force must not permanently poison subsequent steps.
-    if (!vectorIsFinite(this.linearVelocity)) {
-      this.linearVelocity.set(0, 0, 0);
+    // A single invalid force restores the complete previous state instead of
+    // independently zeroing values or teleporting the vessel to the origin.
+    if (!this.hasFiniteState()) {
+      this.restoreLastValidState();
+      return;
     }
-    if (!vectorIsFinite(this.angularVelocity)) {
-      this.angularVelocity.set(0, 0, 0);
-    }
-    if (!vectorIsFinite(this.position)) {
+    this.captureValidState();
+  }
+
+  private captureValidState() {
+    if (!this.hasFiniteState()) return false;
+    this.quaternion.normalize();
+    this.lastValidPosition.copy(this.position);
+    this.lastValidQuaternion.copy(this.quaternion);
+    this.lastValidLinearVelocity.copy(this.linearVelocity);
+    this.lastValidAngularVelocity.copy(this.angularVelocity);
+    this.hasLastValidState = true;
+    return true;
+  }
+
+  private restoreLastValidState() {
+    if (!this.hasLastValidState) {
       this.position.set(0, 0, 0);
-    }
-    if (!quaternionIsFinite(this.quaternion)) {
       this.quaternion.identity();
+      this.linearVelocity.set(0, 0, 0);
+      this.angularVelocity.set(0, 0, 0);
+      this.captureValidState();
+    } else {
+      this.position.copy(this.lastValidPosition);
+      this.quaternion.copy(this.lastValidQuaternion);
+      this.linearVelocity.copy(this.lastValidLinearVelocity);
+      this.angularVelocity.copy(this.lastValidAngularVelocity);
     }
+    this.accumulatedForce.set(0, 0, 0);
+    this.accumulatedTorque.set(0, 0, 0);
   }
 }

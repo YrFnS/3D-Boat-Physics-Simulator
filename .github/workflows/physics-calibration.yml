@@ -11,6 +11,7 @@ on:
       - sim/calibration/**
       - store/useSimStore.ts
       - scripts/physics-calibration.mjs
+      - scripts/physics-correctness.mjs
       - package.json
       - package-lock.json
       - .github/workflows/physics-calibration.yml
@@ -26,6 +27,7 @@ on:
       - sim/calibration/**
       - store/useSimStore.ts
       - scripts/physics-calibration.mjs
+      - scripts/physics-correctness.mjs
       - package.json
       - package-lock.json
       - .github/workflows/physics-calibration.yml
@@ -56,6 +58,9 @@ jobs:
 
       - name: Install application dependencies
         run: npm ci
+
+      - name: Run physics correctness regression tests
+        run: npm run test:physics
 
       - name: Install Playwright without changing the lockfile
         run: |

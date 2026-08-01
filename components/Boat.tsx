@@ -13,6 +13,13 @@ import { SixDofBody } from '@/sim/core/SixDofBody';
 import { SeededRandom } from '@/sim/core/SeededRandom';
 import { getVesselConfig } from '@/sim/vessels/VesselConfig';
 import { DistributedHullForces } from '@/sim/vessels/DistributedHullForces';
+import { EnvironmentalForces } from '@/sim/vessels/EnvironmentalForces';
+import {
+  effectiveDraftOffset,
+  normalizedSurgeSpeed,
+  planingSpeedRatio,
+  waterRelativeSurgeSpeed,
+} from '@/sim/vessels/PhysicsCorrectness';
 import { RapierCollisionWorld } from '@/sim/collision/RapierCollisionWorld';
 import {
   parseCalibrationRequest,
@@ -34,6 +41,7 @@ export default function Boat() {
   const fixedStepRunner = useRef(new FixedStepRunner());
   const simulationRandom = useRef(new SeededRandom(0xb0475eed));
   const distributedHullForces = useRef(new DistributedHullForces());
+  const environmentalForces = useRef(new EnvironmentalForces());
   const rapierCollisionWorld = useRef<RapierCollisionWorld | null>(null);
   const collisionTestEnabled = useRef(false);
   const lastTerrainImpactTime = useRef(Number.NEGATIVE_INFINITY);
@@ -52,6 +60,11 @@ export default function Boat() {
   const calibrationRunner =
     useRef<SimulationCalibrationRunner | null>(null);
   const calibrationSimulationTime = useRef(0);
+  const motionLimits = useRef({
+    maxHorizontalSpeedMps: 80,
+    maxVerticalSpeedMps: 40,
+    maxAngularSpeedRadPerSecond: 4,
+  });
 
   const scratch = useMemo(
     () => ({
@@ -59,7 +72,6 @@ export default function Boat() {
       rightDir: new Vector3(),
       windVelocity: new Vector3(),
       waterVelocity: new Vector3(),
-      waterRelativeVelocity: new Vector3(),
       thrustForce: new Vector3(),
       apparentWind: new Vector3(),
       apparentWindDir: new Vector3(),
@@ -264,20 +276,17 @@ export default function Boat() {
     const windCoeff = vessel.windAreaCoefficient;
     const turnForceMax = vessel.turnForceMax;
 
-    // --- Heading & Horizontal Vessel Axes ---
+    // --- Complete body-relative vessel axes ---
+    // Physics keeps pitch and roll in these axes. Horizontal projection is
+    // reserved for navigation heading after the completed simulation step.
     const forwardDir = scratch.forwardDir
       .set(0, 0, -1)
-      .applyQuaternion(body.quaternion);
-    forwardDir.y = 0;
-    if (forwardDir.lengthSq() > 1e-8) forwardDir.normalize();
-    else forwardDir.set(0, 0, -1);
-
+      .applyQuaternion(body.quaternion)
+      .normalize();
     const rightDir = scratch.rightDir
       .set(-1, 0, 0)
-      .applyQuaternion(body.quaternion);
-    rightDir.y = 0;
-    if (rightDir.lengthSq() > 1e-8) rightDir.normalize();
-    else rightDir.set(-1, 0, 0);
+      .applyQuaternion(body.quaternion)
+      .normalize();
 
     // --- Distributed Hull Buoyancy & Hydrodynamic Resistance ---
     const pos = body.position;
@@ -330,19 +339,30 @@ export default function Boat() {
     }
 
     const winterDraftPenalty = isWinter * 0.15;
-    const draftOffset =
-      vessel.baseDraftM -
-      hullDamageSinkOffset -
-      winterDraftPenalty;
-    const speedRatio = Math.min(
-      Math.hypot(
-        body.linearVelocity.x,
-        body.linearVelocity.z,
-      ) / vessel.planingReferenceSpeedMps,
-      1,
+    const draftOffset = effectiveDraftOffset(
+      vessel.baseDraftM,
+      hullDamageSinkOffset,
+      winterDraftPenalty,
+    );
+    const vRelForward = waterRelativeSurgeSpeed(
+      body.linearVelocity,
+      waterVelocity,
+      forwardDir,
+    );
+    const surgeSpeedRatio = normalizedSurgeSpeed(
+      vRelForward,
+      vessel.planingReferenceSpeedMps,
+    );
+    const activePlaningSpeedRatio = planingSpeedRatio(
+      vRelForward,
+      vessel.planingReferenceSpeedMps,
     );
     const planingDragReduction = vessel.planingCapable
-      ? MathUtils.lerp(1, 0.35, speedRatio * speedRatio)
+      ? MathUtils.lerp(
+          1,
+          0.35,
+          activePlaningSpeedRatio * activePlaningSpeedRatio,
+        )
       : 1;
     const hullDragPenalty =
       1 + ((100 - hullHealth.current) / 100) * 0.8;
@@ -390,19 +410,15 @@ export default function Boat() {
     prevVelocityY.current = body.linearVelocity.y;
     prevSubmergedRatio.current = submergedRatio;
 
-    // --- True Velocity Relative to Water ---
-    const waterRelativeVelocity = scratch.waterRelativeVelocity
-      .copy(body.linearVelocity)
-      .sub(waterVelocity);
-    const vRelForward = waterRelativeVelocity.dot(forwardDir);
+    // --- Applied body-relative forces ---
 
-    // --- Applied Horizontal Forces ---
-    
     // PLANING HYDRODYNAMICS
     // The speedboat receives bow lift once forward speed builds. Hull
     // resistance is already reduced inside the distributed point model.
     const planingFactor =
-      speedRatio * speedRatio * submergedRatio;
+      activePlaningSpeedRatio *
+      activePlaningSpeedRatio *
+      submergedRatio;
 
     // --- ENGINE STRESS & RPM MODULATION ---
     let targetRPM =
@@ -425,7 +441,7 @@ export default function Boat() {
         rpmLerpRate = 0.8;
     } else {
         // Normal spooling based on speed matching
-        rpmLerpRate = 2.0 + (speedRatio * 2.0);
+        rpmLerpRate = 2.0 + (surgeSpeedRatio * 2.0);
     }
     
     engineRPM.current = MathUtils.lerp(engineRPM.current, targetRPM, rpmLerpRate * dt);
@@ -513,29 +529,8 @@ export default function Boat() {
       );
     }
     
-    // --- PHASE 4.5: ICE FLOE FRICTION & DAMAGE ---
-    // Instead of instantiating hundreds of meshes, we treat the procedural ice field as an actual physical entity
-    if (currentIceFactor > 0.3 && submergedRatio > 0.1) {
-        // The boat is crashing through the ice pack!
-        // Ice induces extreme drag, capping momentum
-        body.linearVelocity.multiplyScalar(Math.exp(-currentIceFactor * 6 * dt));
-        
-        const iceImpactSpeed = Math.hypot(body.linearVelocity.x, body.linearVelocity.z);
-        if (iceImpactSpeed > 2.0 && Math.abs(thrustRaw) > 0.1) {
-            // Apply continuous grinding damage based on speed and ice density
-            hullHealth.current = Math.max(0, hullHealth.current - iceImpactSpeed * currentIceFactor * 0.2 * dt);
-            
-            // Random chaotic bumps representing ice chunk impacts
-            body.linearVelocity.y += (simulationRandom.current.next() - 0.2) * currentIceFactor * iceImpactSpeed * 0.1;
-            body.angularVelocity.x +=
-              (simulationRandom.current.next() - 0.5) *
-              currentIceFactor * iceImpactSpeed * 0.12;
-            body.angularVelocity.z +=
-              (simulationRandom.current.next() - 0.5) *
-              currentIceFactor * iceImpactSpeed * 0.2;
-            
-        }
-    }
+    // Ice, tornado, and whirlpool loads are accumulated below through the
+    // environmental force model before the authoritative integration step.
 
     // --- ADVANCED RUDDER & PROP WASH SYSTEM ---
     // Rudder takes time to turn to target angle
@@ -615,7 +610,7 @@ export default function Boat() {
       scratch.worldRudder,
     );
 
-    if (vessel.planingCapable && speedRatio > 0.15) {
+    if (vessel.planingCapable && activePlaningSpeedRatio > 0.15) {
       // atan2(sin, cos) provides a signed roll error through the full
       // orientation range. Unlike a sine-only term, it does not lose all
       // righting authority when the hull approaches an inverted attitude.
@@ -632,7 +627,7 @@ export default function Boat() {
       const rollRateRadPerSecond =
         body.angularVelocity.dot(forwardDir);
       const stabilityBlend = MathUtils.smoothstep(
-        speedRatio,
+        activePlaningSpeedRatio,
         0.15,
         0.65,
       );
@@ -649,34 +644,37 @@ export default function Boat() {
       );
     }
 
-    // Rapier resolves compound-hull obstacle and terrain contacts after
-    // the custom marine forces have been integrated for this fixed step.
+    if (!calibration) {
+      const environmentalDamage = environmentalForces.current.apply({
+        body,
+        vessel,
+        deltaSeconds: dt,
+        waterVelocity,
+        iceFactor: currentIceFactor,
+        submergedRatio,
+        throttle: thrustRaw,
+        tornadoPosition: sharedPhysics.tornadoPos,
+        whirlpoolPosition: sharedPhysics.whirlpoolPos,
+        random: simulationRandom.current,
+      });
+      hullHealth.current = Math.max(
+        0,
+        hullHealth.current - environmentalDamage.hullDamage,
+      );
+      engineHealth.current = Math.max(
+        0,
+        engineHealth.current - environmentalDamage.engineDamage,
+      );
+    }
 
-    // Extreme physics safety clamp to prevent space launches (Flying Boat Bug fix)
-    body.linearVelocity.x = MathUtils.clamp(body.linearVelocity.x, -80, 80);
-    body.linearVelocity.y = MathUtils.clamp(body.linearVelocity.y, -40, 40);
-    body.linearVelocity.z = MathUtils.clamp(body.linearVelocity.z, -80, 80);
-    const maxAngularSpeed = vessel.maxAngularSpeedRadPerSecond;
-    body.angularVelocity.set(
-      MathUtils.clamp(
-        body.angularVelocity.x,
-        -maxAngularSpeed,
-        maxAngularSpeed,
-      ),
-      MathUtils.clamp(
-        body.angularVelocity.y,
-        -maxAngularSpeed,
-        maxAngularSpeed,
-      ),
-      MathUtils.clamp(
-        body.angularVelocity.z,
-        -maxAngularSpeed,
-        maxAngularSpeed,
-      ),
-    );
+    // Rapier resolves compound-hull obstacle and terrain contacts after the
+    // custom marine forces have been integrated for this fixed step.
+    motionLimits.current.maxAngularSpeedRadPerSecond =
+      vessel.maxAngularSpeedRadPerSecond;
 
     // --- Integrate the accumulated six-degree-of-freedom forces ---
     body.integrate(dt);
+    body.enforceMotionLimits(motionLimits.current);
 
     const collisionSummary =
       calibration && !calibration.usesCollisionWorld
@@ -691,6 +689,10 @@ export default function Boat() {
               Math.abs(thrustRaw) > 0.1,
             calibration?.collisionFixture ?? null,
           );
+
+    // Contact impulses and penetration correction happen after integration,
+    // so validate and clamp the complete final state again.
+    body.enforceMotionLimits(motionLimits.current);
 
     if (collisionSummary) {
       sharedPhysics.collisionReady = 1;
@@ -797,106 +799,6 @@ export default function Boat() {
     const speed2D = Math.hypot(body.linearVelocity.x, body.linearVelocity.z);
     sharedPhysics.boatSpeed = Math.min(speed2D, 35.0);
 
-    if (!calibration) {
-    // --- PHASE 5: TORNADO / WATERSPOUT PHYSICS ---
-    // Tornado and Whirlpool are now independent hazards wandering the sea.
-    
-    // 1. TORNADO (Atmospheric Pull)
-    {
-        const tx = sharedPhysics.tornadoPos.x;
-        const tz = sharedPhysics.tornadoPos.z;
-        const dx = tx - body.position.x;
-        const dz = tz - body.position.z;
-        const distSq = dx*dx + dz*dz;
-        
-        if (distSq < 14400) { // 120m range for Tornado
-            const dist = Math.max(Math.sqrt(distSq), 1e-4);
-            const pullFactor = Math.pow(1.0 - (dist / 120.0), 2.0) * 12.0; 
-            const nx = dx / dist;
-            const nz = dz / dist;
-            
-            body.linearVelocity.x += nx * pullFactor * dt;
-            body.linearVelocity.z += nz * pullFactor * dt;
-            
-            if (dist < 40) {
-                body.angularVelocity.y += (simulationRandom.current.next() - 0.5) * 5.0 * dt;
-                body.linearVelocity.y += simulationRandom.current.next() * 6.0 * dt; 
-                hullHealth.current = Math.max(0, hullHealth.current - 10.0 * dt);
-            }
-        }
-    }
-
-    // 2. WHIRLPOOL (Oceanic Sucking Vortex)
-    {
-        const wx = sharedPhysics.whirlpoolPos.x;
-        const wz = sharedPhysics.whirlpoolPos.z;
-        const dx = wx - body.position.x;
-        const dz = wz - body.position.z;
-        const distSq = dx*dx + dz*dz;
-        
-        if (distSq < 25600) { // 160m total influence range match visual shader
-            const dist = Math.max(Math.sqrt(distSq), 1e-4);
-            const radius = 160.0;
-            const eyeWallRadius = 25.0; 
-            
-            // normalized distance factor (1.0 at center, 0.0 at edge) match smoothstep from shader
-            const f = 1.0 - MathUtils.smoothstep(dist, 0, radius);
-            const nx = dx / dist;
-            const nz = dz / dist;
-            
-            // --- Pure Suction & Swirl (Mathematical Rankine Vortex) ---
-            // Real whirlpools suck perfectly inwards and spiral
-            const radialPull = Math.pow(f, 2.0) * 45.0; // Smooth curve pulling in
-            body.linearVelocity.x += nx * radialPull * dt;
-            body.linearVelocity.z += nz * radialPull * dt;
-            
-            // --- Tangential Swirl ---
-            // Much faster spin, peaking right at the eye wall (Rankine model)
-            let swirlIntensity = 0;
-            if (dist > eyeWallRadius) {
-                // Irrotational flow: decays as 1/r
-                swirlIntensity = (eyeWallRadius / dist) * 120.0; 
-            } else {
-                // Solid body rotation inside the eye
-                swirlIntensity = (dist / eyeWallRadius) * 120.0;
-            }
-            
-            const fSwirlTotal = swirlIntensity;
-            
-            // Tangential vector is (-nz, nx) to match clockwise shader visual
-            body.linearVelocity.x += -nz * fSwirlTotal * dt;
-            body.linearVelocity.z += nx * fSwirlTotal * dt;
-            
-            // --- Roll/Coriolis Effect ---
-            // Tries to spin the boat to align perfectly with the swirl
-            body.angularVelocity.y += (fSwirlTotal * 0.05) * dt;
-
-            // --- The Eye Impact (Deep Plunge) ---
-            if (dist < 40) {
-                 const damageFactor = Math.pow(1.0 - dist/40.0, 2.0);
-                 hullHealth.current = Math.max(0, hullHealth.current - 15.0 * dt * damageFactor);
-                 engineHealth.current = Math.max(0, engineHealth.current - 5.0 * dt * damageFactor);
-                 
-                 // Structural shuddering near the terrifying eye
-                 body.linearVelocity.x += (simulationRandom.current.next() - 0.5) * 10.0 * damageFactor;
-                 body.linearVelocity.z += (simulationRandom.current.next() - 0.5) * 10.0 * damageFactor;
-                 body.angularVelocity.y += (simulationRandom.current.next() - 0.5) * 5.0 * damageFactor;
-                 
-                 if (dist < 18) {
-                    // Sucked directly down into the abyss
-                    hullHealth.current = Math.max(0, hullHealth.current - 50.0 * dt);
-                    body.linearVelocity.y -= 45.0 * dt; // Violent plunge into the void
-                    
-                    // Rip to exact center
-                    body.linearVelocity.x += nx * 40.0 * dt;
-                    body.linearVelocity.z += nz * 40.0 * dt;
-                 }
-            }
-        }
-    }
-
-    }
-
     // --- Update Telemetry UI & Health Degradation ---
     // 1 knot = 0.514444 m/s
     const speedKnots = speed2D / 0.514444;
@@ -967,12 +869,15 @@ export default function Boat() {
     }
     
     // Hull Health: Degrades very slowly from sustained planing (previously Phase 1)
-    if (speedRatio > 0.8) {
-       hullHealth.current = Math.max(0, hullHealth.current - (speedRatio * 0.1) * dt);
+    if (activePlaningSpeedRatio > 0.8) {
+       hullHealth.current = Math.max(
+         0,
+         hullHealth.current - activePlaningSpeedRatio * 0.1 * dt,
+       );
     }
 
     // Rudder Health: Degrades when turning sharply at high speeds
-    if (Math.abs(turnTorque) > 0.5 && speedRatio > 0.5) {
+    if (Math.abs(turnTorque) > 0.5 && surgeSpeedRatio > 0.5) {
        rudderHealth.current = Math.max(0, rudderHealth.current - (Math.abs(turnTorque) * 0.2) * dt);
     }
     
