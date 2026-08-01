@@ -1,5 +1,6 @@
 name: Apply Phase 5B water and hydrostatics
 
+# A second workflow-file commit registers the new branch workflow before use.
 on:
   push:
     branches:
