@@ -6,13 +6,13 @@ on:
       - agent/phase-4-release-validation
     paths:
       - '.github/workflows/phase5e-source-snapshot.yml'
-      - 'scripts/.phase5e-tuning-v6.patch.gz.b64'
+      - 'scripts/.phase5e-tuning-v7.patch.gz.b64'
   push:
     branches:
       - agent/phase-5e-physical-calibration
     paths:
       - '.github/workflows/phase5e-source-snapshot.yml'
-      - 'scripts/.phase5e-tuning-v6.patch.gz.b64'
+      - 'scripts/.phase5e-tuning-v7.patch.gz.b64'
 
 permissions:
   contents: read
@@ -46,11 +46,11 @@ jobs:
 
       - name: Verify and apply tuning patch
         run: |
-          echo 'eeffbeca02d3e98f55b741b787d06d6ceff241f4e146f7922ca49e87835ac8f3  scripts/.phase5e-tuning-v6.patch.gz.b64' | sha256sum --check
-          base64 --decode scripts/.phase5e-tuning-v6.patch.gz.b64 > "$RUNNER_TEMP/phase5e-tuning.patch.gz"
-          echo '533e2cbed71e8007d0c774a40dceed3b1c3217093ad435107611f6f1f19f2efb  '"$RUNNER_TEMP/phase5e-tuning.patch.gz" | sha256sum --check
+          echo '03d6d4d4b19520046fa3239a13aa9a8bce7824d2f01a2393accc0466a585ce33  scripts/.phase5e-tuning-v7.patch.gz.b64' | sha256sum --check
+          base64 --decode scripts/.phase5e-tuning-v7.patch.gz.b64 > "$RUNNER_TEMP/phase5e-tuning.patch.gz"
+          echo '86fe9f9855706265a9aabcb7f4cdf71212c0f5c36915b36151caa6e498474ea0  '"$RUNNER_TEMP/phase5e-tuning.patch.gz" | sha256sum --check
           gzip -dc "$RUNNER_TEMP/phase5e-tuning.patch.gz" > "$RUNNER_TEMP/phase5e-tuning.patch"
-          echo 'a431140cf612cb25ae9469ac80d375667b5b3c2bc86f3517baac2de2226e6f52  '"$RUNNER_TEMP/phase5e-tuning.patch" | sha256sum --check
+          echo 'c0373dfdc5054f6189a22d6dbe0815cca5183ed1dfb2030abb104555bf32c13f  '"$RUNNER_TEMP/phase5e-tuning.patch" | sha256sum --check
           git apply --check "$RUNNER_TEMP/phase5e-tuning.patch"
           git apply "$RUNNER_TEMP/phase5e-tuning.patch"
           git diff --check
