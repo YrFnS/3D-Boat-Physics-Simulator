@@ -47,6 +47,72 @@ export interface WinterLoadConfig {
   localPosition: readonly [number, number, number];
 }
 
+export interface MarineEngineConfig {
+  idleRpm: number;
+  ratedRpm: number;
+  maximumRpm: number;
+  ratedPowerW: number;
+  peakTorqueNm: number;
+  rpmRisePerSecond: number;
+  rpmFallPerSecond: number;
+  loadDroopFraction: number;
+  unloadedOverRevFraction: number;
+  gearRatioAhead: number;
+  gearRatioAstern: number;
+  drivelineEfficiency: number;
+  reversePowerFraction: number;
+  throttleDeadband: number;
+}
+
+export interface PropellerConfig {
+  pointLocal: readonly [number, number, number];
+  diameterM: number;
+  pitchRatio: number;
+  bladeCount: number;
+  expandedAreaRatio: number;
+  wakeFraction: number;
+  thrustDeductionFraction: number;
+  rotationDirection: -1 | 1;
+  hullReactionTorqueFraction: number;
+  thrustCoefficient: readonly [number, number, number];
+  torqueCoefficient: readonly [number, number, number];
+  maximumAbsAdvanceRatio: number;
+  maximumThrustCoefficient: number;
+  maximumReverseThrustCoefficient: number;
+  minimumTorqueCoefficient: number;
+  maximumTorqueCoefficient: number;
+  maximumThrustN: number;
+  cavitationTipSpeedMps: number;
+  cavitationReferenceSpeedMps: number;
+  cavitationLoadingThreshold: number;
+  minimumCavitationFactor: number;
+  ventilationStartSubmergenceM: number;
+  ventilationFullSubmergenceM: number;
+  minimumVentilationFactor: number;
+  propWashGain: number;
+}
+
+export interface RudderConfig {
+  pointLocal: readonly [number, number, number];
+  maximumAngleRad: number;
+  rateRadPerSecond: number;
+  areaM2: number;
+  aspectRatio: number;
+  liftSlopePerRad: number;
+  maximumLiftCoefficient: number;
+  stallAngleRad: number;
+  postStallLiftLossFraction: number;
+  baseDragCoefficient: number;
+  inducedDragFactor: number;
+  stallDragCoefficient: number;
+  maximumDragCoefficient: number;
+  maximumForceN: number;
+  propWashFraction: number;
+  ventilationStartSubmergenceM: number;
+  ventilationFullSubmergenceM: number;
+  minimumVentilationFactor: number;
+}
+
 export interface VesselConfig {
   type: VesselType;
   massKg: number;
@@ -54,10 +120,11 @@ export interface VesselConfig {
   angularDampingPerSecond: readonly [number, number, number];
   centerOfMassLocal: readonly [number, number, number];
   maxAngularSpeedRadPerSecond: number;
-  engineForceMaxN: number;
+  engine: MarineEngineConfig;
+  propeller: PropellerConfig;
+  rudder: RudderConfig;
   windAreaCoefficient: number;
   sideAreaMultiplier: number;
-  turnForceMax: number;
   halfLengthM: number;
   halfWidthM: number;
   baseDraftM: number;
@@ -67,13 +134,8 @@ export interface VesselConfig {
   hydrodynamics: HydrodynamicCoefficients;
   floodCompartments: readonly FloodCompartmentConfig[];
   winterLoad: WinterLoadConfig;
-  idleRpm: number;
-  maxRpmDelta: number;
-  maxRudderAngleRad: number;
   planingCapable: boolean;
   planingReferenceSpeedMps: number;
-  propellerPointLocal: readonly [number, number, number];
-  rudderPointLocal: readonly [number, number, number];
   windPointLocal: readonly [number, number, number];
 }
 
@@ -159,10 +221,71 @@ const VESSEL_CONFIGS = {
     angularDampingPerSecond: [1.15, 0.9, 1.35],
     centerOfMassLocal: [0, -0.15, 0.2],
     maxAngularSpeedRadPerSecond: 3.5,
-    engineForceMaxN: 12_000,
+    engine: {
+      idleRpm: 900,
+      ratedRpm: 3_600,
+      maximumRpm: 4_500,
+      ratedPowerW: 180_000,
+      peakTorqueNm: 560,
+      rpmRisePerSecond: 1_650,
+      rpmFallPerSecond: 2_700,
+      loadDroopFraction: 0.18,
+      unloadedOverRevFraction: 0.6,
+      gearRatioAhead: 2.4,
+      gearRatioAstern: 2.8,
+      drivelineEfficiency: 0.91,
+      reversePowerFraction: 0.72,
+      throttleDeadband: 0.035,
+    },
+    propeller: {
+      pointLocal: [0, -0.45, 2.25],
+      diameterM: 0.65,
+      pitchRatio: 0.85,
+      bladeCount: 4,
+      expandedAreaRatio: 0.62,
+      wakeFraction: 0.18,
+      thrustDeductionFraction: 0.12,
+      rotationDirection: 1,
+      hullReactionTorqueFraction: 0.35,
+      thrustCoefficient: [0.19, -0.11, -0.02],
+      torqueCoefficient: [0.032, -0.015, -0.003],
+      maximumAbsAdvanceRatio: 1.65,
+      maximumThrustCoefficient: 0.24,
+      maximumReverseThrustCoefficient: 0.16,
+      minimumTorqueCoefficient: 0.006,
+      maximumTorqueCoefficient: 0.04,
+      maximumThrustN: 20_000,
+      cavitationTipSpeedMps: 54,
+      cavitationReferenceSpeedMps: 12,
+      cavitationLoadingThreshold: 1.15,
+      minimumCavitationFactor: 0.62,
+      ventilationStartSubmergenceM: 0.03,
+      ventilationFullSubmergenceM: 0.32,
+      minimumVentilationFactor: 0.08,
+      propWashGain: 0.9,
+    },
+    rudder: {
+      pointLocal: [0, -0.35, 2.1],
+      maximumAngleRad: 0.8,
+      rateRadPerSecond: 1.8,
+      areaM2: 0.42,
+      aspectRatio: 1.8,
+      liftSlopePerRad: 4.2,
+      maximumLiftCoefficient: 1.15,
+      stallAngleRad: 0.52,
+      postStallLiftLossFraction: 0.62,
+      baseDragCoefficient: 0.11,
+      inducedDragFactor: 0.13,
+      stallDragCoefficient: 0.72,
+      maximumDragCoefficient: 1.25,
+      maximumForceN: 8_000,
+      propWashFraction: 0.72,
+      ventilationStartSubmergenceM: 0.02,
+      ventilationFullSubmergenceM: 0.28,
+      minimumVentilationFactor: 0.05,
+    },
     windAreaCoefficient: 15,
     sideAreaMultiplier: 4.5,
-    turnForceMax: 1.5,
     halfLengthM: TRAWLER_HALF_LENGTH_M,
     halfWidthM: TRAWLER_HALF_WIDTH_M,
     baseDraftM: -0.8,
@@ -299,13 +422,8 @@ const VESSEL_CONFIGS = {
       maximumMassKg: 110,
       localPosition: [0, 1.05, 0.15],
     },
-    idleRpm: 1_000,
-    maxRpmDelta: 3_500,
-    maxRudderAngleRad: 0.8,
     planingCapable: false,
     planingReferenceSpeedMps: 15,
-    propellerPointLocal: [0, -0.45, 2.25],
-    rudderPointLocal: [0, -0.35, 2.1],
     windPointLocal: [0, 1.65, 0.7],
   },
   speedboat: {
@@ -315,10 +433,71 @@ const VESSEL_CONFIGS = {
     angularDampingPerSecond: [1.25, 1.05, 1.8],
     centerOfMassLocal: [0, -0.22, 0.35],
     maxAngularSpeedRadPerSecond: 2,
-    engineForceMaxN: 22_000,
+    engine: {
+      idleRpm: 900,
+      ratedRpm: 6_200,
+      maximumRpm: 7_000,
+      ratedPowerW: 360_000,
+      peakTorqueNm: 620,
+      rpmRisePerSecond: 2_700,
+      rpmFallPerSecond: 3_600,
+      loadDroopFraction: 0.14,
+      unloadedOverRevFraction: 0.72,
+      gearRatioAhead: 1.65,
+      gearRatioAstern: 1.9,
+      drivelineEfficiency: 0.92,
+      reversePowerFraction: 0.62,
+      throttleDeadband: 0.035,
+    },
+    propeller: {
+      pointLocal: [0, -0.35, 1.95],
+      diameterM: 0.48,
+      pitchRatio: 1.05,
+      bladeCount: 3,
+      expandedAreaRatio: 0.68,
+      wakeFraction: 0.1,
+      thrustDeductionFraction: 0.08,
+      rotationDirection: -1,
+      hullReactionTorqueFraction: 0.28,
+      thrustCoefficient: [0.22, -0.12, -0.025],
+      torqueCoefficient: [0.035, -0.016, -0.0035],
+      maximumAbsAdvanceRatio: 1.75,
+      maximumThrustCoefficient: 0.27,
+      maximumReverseThrustCoefficient: 0.18,
+      minimumTorqueCoefficient: 0.006,
+      maximumTorqueCoefficient: 0.045,
+      maximumThrustN: 28_000,
+      cavitationTipSpeedMps: 78,
+      cavitationReferenceSpeedMps: 22,
+      cavitationLoadingThreshold: 1.25,
+      minimumCavitationFactor: 0.55,
+      ventilationStartSubmergenceM: 0.015,
+      ventilationFullSubmergenceM: 0.22,
+      minimumVentilationFactor: 0.05,
+      propWashGain: 1,
+    },
+    rudder: {
+      pointLocal: [0, -0.15, 1.8],
+      maximumAngleRad: 0.5,
+      rateRadPerSecond: 2.6,
+      areaM2: 0.22,
+      aspectRatio: 1.4,
+      liftSlopePerRad: 3.8,
+      maximumLiftCoefficient: 1.05,
+      stallAngleRad: 0.45,
+      postStallLiftLossFraction: 0.68,
+      baseDragCoefficient: 0.12,
+      inducedDragFactor: 0.16,
+      stallDragCoefficient: 0.82,
+      maximumDragCoefficient: 1.4,
+      maximumForceN: 18_000,
+      propWashFraction: 0.82,
+      ventilationStartSubmergenceM: 0.01,
+      ventilationFullSubmergenceM: 0.18,
+      minimumVentilationFactor: 0.04,
+    },
     windAreaCoefficient: 5,
     sideAreaMultiplier: 2,
-    turnForceMax: 13.5,
     halfLengthM: SPEEDBOAT_HALF_LENGTH_M,
     halfWidthM: SPEEDBOAT_HALF_WIDTH_M,
     baseDraftM: -0.4,
@@ -455,13 +634,8 @@ const VESSEL_CONFIGS = {
       maximumMassKg: 48,
       localPosition: [0, 0.52, 0.05],
     },
-    idleRpm: 1_000,
-    maxRpmDelta: 6_000,
-    maxRudderAngleRad: 0.5,
     planingCapable: true,
     planingReferenceSpeedMps: 15,
-    propellerPointLocal: [0, -0.35, 1.95],
-    rudderPointLocal: [0, -0.15, 1.8],
     windPointLocal: [0, 0.85, 0.35],
   },
 } as const satisfies Readonly<Record<VesselType, VesselConfig>>;

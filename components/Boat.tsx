@@ -12,6 +12,13 @@ import { FixedStepRunner } from '@/sim/core/FixedStepRunner';
 import { SixDofBody } from '@/sim/core/SixDofBody';
 import { SeededRandom } from '@/sim/core/SeededRandom';
 import { getVesselConfig } from '@/sim/vessels/VesselConfig';
+import { createWaterSurfaceSample } from '@/sim/water/WaterSurface';
+import {
+  computeRudderHydrodynamics,
+  MarinePropulsionSystem,
+  moveToward,
+  resolveRudderForceComponents,
+} from '@/sim/vessels/PropulsionSystem';
 import { SectionalHydrostatics } from '@/sim/vessels/SectionalHydrostatics';
 import { FloodingModel } from '@/sim/vessels/FloodingModel';
 import { displacementBalanceErrorRatio } from '@/sim/vessels/HydrostaticsMath';
@@ -42,6 +49,7 @@ export default function Boat() {
   const fixedStepRunner = useRef(new FixedStepRunner());
   const simulationRandom = useRef(new SeededRandom(0xb0475eed));
   const sectionalHydrostatics = useRef(new SectionalHydrostatics());
+  const propulsionSystem = useRef(new MarinePropulsionSystem());
   const floodingModel = useRef(new FloodingModel());
   const previousCompartmentExposure = useRef<Record<string, number>>({});
   const configuredVesselType = useRef<string | null>(null);
@@ -57,7 +65,6 @@ export default function Boat() {
   const previousQuaternion = useRef(new Quaternion());
   const currentQuaternion = useRef(new Quaternion());
   const lastSubmergedRatio = useRef(1);
-  const engineRPM = useRef(1000); // Base idle RPM
   const rudderAngle = useRef(0);
   const trawlerEngineRef = useRef<Group>(null);
   const speedboatEngineLRef = useRef<Group>(null);
@@ -79,6 +86,18 @@ export default function Boat() {
       windVelocity: new Vector3(),
       waterVelocity: new Vector3(),
       baseCurrentVelocity: new Vector3(),
+      propellerPointVelocity: new Vector3(),
+      propellerWaterVelocity: new Vector3(),
+      propellerRelativeVelocity: new Vector3(),
+      rudderPointVelocity: new Vector3(),
+      rudderWaterVelocity: new Vector3(),
+      rudderRelativeVelocity: new Vector3(),
+      rudderFlowDirection: new Vector3(),
+      rudderLiftDirection: new Vector3(),
+      rudderDragForce: new Vector3(),
+      propellerReactionTorque: new Vector3(),
+      propellerWaterSample: createWaterSurfaceSample(),
+      rudderWaterSample: createWaterSurfaceSample(),
       thrustForce: new Vector3(),
       apparentWind: new Vector3(),
       apparentWindDir: new Vector3(),
@@ -125,6 +144,7 @@ export default function Boat() {
       engineTemperature.current = 20;
       floodingModel.current.reset(vessel);
       sectionalHydrostatics.current.reset(vessel);
+      propulsionSystem.current.reset(vessel.engine);
       previousCompartmentExposure.current = {};
       configuredVesselType.current = vessel.type;
       sharedPhysics.maximumSlamSeverity = 0;
@@ -165,7 +185,7 @@ export default function Boat() {
     engineHealth.current = 100;
     rudderHealth.current = 100;
     engineTemperature.current = 20;
-    engineRPM.current = vessel.idleRpm;
+    propulsionSystem.current.reset(vessel.engine);
     rudderAngle.current = 0;
     telemetryAccumulator.current = 0;
     floodingModel.current.reset(vessel);
@@ -198,6 +218,20 @@ export default function Boat() {
     sharedPhysics.centerOfBuoyancy.copy(body.position);
     sharedPhysics.averageWaterVelocity.set(0, 0, 0);
     sharedPhysics.maximumSlamSeverity = 0;
+    sharedPhysics.engineRpm = vessel.engine.idleRpm;
+    sharedPhysics.shaftRpm = 0;
+    sharedPhysics.deliveredShaftPowerW = 0;
+    sharedPhysics.absorbedShaftPowerW = 0;
+    sharedPhysics.propellerThrustN = 0;
+    sharedPhysics.propellerAdvanceRatio = 0;
+    sharedPhysics.propellerLoadRatio = 0;
+    sharedPhysics.cavitationFactor = 1;
+    sharedPhysics.ventilationFactor = 1;
+    sharedPhysics.propWashSpeedMps = 0;
+    sharedPhysics.rudderAngleRad = 0;
+    sharedPhysics.rudderForceN = 0;
+    sharedPhysics.rudderFlowSpeedMps = 0;
+    sharedPhysics.rudderAngleOfAttackRad = 0;
     sharedPhysics.simulationTime = 0;
     sharedPhysics.renderTime = 0;
     store.setTelemetry(0, 0, 100, 100, 20, 100);
@@ -270,6 +304,7 @@ export default function Boat() {
     if (configuredVesselType.current !== vessel.type) {
       floodingModel.current.reset(vessel);
       sectionalHydrostatics.current.reset(vessel);
+      propulsionSystem.current.reset(vessel.engine);
       previousCompartmentExposure.current = {};
       configuredVesselType.current = vessel.type;
       lastSubmergedRatio.current = 0.75;
@@ -345,9 +380,7 @@ export default function Boat() {
 
     // --- Vessel Dynamics Configuration ---
     const mass = floodingResult.physicalMassKg;
-    const engineForceMax = vessel.engineForceMaxN;
     const windCoeff = vessel.windAreaCoefficient;
-    const turnForceMax = vessel.turnForceMax;
 
     // Physics keeps pitch and roll in these axes. Horizontal projection is
     // reserved for navigation heading after the completed simulation step.
@@ -413,6 +446,9 @@ export default function Boat() {
     const hullDragPenalty =
       1 + ((100 - hullHealth.current) / 100) * 0.8;
 
+    const sampleWater = calibration
+      ? sampleFlatCalibrationWater
+      : sampleOceanSurface;
     const hydrostaticResult = sectionalHydrostatics.current.apply({
       body,
       vessel,
@@ -425,9 +461,7 @@ export default function Boat() {
       buoyancyAvailabilityByCompartment:
         floodingResult.buoyancyAvailabilityByCompartment,
       physicalMassKg: mass,
-      sampleWater: calibration
-        ? sampleFlatCalibrationWater
-        : sampleOceanSurface,
+      sampleWater,
     });
     const submergedRatio = hydrostaticResult.submergedRatio;
     const waterVelocity = scratch.waterVelocity.copy(
@@ -500,64 +534,90 @@ export default function Boat() {
       activePlaningSpeedRatio *
       submergedRatio;
 
-    // --- ENGINE STRESS & RPM MODULATION ---
-    let targetRPM =
-      engineHealth.current <= 0
-        ? 0
-        : vessel.idleRpm + Math.abs(thrustRaw) * vessel.maxRpmDelta;
-    
-    // Determine engine load. 
-    // High load = moving slow but demanding full thrust (takes longer to spool up).
-    // Low load = jumping in the air (spools instantly, redlines).
-    let rpmLerpRate = 2.0; // Default spool rate
-    
-    if (submergedRatio <= 0.05) {
-        // Airborne: No resistance, instantly over-revs
-        rpmLerpRate = 12.0; 
-        targetRPM *= 1.5; // Redline spike
-        targetRPM += Math.sin(time * 30.0) * 1000.0; // Stick-slip rev limiter sound physically vibrating the engine
-    } else if (Math.abs(thrustRaw) > 0.5 && Math.abs(vRelForward) < 2.0) {
-        // High load: Pushing hard but moving slow (water resistance) -> slow spool
-        rpmLerpRate = 0.8;
-    } else {
-        // Normal spooling based on speed matching
-        rpmLerpRate = 2.0 + (surgeSpeedRatio * 2.0);
-    }
-    
-    engineRPM.current = MathUtils.lerp(engineRPM.current, targetRPM, rpmLerpRate * dt);
-    
-    // Calculate final effective thrust from physical RPM, not just throttle position
-    const effectiveThrustRatio =
-      engineHealth.current <= 0
-        ? 0
-        : (engineRPM.current - vessel.idleRpm) / vessel.maxRpmDelta;
-    
-    // --- PHASE 2: Engine Efficiency & Misfires ---
-    const engineHealthEfficiency = MathUtils.clamp(engineHealth.current / 100, 0, 1);
-    // Overheat causes temporary massive efficiency drop. At 100C, efficiency drops sharply.
-    const overheatPenalty = engineTemperature.current > 90 ? Math.max(0.2, 1.0 - ((engineTemperature.current - 90) / 20)) : 1.0;
-    
-    let thrustMultiplier = MathUtils.clamp(submergedRatio * 1.5, 0, 1) * engineHealthEfficiency * overheatPenalty;
-    
-    // If the engine is severely damaged, use a time-based failure rate so
-    // behavior is independent of render frame rate.
+    // --- ENGINE, DRIVELINE, AND PROPELLER OPEN-WATER MODEL ---
+    body.localPointToWorld(
+      scratch.localPropeller.fromArray(vessel.propeller.pointLocal),
+      scratch.worldPropeller,
+    );
+    const propellerWaterSample = sampleWater(
+      scratch.worldPropeller.x,
+      scratch.worldPropeller.z,
+      time,
+      scratch.propellerWaterSample,
+    );
+    body.velocityAtPoint(
+      scratch.worldPropeller,
+      scratch.propellerPointVelocity,
+    );
+    scratch.propellerWaterVelocity
+      .set(
+        propellerWaterSample.velocityX,
+        propellerWaterSample.velocityY,
+        propellerWaterSample.velocityZ,
+      )
+      .add(baseCurrentVelocity);
+    const propellerAdvanceSpeedMps = scratch.propellerRelativeVelocity
+      .copy(scratch.propellerPointVelocity)
+      .sub(scratch.propellerWaterVelocity)
+      .dot(forwardDir);
+    const propellerSubmergenceM = Math.max(
+      0,
+      propellerWaterSample.y - scratch.worldPropeller.y,
+    );
+
+    const engineHealthEfficiency = MathUtils.clamp(
+      engineHealth.current / 100,
+      0,
+      1,
+    );
+    const temperatureEfficiency =
+      engineTemperature.current > 90
+        ? Math.max(
+            0.2,
+            1 - (engineTemperature.current - 90) / 20,
+          )
+        : 1;
+    let combustionEfficiency = 1;
     if (engineHealth.current > 0 && engineHealth.current < 40) {
       const damageRatio = (40 - engineHealth.current) / 40;
       const misfireProbability = 1 - Math.exp(-damageRatio * 8 * dt);
       if (simulationRandom.current.next() < misfireProbability) {
-        thrustMultiplier *= simulationRandom.current.next() * 0.2;
-        engineRPM.current *= MathUtils.lerp(1, 0.4, dt * 10);
+        combustionEfficiency = MathUtils.lerp(
+          0.08,
+          0.28,
+          simulationRandom.current.next(),
+        );
       }
     }
 
-    const thrustDirection = thrustRaw < 0 ? -1 : 1;
-    const thrustForce = scratch.thrustForce.copy(forwardDir).multiplyScalar(
-      Math.abs(effectiveThrustRatio) *
-        thrustDirection *
-        engineForceMax *
-        thrustMultiplier,
+    const propulsionResult = propulsionSystem.current.step(
+      vessel.engine,
+      vessel.propeller,
+      {
+        deltaSeconds: dt,
+        throttle: thrustRaw,
+        engineHealthRatio: engineHealthEfficiency,
+        temperatureEfficiency,
+        combustionEfficiency,
+        waterDensityKgM3: vessel.waterDensityKgM3,
+        propellerAdvanceSpeedMps,
+        propellerSubmergenceM,
+      },
     );
-    
+    const thrustForce = scratch.thrustForce
+      .copy(forwardDir)
+      .multiplyScalar(propulsionResult.propellerThrustN);
+    body.addTorque(
+      scratch.propellerReactionTorque
+        .copy(forwardDir)
+        .multiplyScalar(
+          -vessel.propeller.rotationDirection *
+            Math.sign(propulsionResult.shaftRpm) *
+            propulsionResult.shaftTorqueNm *
+            vessel.propeller.hullReactionTorqueFraction,
+        ),
+    );
+
     // DIRECTIONAL WIND CATCHING
     const apparentWind = scratch.apparentWind
       .copy(windVelocity)
@@ -583,10 +643,6 @@ export default function Boat() {
       Math.sqrt(apparentWindLengthSq) * trueWindCoeff,
     );
 
-    body.localPointToWorld(
-      scratch.localPropeller.fromArray(vessel.propellerPointLocal),
-      scratch.worldPropeller,
-    );
     body.addForceAtPoint(thrustForce, scratch.worldPropeller);
     body.localPointToWorld(
       scratch.localWind.fromArray(vessel.windPointLocal),
@@ -612,63 +668,74 @@ export default function Boat() {
     // Ice, tornado, and whirlpool loads are accumulated below through the
     // environmental force model before the authoritative integration step.
 
-    // --- ADVANCED RUDDER & PROP WASH SYSTEM ---
-    // Rudder takes time to turn to target angle
-    let targetRudder = steerRaw * vessel.maxRudderAngleRad;
-    const normalizedSteeringSpeed =
-      Math.abs(vRelForward) /
-      Math.max(1, vessel.planingReferenceSpeedMps);
-    // Planing hulls retain useful authority through normal cruise, then
-    // taper again at extreme speed so full steering remains controllable.
-    const highSpeedRudderAuthority = vessel.planingCapable
-      ? MathUtils.lerp(
-          1,
-          0.76,
-          MathUtils.smoothstep(normalizedSteeringSpeed, 0.45, 1.1),
-        ) *
-        MathUtils.lerp(
-          1,
-          0.5,
-          MathUtils.smoothstep(normalizedSteeringSpeed, 1.1, 2),
-        )
-      : MathUtils.lerp(
-          1,
-          0.72,
-          MathUtils.smoothstep(normalizedSteeringSpeed, 0.8, 1.5),
-        );
-    targetRudder *= highSpeedRudderAuthority;
-    
-    // --- PHASE 2: Rudder Damage Penalty ---
-    // If rudder health is low, max turning angle drops significantly
-    const rudderAuth = MathUtils.clamp(rudderHealth.current / 100, 0, 1);
-    targetRudder *= rudderAuth;
-
-    // At extreme damage, rudder wiggles and jitters from broken linkages
+    // --- LOCAL-FLOW RUDDER WITH SIGNED PROP WASH ---
+    const rudderHealthRatio = MathUtils.clamp(
+      rudderHealth.current / 100,
+      0,
+      1,
+    );
+    let targetRudder =
+      steerRaw * vessel.rudder.maximumAngleRad * rudderHealthRatio;
     if (rudderHealth.current > 0 && rudderHealth.current < 40) {
-      targetRudder += (simulationRandom.current.next() - 0.5) * 0.15;
+      targetRudder +=
+        (simulationRandom.current.next() - 0.5) *
+        vessel.rudder.maximumAngleRad *
+        0.3;
     }
-    
-    rudderAngle.current = MathUtils.lerp(rudderAngle.current, targetRudder, 4.0 * dt);
-    
-    // The rudder gets bite (turning power) from two sources:
-    // 1. Water flowing past it due to the boat's speed (vRelForward)
-    // 2. Prop wash - water being blasted directly over the rudder by the propeller (effectiveThrustRatio)
-    // This prop wash allows doing sharp full-throttle turns from a standstill.
-    
-    const propWashBite = Math.abs(effectiveThrustRatio) * 3.5;
-    const speedBite = Math.abs(vRelForward) * 0.5;
-    
-    // You cannot steer if the prop/rudder is out of the water. Planing
-    // hulls also lose effective rudder bite as dynamic pressure rises, which
-    // prevents an arcade-like pivot at full speed.
-    const steeringBiteLimit = vessel.planingCapable ? 4 : 6;
-    const steeringBite =
-      Math.max(
-        0.1,
-        Math.min(speedBite + propWashBite, steeringBiteLimit),
-      ) * submergedRatio;
-    
-    const turnTorque = rudderAngle.current * steeringBite * turnForceMax;
+    rudderAngle.current = moveToward(
+      rudderAngle.current,
+      targetRudder,
+      vessel.rudder.rateRadPerSecond * dt,
+    );
+
+    body.localPointToWorld(
+      scratch.localRudder.fromArray(vessel.rudder.pointLocal),
+      scratch.worldRudder,
+    );
+    const rudderWaterSample = sampleWater(
+      scratch.worldRudder.x,
+      scratch.worldRudder.z,
+      time,
+      scratch.rudderWaterSample,
+    );
+    body.velocityAtPoint(
+      scratch.worldRudder,
+      scratch.rudderPointVelocity,
+    );
+    scratch.rudderWaterVelocity
+      .set(
+        rudderWaterSample.velocityX,
+        rudderWaterSample.velocityY,
+        rudderWaterSample.velocityZ,
+      )
+      .add(baseCurrentVelocity);
+    scratch.rudderRelativeVelocity
+      .copy(scratch.rudderPointVelocity)
+      .sub(scratch.rudderWaterVelocity);
+    const rudderForwardFlowMps =
+      scratch.rudderRelativeVelocity.dot(forwardDir) +
+      propulsionResult.propWashSpeedMps * vessel.rudder.propWashFraction;
+    const rudderRightFlowMps =
+      scratch.rudderRelativeVelocity.dot(rightDir);
+    const rudderSubmergenceM = Math.max(
+      0,
+      rudderWaterSample.y - scratch.worldRudder.y,
+    );
+    const rudderHydrodynamics = computeRudderHydrodynamics({
+      config: vessel.rudder,
+      waterDensityKgM3: vessel.waterDensityKgM3,
+      forwardFlowMps: rudderForwardFlowMps,
+      rightFlowMps: rudderRightFlowMps,
+      rudderAngleRad: rudderAngle.current,
+      submergenceM: rudderSubmergenceM,
+      healthRatio: rudderHealthRatio,
+    });
+
+    const rudderForceComponents = resolveRudderForceComponents(
+      rudderHydrodynamics,
+      rudderForwardFlowMps,
+      rudderRightFlowMps,
+    );
     const uprightY = scratch.boatUp
       .set(0, 1, 0)
       .applyQuaternion(body.quaternion).y;
@@ -677,18 +744,13 @@ export default function Boat() {
       0.08,
       0.78,
     );
-    const rudderForceMagnitude =
-      turnTorque * mass * 0.7 * uprightSteeringAuthority;
-    body.localPointToWorld(
-      scratch.localRudder.fromArray(vessel.rudderPointLocal),
-      scratch.worldRudder,
-    );
-    body.addForceAtPoint(
-      scratch.rudderForce
-        .copy(rightDir)
-        .multiplyScalar(-rudderForceMagnitude),
-      scratch.worldRudder,
-    );
+    scratch.rudderForce
+      .copy(forwardDir)
+      .multiplyScalar(rudderForceComponents.forwardN)
+      .addScaledVector(rightDir, rudderForceComponents.rightN)
+      .multiplyScalar(uprightSteeringAuthority);
+    const appliedRudderForceN = scratch.rudderForce.length();
+    body.addForceAtPoint(scratch.rudderForce, scratch.worldRudder);
 
     if (vessel.planingCapable && activePlaningSpeedRatio > 0.15) {
       // atan2(sin, cos) provides a signed roll error through the full
@@ -964,15 +1026,34 @@ export default function Boat() {
     
     // Engine Temperature: Coils up based on RPM over 2800, cools down otherwise
     // Realistic marine engines have constant sea-water cooling, meaning they stabilize safely near 70-80C at max RPM
-    let targetTemp = 20 + (Math.max(0, engineRPM.current - 2800) / 4200) * 65; 
-    
-    // Cooling is much more efficient than heating at low RPMs (raw water intake is consistent)
-    let tempLerpRate = engineRPM.current > 3500 ? 0.012 : 0.025; // Faster cooling at low revs (was 0.008)
+    const normalizedEngineRpm = MathUtils.clamp(
+      propulsionResult.engineRpm / Math.max(1, vessel.engine.ratedRpm),
+      0,
+      1.25,
+    );
+    const normalizedShaftPower = MathUtils.clamp(
+      propulsionResult.absorbedShaftPowerW /
+        Math.max(1, vessel.engine.ratedPowerW),
+      0,
+      1.25,
+    );
+    let targetTemp =
+      20 + normalizedEngineRpm * 32 + normalizedShaftPower * 34;
+
+    // Cooling is much more efficient than heating at low RPMs because the
+    // raw-water circuit continues to exchange heat near idle.
+    let tempLerpRate =
+      propulsionResult.engineRpm > vessel.engine.ratedRpm * 0.7
+        ? 0.012
+        : 0.025;
     
     // Water cooling if severely sinking
     if (submergedRatio > 0.95) {
        tempLerpRate = 0.5; // Rapid cooling when submerged
-    } else if (submergedRatio <= 0.01 && targetRPM > 3000) {
+    } else if (
+      propulsionResult.ventilationFactor < 0.15 &&
+      propulsionResult.engineRpm > vessel.engine.ratedRpm * 0.7
+    ) {
        // Starved of cooling water AND revving high (Prop completely jumped out of water into open air)
        targetTemp = 105; // Tightened cap (was 110)
        tempLerpRate = 0.03; // Further reduced from 0.035
@@ -1014,8 +1095,14 @@ export default function Boat() {
     }
 
     // Rudder Health: Degrades when turning sharply at high speeds
-    if (Math.abs(turnTorque) > 0.5 && surgeSpeedRatio > 0.5) {
-       rudderHealth.current = Math.max(0, rudderHealth.current - (Math.abs(turnTorque) * 0.2) * dt);
+    const rudderLoadRatio =
+      appliedRudderForceN / Math.max(1, vessel.rudder.maximumForceN);
+    if (rudderLoadRatio > 0.45 && surgeSpeedRatio > 0.5) {
+      rudderHealth.current = Math.max(
+        0,
+        rudderHealth.current -
+          (rudderLoadRatio - 0.45) * 2.4 * dt,
+      );
     }
     
     // --- Phase 5: Active Repair / Bilge Mechanics ---
@@ -1075,6 +1162,25 @@ export default function Boat() {
       sharedPhysics.maximumSlamSeverity,
       hydrostaticResult.maximumSlamSeverity,
     );
+    sharedPhysics.engineRpm = propulsionResult.engineRpm;
+    sharedPhysics.shaftRpm = propulsionResult.shaftRpm;
+    sharedPhysics.deliveredShaftPowerW =
+      propulsionResult.deliveredShaftPowerW;
+    sharedPhysics.absorbedShaftPowerW =
+      propulsionResult.absorbedShaftPowerW;
+    sharedPhysics.propellerThrustN =
+      propulsionResult.propellerThrustN;
+    sharedPhysics.propellerAdvanceRatio = propulsionResult.advanceRatio;
+    sharedPhysics.propellerLoadRatio = propulsionResult.loadRatio;
+    sharedPhysics.cavitationFactor = propulsionResult.cavitationFactor;
+    sharedPhysics.ventilationFactor = propulsionResult.ventilationFactor;
+    sharedPhysics.propWashSpeedMps = propulsionResult.propWashSpeedMps;
+    sharedPhysics.rudderAngleRad = rudderAngle.current;
+    sharedPhysics.rudderForceN = appliedRudderForceN;
+    sharedPhysics.rudderFlowSpeedMps =
+      rudderHydrodynamics.flowSpeedMps;
+    sharedPhysics.rudderAngleOfAttackRad =
+      rudderHydrodynamics.angleOfAttackRad;
 
     lastSubmergedRatio.current = submergedRatio;
     currentPosition.current.copy(body.position);
@@ -1203,7 +1309,7 @@ export default function Boat() {
         forwardDir,
         state.camera.position,
         state.camera.quaternion,
-        engineRPM.current,
+        propulsionSystem.current.result.engineRpm,
         isSpeedboat,
         speed2D,
         submergedRatio,
