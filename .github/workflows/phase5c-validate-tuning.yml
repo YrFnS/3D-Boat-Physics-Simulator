@@ -40,11 +40,11 @@ jobs:
 
       - name: Reconstruct and apply measured tuning
         run: |
-          echo 'e7b3fc069a2eb0404c2bda23249492461226a3c8ea110455d07d384248db5bbd  scripts/.phase5c-tuning-patch.b64' | sha256sum --check
+          echo '93302e8fc71cf1e8562736228ab9fb39ec01b5f55c49016844da8a159068d0f0  scripts/.phase5c-tuning-patch.b64' | sha256sum --check
           base64 --decode scripts/.phase5c-tuning-patch.b64 > "$RUNNER_TEMP/phase5c-tuning.patch.gz"
-          echo 'bfb427f4bac1a009edf480fbbe242e183edab4ff0a4d28158dac56f4c87ecce7  '"$RUNNER_TEMP/phase5c-tuning.patch.gz" | sha256sum --check
+          echo '9e125b1b2605f0aad96b9aaaedf3bd8179af16602188e59c21c4fda186eac91d  '"$RUNNER_TEMP/phase5c-tuning.patch.gz" | sha256sum --check
           gzip -dc "$RUNNER_TEMP/phase5c-tuning.patch.gz" > "$RUNNER_TEMP/phase5c-tuning.patch"
-          echo '8ee333a46b487b1d3112ec96a609a8567a2215f3b522d466115f09df1ad767e9  '"$RUNNER_TEMP/phase5c-tuning.patch" | sha256sum --check
+          echo '68959318571498ad29e6e423983669b27cb4b778abaa31f502a1a846a4cc6995  '"$RUNNER_TEMP/phase5c-tuning.patch" | sha256sum --check
           git apply --check "$RUNNER_TEMP/phase5c-tuning.patch"
           git apply "$RUNNER_TEMP/phase5c-tuning.patch"
           git diff --check
