@@ -1,6 +1,11 @@
 name: Apply Phase 5C propulsion and maneuvering
 
 on:
+  pull_request:
+    branches:
+      - agent/phase-4-release-validation
+    paths:
+      - '.github/workflows/phase5c-apply.yml'
   push:
     branches:
       - agent/phase-5c-propulsion-maneuvering
@@ -11,12 +16,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: phase5c-apply-${{ github.ref }}
+  group: phase5c-apply-${{ github.event.pull_request.head.ref || github.ref }}
   cancel-in-progress: false
 
 jobs:
   apply:
-    if: github.actor != 'github-actions[bot]'
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/phase-5c-propulsion-maneuvering'
     name: Verify, apply, validate, and publish
     runs-on: ubuntu-latest
     timeout-minutes: 45
