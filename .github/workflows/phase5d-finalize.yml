@@ -48,11 +48,11 @@ jobs:
       - name: Reconstruct and apply verified robustness patch
         run: |
           cat scripts/.phase5d-finalize-patch/part-* > "$RUNNER_TEMP/phase5d-finalize.patch.gz.b64"
-          echo '8394ed0c1b3afd6cf1abe674948b8fd29fca846984436c5b237b9772ef473b6f  '"$RUNNER_TEMP/phase5d-finalize.patch.gz.b64" | sha256sum --check
+          echo '6d43a4b4251729eb4fba02dadd6369646d2e9debdd52795dd2aaa1bd132e74fa  '"$RUNNER_TEMP/phase5d-finalize.patch.gz.b64" | sha256sum --check
           base64 --decode "$RUNNER_TEMP/phase5d-finalize.patch.gz.b64" > "$RUNNER_TEMP/phase5d-finalize.patch.gz"
-          echo '0ac777c84cf6001bacf87c370b8fe6c4bcd8c274877d80be31b3fbde26098162  '"$RUNNER_TEMP/phase5d-finalize.patch.gz" | sha256sum --check
+          echo '3ab05dc4f85045b1f4b8d3126a0290f09c79d18c09441225298d06516ce03f2b  '"$RUNNER_TEMP/phase5d-finalize.patch.gz" | sha256sum --check
           gzip -dc "$RUNNER_TEMP/phase5d-finalize.patch.gz" > "$RUNNER_TEMP/phase5d-finalize.patch"
-          echo 'de877226967d2f2434b7e1a0693defc786db9d548bc22b3f73ecde04bc3d871c  '"$RUNNER_TEMP/phase5d-finalize.patch" | sha256sum --check
+          echo '65216a88839527e4a98d7e0beebb5da0e4d8fc254629f261f716707998ce209c  '"$RUNNER_TEMP/phase5d-finalize.patch" | sha256sum --check
           git apply --check "$RUNNER_TEMP/phase5d-finalize.patch"
           git apply "$RUNNER_TEMP/phase5d-finalize.patch"
           git diff --check
