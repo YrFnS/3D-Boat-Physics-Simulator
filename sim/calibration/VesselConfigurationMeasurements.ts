@@ -3,7 +3,7 @@ import {
   getVesselConfig,
   type VesselConfig,
   type VesselType,
-} from '../vessels/VesselConfig';
+} from '../vessels/VesselConfig.ts';
 
 /**
  * Convert the current simulator configuration into a deterministic measurement
