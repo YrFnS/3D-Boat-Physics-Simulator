@@ -46,7 +46,6 @@ jobs:
 
       - name: Reconstruct and apply tuning patch
         run: |
-          echo '44c18ae276995c11b28e953040eb244a0fa22235babf4ec841efe9f33357b85a  scripts/.phase5e-tuning.patch.gz.b64' | sha256sum --check
           base64 --decode scripts/.phase5e-tuning.patch.gz.b64 > "$RUNNER_TEMP/phase5e-tuning.patch.gz"
           echo 'df0e85053341c8a8f0b59d33045e761e7e1bdd737441ea7162d3895044e5d110  '"$RUNNER_TEMP/phase5e-tuning.patch.gz" | sha256sum --check
           gzip -dc "$RUNNER_TEMP/phase5e-tuning.patch.gz" > "$RUNNER_TEMP/phase5e-tuning.patch"
