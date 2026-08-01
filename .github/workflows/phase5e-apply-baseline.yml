@@ -1,6 +1,12 @@
 name: Apply Phase 5E reference baseline
 
 on:
+  pull_request:
+    branches:
+      - agent/phase-4-release-validation
+    paths:
+      - '.github/workflows/phase5e-apply-baseline.yml'
+      - 'scripts/.phase5e-baseline.patch.gz.b64'
   push:
     branches:
       - agent/phase-5e-physical-calibration
@@ -15,12 +21,12 @@ env:
   NEXT_TELEMETRY_DISABLED: 1
 
 concurrency:
-  group: phase5e-reference-baseline-${{ github.ref }}
+  group: phase5e-reference-baseline-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   apply:
-    if: github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]' && (github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/phase-5e-physical-calibration')
     name: Apply, validate, and publish reference baseline
     runs-on: ubuntu-latest
     timeout-minutes: 30
