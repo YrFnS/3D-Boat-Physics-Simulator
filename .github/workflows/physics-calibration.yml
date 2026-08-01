@@ -12,6 +12,7 @@ on:
       - store/useSimStore.ts
       - scripts/physics-calibration.mjs
       - scripts/physics-correctness.mjs
+      - scripts/physical-calibration-contract.mjs
       - package.json
       - package-lock.json
       - .github/workflows/physics-calibration.yml
@@ -28,6 +29,7 @@ on:
       - store/useSimStore.ts
       - scripts/physics-calibration.mjs
       - scripts/physics-correctness.mjs
+      - scripts/physical-calibration-contract.mjs
       - package.json
       - package-lock.json
       - .github/workflows/physics-calibration.yml
@@ -91,10 +93,12 @@ jobs:
           cat /tmp/boat-calibration-server.log
           exit 1
 
-      - name: Run deterministic vessel calibration
+      - name: Run deterministic vessel calibration and physical comparison
         id: calibration
         continue-on-error: true
-        run: node scripts/physics-calibration.mjs
+        run: >-
+          node --experimental-strip-types --no-warnings
+          scripts/physics-calibration.mjs
 
       - name: Collect server log
         if: always()
