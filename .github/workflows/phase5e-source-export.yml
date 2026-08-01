@@ -1,0 +1,31 @@
+name: Phase 5E exact source export
+
+on:
+  push:
+    branches:
+      - agent/phase-5e-physical-calibration
+    paths:
+      - '.github/workflows/phase5e-source-export.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    name: Package exact Phase 5E source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5e-physical-calibration
+      - name: Package source including hidden files
+        run: tar --exclude=.git -czf "$RUNNER_TEMP/phase5e-source.tar.gz" .
+      - name: Upload exact source
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase5e-exact-source
+          path: ${{ runner.temp }}/phase5e-source.tar.gz
+          include-hidden-files: true
+          retention-days: 1
