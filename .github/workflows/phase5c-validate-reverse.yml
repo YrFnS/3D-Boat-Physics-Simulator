@@ -40,7 +40,6 @@ jobs:
 
       - name: Reconstruct and apply reverse-maneuvering fixtures
         run: |
-          echo '434a82948703ee8fbf7c1daebc50d9ad8c856922c94f8a68dec0e52aac443e71  scripts/.phase5c-reverse-patch.b64' | sha256sum --check
           base64 --decode scripts/.phase5c-reverse-patch.b64 > "$RUNNER_TEMP/phase5c-reverse.patch.gz"
           echo '78362a7c15cca02786b49b7d71aff2dbdb329f8b9d06a0a552345b5399bd6b8e  '"$RUNNER_TEMP/phase5c-reverse.patch.gz" | sha256sum --check
           gzip -dc "$RUNNER_TEMP/phase5c-reverse.patch.gz" > "$RUNNER_TEMP/phase5c-reverse.patch"
@@ -95,6 +94,7 @@ jobs:
         if: always()
         run: |
           mkdir -p artifacts/phase5c-reverse-validation
+          touch artifacts/phase5c-reverse-validation/placeholder.txt
           cp /tmp/phase5c-reverse-server.log artifacts/phase5c-reverse-validation/server.log || true
           cp -R artifacts/physics-calibration artifacts/phase5c-reverse-validation/ || true
           cp -R artifacts/visual-smoke artifacts/phase5c-reverse-validation/ || true
