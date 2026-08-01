@@ -3,6 +3,8 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { evaluatePhysicalCalibrationReport } from '../sim/calibration/PhysicalCalibration.ts';
 import { PHYSICAL_REFERENCE_PROFILES } from '../sim/calibration/ReferenceProfiles.ts';
+import { EXTERNAL_REFERENCE_PROFILES } from '../sim/calibration/ExternalReferenceProfiles.ts';
+import { VESSEL_CONFIGURATION_MEASUREMENTS } from '../sim/calibration/VesselConfigurationMeasurements.ts';
 
 const baseUrl = process.env.CALIBRATION_BASE_URL ?? 'http://127.0.0.1:3000';
 const outputDirectory = path.resolve('artifacts/physics-calibration');
@@ -29,6 +31,17 @@ const scenarios = vessels.flatMap((vessel) =>
     scenario,
     queryKey,
   })),
+);
+const physicalProfiles = [
+  ...PHYSICAL_REFERENCE_PROFILES,
+  ...EXTERNAL_REFERENCE_PROFILES,
+];
+const configurationScenarioEntries = VESSEL_CONFIGURATION_MEASUREMENTS.map(
+  (measurement) => ({
+    vessel: measurement.vessel,
+    scenario: measurement.scenario,
+    calibration: { result: measurement },
+  }),
 );
 
 const browser = await chromium.launch({
@@ -164,11 +177,12 @@ report.summary = {
 };
 
 // Physical-reference comparison is deliberately separate from the simulator's
-// pass/fail result. Simulator-baseline profiles exercise the Phase 5E pipeline
-// but cannot certify real-world agreement.
+// pass/fail result. The v1 baselines exercise regression continuity. Provisional
+// manufacturer profiles expose current geometry, loading, power, and speed gaps
+// but cannot certify real-world agreement without matched trial evidence.
 report.physicalCalibration = evaluatePhysicalCalibrationReport(
-  report.scenarios,
-  PHYSICAL_REFERENCE_PROFILES,
+  [...report.scenarios, ...configurationScenarioEntries],
+  physicalProfiles,
 );
 
 await Promise.all([
