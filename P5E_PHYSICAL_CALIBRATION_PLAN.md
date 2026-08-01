@@ -65,19 +65,50 @@ Official manufacturer values are stored separately from engineering assumptions.
 
 ### 5E.1 — Reference data and derived-target foundation
 
-- [ ] Add typed reference-vessel profiles with official source metadata.
-- [ ] Add unit-safe helpers for knots, horsepower, Froude number, geometric ratios, and displacement/power metrics.
-- [ ] Add deterministic tests for source completeness and derived quantities.
-- [ ] Generate a machine-readable report comparing the current simulator proxies with the reference classes.
-- [ ] Keep this checkpoint observational: do not silently alter runtime handling while establishing the independent baseline.
+- [x] Add typed reference-vessel profiles with official source metadata.
+- [x] Add unit-safe helpers for knots, horsepower, Froude number, geometric ratios, and displacement/power metrics.
+- [x] Add deterministic tests for source completeness and derived quantities.
+- [x] Generate a machine-readable report comparing the current simulator proxies with the reference classes.
+- [x] Keep the first checkpoint observational and preserve the exact pre-tuning baseline.
 
 ### 5E.2 — Propulsion and resistance calibration
 
-- [ ] Replace the trawler's high-speed internal envelope with a displacement-regime Froude target based on the Nordhavn reference.
-- [ ] Bring the speedboat's maximum Froude number and cruise region into the Axopar reference range.
-- [ ] Calibrate rated power, propeller loading, resistance, ahead/astern ratio, acceleration, and stopping behavior.
-- [ ] Preserve power-limited propulsion, signed water-relative flow, cavitation, ventilation, and reverse behavior.
-- [ ] Record before/after dimensional and nondimensional metrics.
+- [x] Replace the trawler's high-speed internal envelope with a displacement-regime Froude target based on the Nordhavn reference.
+- [x] Bring the speedboat's maximum Froude number and cruise region into the Axopar reference range.
+- [x] Calibrate rated power, propeller loading, resistance, ahead/astern ratio, acceleration, and stopping behavior.
+- [x] Preserve power-limited propulsion, signed water-relative flow, cavitation, ventilation, and reverse behavior.
+- [x] Record before/after dimensional and nondimensional metrics.
+
+## Validated propulsion and maneuvering checkpoint
+
+The permanent source was promoted in commit `c0c2d72527d67133f8c1f50d2a06935e9459af51` after an exact candidate passed all source-level checks and all 20 deterministic browser scenarios. Temporary payload and export workflows were deleted in the same commit.
+
+No acceptance range was widened to make the candidate pass. The official reference profiles and scale-normalized target ranges were established before tuning, and the runtime parameters were then moved into those ranges.
+
+### Final calibrated measurements
+
+| Metric | Original trawler | Calibrated trawler | Original speedboat | Calibrated speedboat |
+|---|---:|---:|---:|---:|
+| Rated power | 240.0 kW | 10.0 kW | 360.0 kW | 109.5 kW |
+| Steady ahead speed | 9.58263 m/s | 2.69166 m/s | 22.01584 m/s | 13.51715 m/s |
+| Steady astern speed | 5.83685 m/s | 1.74166 m/s | 7.03294 m/s | 5.48741 m/s |
+| Stopping time | 14.15000 s | 10.61667 s | 13.16667 s | 12.66667 s |
+| Stopping distance | 31.29862 m | 15.02133 m | 52.54029 m | 38.74196 m |
+| Forward turn radius | 6.30528 m | 5.49847 m | 31.04722 m | 20.94066 m |
+| Reverse turn radius | 7.41070 m | 3.62499 m | 4.01243 m | 3.50750 m |
+
+### Permanent physical changes
+
+- The trawler is power-limited to the Nordhavn-derived specific-power regime instead of being driven by a 240 kW gameplay engine.
+- The speedboat remains inside the Axopar-derived upper specific-power boundary while using a physically plausible planing onset.
+- Powered planing and throttle-off coasting use separate wetted-resistance states, so cutting power restores drag rather than preserving the minimum powered-planing drag indefinitely.
+- Astern rudder authority is explicit and independently bounded instead of reusing full ahead-flow steering authority.
+- Grounding uses underwater terrain friction and a longer reverse-release probe rather than dry-contact friction that could trap a vessel indefinitely.
+- The power, cavitation, reverse-flow, collision, finite-state, and reference-profile tests remain independent permanent gates.
+
+### Evidence boundary
+
+This checkpoint proves that the procedural proxies operate in plausible reference-class power and speed regimes and pass the deterministic maneuvering matrix. It does not claim that either mesh reproduces a specific Nordhavn 41 or Axopar 22 hull, and it does not replace proprietary hydrostatic tables, CFD, or instrumented full-scale trials.
 
 ### 5E.3 — Hydrostatics and stability calibration
 
@@ -89,19 +120,19 @@ Official manufacturer values are stored separately from engineering assumptions.
 
 ### 5E.4 — Maneuvering and sea-state calibration
 
-- [ ] Calibrate forward and reverse turning-radius-to-length ratios.
-- [ ] Calibrate stopping-distance-to-length ratios.
+- [x] Calibrate forward and reverse turning-radius-to-length ratios.
+- [x] Calibrate stopping-distance-to-length ratios.
 - [ ] Add head, following, and beam-sea scenarios with fixed wave spectra.
 - [ ] Add crosswind and current scenarios using water-relative measurements.
-- [ ] Confirm no false planing, unstable energy growth, or collision regression.
+- [x] Confirm no false planing, unstable energy growth, or collision regression in the propulsion checkpoint.
 
 ### 5E.5 — Exact-head validation
 
-- [ ] Pass the expanded independent physical-reference suite.
-- [ ] Pass all existing marine and collision regressions.
-- [ ] Pass the complete browser calibration matrix.
-- [ ] Pass visual smoke, product experience, and Chromium/Firefox/WebKit release validation.
-- [ ] Document uncertainty, unresolved data gaps, and any intentionally deferred CFD or sea-trial work.
+- [ ] Pass the expanded independent physical-reference suite on the final checkpoint head.
+- [ ] Pass all existing marine and collision regressions on the final checkpoint head.
+- [ ] Pass the complete browser calibration matrix on the final checkpoint head.
+- [ ] Pass visual smoke, product experience, and Chromium/Firefox/WebKit release validation on the final checkpoint head.
+- [x] Document uncertainty, unresolved data gaps, and intentionally deferred CFD or sea-trial work.
 
 ## Exit criteria
 
