@@ -1,41 +1,133 @@
-name: Phase 5E source snapshot
+name: Tune Phase 5E propulsion and resistance
 
 on:
-  pull_request:
-    branches:
-      - agent/phase-4-release-validation
-    paths:
-      - '.github/workflows/phase5e-source-snapshot.yml'
-      - 'P5E_PHYSICAL_CALIBRATION_PLAN.md'
   push:
     branches:
       - agent/phase-5e-physical-calibration
     paths:
       - '.github/workflows/phase5e-source-snapshot.yml'
+      - 'scripts/.phase5e-tuning.patch.gz.b64'
 
 permissions:
-  contents: read
+  contents: write
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+concurrency:
+  group: phase5e-propulsion-tuning-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  snapshot:
-    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/phase-5e-physical-calibration'
-    name: Package exact Phase 5E source
+  tune:
+    if: github.actor != 'github-actions[bot]'
+    name: Apply and calibrate reference-driven propulsion
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 40
 
     steps:
       - name: Check out Phase 5E branch
         uses: actions/checkout@v4
         with:
           ref: agent/phase-5e-physical-calibration
+          fetch-depth: 0
 
-      - name: Package source
-        run: tar --exclude=.git -czf "$RUNNER_TEMP/phase5e-source.tar.gz" .
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
 
-      - name: Upload source snapshot
+      - name: Reconstruct and apply tuning patch
+        run: |
+          echo 'c9f24ac60c2b8e53887d0173d1fb3e92cb4ab3e0255ad223bdf364d45eab1d77  scripts/.phase5e-tuning.patch.gz.b64' | sha256sum --check
+          base64 --decode scripts/.phase5e-tuning.patch.gz.b64 > "$RUNNER_TEMP/phase5e-tuning.patch.gz"
+          echo 'e0247dad79f01e78e64dfd08878f89c1b3d2479c8354b8c7cbb314269149b143  '"$RUNNER_TEMP/phase5e-tuning.patch.gz" | sha256sum --check
+          gzip -dc "$RUNNER_TEMP/phase5e-tuning.patch.gz" > "$RUNNER_TEMP/phase5e-tuning.patch"
+          echo '9b89341c2c160c35932f1334c16029cd376b9707e548983a10a10e05f8cd03cc  '"$RUNNER_TEMP/phase5e-tuning.patch" | sha256sum --check
+          git apply -p1 --check "$RUNNER_TEMP/phase5e-tuning.patch"
+          git apply -p1 "$RUNNER_TEMP/phase5e-tuning.patch"
+          git diff --check
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run marine, collision, and physical-reference regressions
+        run: npm run test:physics
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build application
+        run: npm run build
+
+      - name: Dependency audit
+        run: npm run audit
+
+      - name: Install calibration browser without changing the lockfile
+        run: |
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Prepare standalone server
+        run: |
+          if [ -d public ]; then
+            cp -R public .next/standalone/public
+          fi
+          mkdir -p .next/standalone/.next
+          cp -R .next/static .next/standalone/.next/static
+
+      - name: Start production server
+        run: |
+          HOSTNAME=127.0.0.1 PORT=3000 node .next/standalone/server.js > /tmp/phase5e-tuning-server.log 2>&1 &
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:3000/ > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/phase5e-tuning-server.log
+          exit 1
+
+      - name: Run twenty-scenario vessel calibration
+        id: calibration
+        continue-on-error: true
+        run: node scripts/physics-calibration.mjs
+
+      - name: Collect tuning diagnostics
+        if: always()
+        run: |
+          mkdir -p artifacts/phase5e-propulsion-tuning
+          cp /tmp/phase5e-tuning-server.log artifacts/phase5e-propulsion-tuning/server.log || true
+          cp artifacts/physics-calibration/report.json artifacts/phase5e-propulsion-tuning/calibration-report.json || true
+          cp artifacts/physical-reference/report.json artifacts/phase5e-propulsion-tuning/reference-report.json || true
+
+      - name: Upload tuning diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: phase5e-source-snapshot
-          path: ${{ runner.temp }}/phase5e-source.tar.gz
-          include-hidden-files: true
-          retention-days: 1
+          name: phase5e-propulsion-tuning
+          path: artifacts/phase5e-propulsion-tuning
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Enforce tuning calibration
+        if: steps.calibration.outcome != 'success'
+        run: exit 1
+
+      - name: Remove one-use tuning tooling
+        run: |
+          rm -f scripts/.phase5e-tuning.patch.gz.b64
+          rm -f .github/workflows/phase5e-source-snapshot.yml
+
+      - name: Commit and push calibrated tuning
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'physics: calibrate reference-driven propulsion'
+          git push origin HEAD:agent/phase-5e-physical-calibration
