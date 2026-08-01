@@ -373,8 +373,10 @@ export class VesselCalibrationRunner {
       };
     }
     if (this.request.scenario === 'turn') {
+      // Sectional hydrostatics and added-mass damping require a slightly
+      // higher representative approach to enter the unchanged speed envelope.
       const approachThrottle =
-        this.request.vessel === 'speedboat' ? 0.24 : 0.82;
+        this.request.vessel === 'speedboat' ? 0.25 : 0.82;
       if (this.turnMeasurementComplete) {
         return { throttle: 0.35, steer: 0 };
       }
