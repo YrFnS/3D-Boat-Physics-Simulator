@@ -6,13 +6,13 @@ on:
       - agent/phase-4-release-validation
     paths:
       - '.github/workflows/phase5e-source-snapshot.yml'
-      - 'scripts/.phase5e-tuning-v7.patch.gz.b64'
+      - 'scripts/.phase5e-tuning-v6.patch.gz.b64'
   push:
     branches:
       - agent/phase-5e-physical-calibration
     paths:
       - '.github/workflows/phase5e-source-snapshot.yml'
-      - 'scripts/.phase5e-tuning-v7.patch.gz.b64'
+      - 'scripts/.phase5e-tuning-v6.patch.gz.b64'
 
 permissions:
   contents: read
@@ -44,14 +44,40 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Verify and apply tuning patch
+      - name: Verify and apply validated v6 tuning patch
         run: |
-          base64 --decode scripts/.phase5e-tuning-v7.patch.gz.b64 > "$RUNNER_TEMP/phase5e-tuning.patch.gz"
-          echo '86fe9f9855706265a9aabcb7f4cdf71212c0f5c36915b36151caa6e498474ea0  '"$RUNNER_TEMP/phase5e-tuning.patch.gz" | sha256sum --check
+          echo 'eeffbeca02d3e98f55b741b787d06d6ceff241f4e146f7922ca49e87835ac8f3  scripts/.phase5e-tuning-v6.patch.gz.b64' | sha256sum --check
+          base64 --decode scripts/.phase5e-tuning-v6.patch.gz.b64 > "$RUNNER_TEMP/phase5e-tuning.patch.gz"
+          echo '533e2cbed71e8007d0c774a40dceed3b1c3217093ad435107611f6f1f19f2efb  '"$RUNNER_TEMP/phase5e-tuning.patch.gz" | sha256sum --check
           gzip -dc "$RUNNER_TEMP/phase5e-tuning.patch.gz" > "$RUNNER_TEMP/phase5e-tuning.patch"
-          echo 'c0373dfdc5054f6189a22d6dbe0815cca5183ed1dfb2030abb104555bf32c13f  '"$RUNNER_TEMP/phase5e-tuning.patch" | sha256sum --check
+          echo 'a431140cf612cb25ae9469ac80d375667b5b3c2bc86f3517baac2de2226e6f52  '"$RUNNER_TEMP/phase5e-tuning.patch" | sha256sum --check
           git apply --check "$RUNNER_TEMP/phase5e-tuning.patch"
           git apply "$RUNNER_TEMP/phase5e-tuning.patch"
+
+      - name: Apply bounded final adjustments
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          boat = Path('components/Boat.tsx')
+          boat_text = boat.read_text(encoding='utf-8')
+          old_drag = "      0.318,\n"
+          new_drag = "      0.3,\n"
+          if boat_text.count(old_drag) != 1:
+              raise SystemExit('expected one powered-planing drag value')
+          boat.write_text(boat_text.replace(old_drag, new_drag, 1), encoding='utf-8')
+
+          config = Path('sim/vessels/VesselConfig.ts')
+          config_text = config.read_text(encoding='utf-8')
+          old_astern = "      asternAuthorityFactor: 0.78,\n"
+          new_astern = "      asternAuthorityFactor: 0.73,\n"
+          if config_text.count(old_astern) != 1:
+              raise SystemExit('expected one speedboat astern-authority value')
+          config.write_text(
+              config_text.replace(old_astern, new_astern, 1),
+              encoding='utf-8',
+          )
+          PY
           git diff --check
 
       - name: Install dependencies
