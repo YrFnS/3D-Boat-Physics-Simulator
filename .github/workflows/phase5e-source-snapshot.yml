@@ -62,7 +62,7 @@ jobs:
           boat = Path('components/Boat.tsx')
           boat_text = boat.read_text(encoding='utf-8')
           old_drag = "      0.318,\n"
-          new_drag = "      0.3,\n"
+          new_drag = "      0.28,\n"
           if boat_text.count(old_drag) != 1:
               raise SystemExit('expected one powered-planing drag value')
           boat.write_text(boat_text.replace(old_drag, new_drag, 1), encoding='utf-8')
@@ -70,7 +70,7 @@ jobs:
           config = Path('sim/vessels/VesselConfig.ts')
           config_text = config.read_text(encoding='utf-8')
           old_astern = "      asternAuthorityFactor: 0.78,\n"
-          new_astern = "      asternAuthorityFactor: 0.73,\n"
+          new_astern = "      asternAuthorityFactor: 0.71,\n"
           if config_text.count(old_astern) != 1:
               raise SystemExit('expected one speedboat astern-authority value')
           config.write_text(
