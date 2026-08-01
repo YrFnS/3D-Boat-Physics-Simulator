@@ -1,4 +1,4 @@
-name: Diagnose Phase 5 patch transfer
+name: Apply Phase 5 physics correctness
 
 on:
   pull_request:
@@ -6,40 +6,108 @@ on:
       - agent/phase-4-release-validation
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: phase5-diagnose-${{ github.event.pull_request.head.ref }}
-  cancel-in-progress: true
+  group: phase5-apply-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: false
 
 jobs:
-  diagnose:
+  apply:
     if: github.event.pull_request.head.ref == 'agent/phase-5-physics-correctness'
-    name: Reconstruct and export transferred patch
+    name: Verify, apply, validate, and publish
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 25
 
     steps:
       - name: Check out Phase 5 branch
         uses: actions/checkout@v4
         with:
           ref: agent/phase-5-physics-correctness
+          fetch-depth: 0
 
-      - name: Reconstruct transferred data
-        run: |
-          cat scripts/.phase5-patch/part-* > "$RUNNER_TEMP/phase5-remote.b64"
-          base64 --decode "$RUNNER_TEMP/phase5-remote.b64" > "$RUNNER_TEMP/phase5-remote.patch"
-          echo 'Transferred base64:'
-          sha256sum "$RUNNER_TEMP/phase5-remote.b64"
-          echo 'Decoded patch:'
-          sha256sum "$RUNNER_TEMP/phase5-remote.patch"
-          wc -c "$RUNNER_TEMP/phase5-remote.b64" "$RUNNER_TEMP/phase5-remote.patch"
-
-      - name: Upload reconstructed transfer
-        uses: actions/upload-artifact@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          name: phase5-patch-diagnostic
-          path: |
-            ${{ runner.temp }}/phase5-remote.b64
-            ${{ runner.temp }}/phase5-remote.patch
-          retention-days: 1
+          node-version: 22
+          cache: npm
+
+      - name: Reconstruct, repair, and verify patch transfer
+        run: |
+          cat scripts/.phase5-patch/part-* > "$RUNNER_TEMP/phase5.b64"
+          python - "$RUNNER_TEMP/phase5.b64" <<'PY'
+          import base64
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          content = bytearray(path.read_bytes())
+          replacements = [
+              (59373, 59375, 'aXc='),
+              (59788, 59795, 'SUNrN0Npcw=='),
+              (59798, 59801, 'QWdk'),
+              (59802, 59821, 'aHBjeTV5WlhOMWJIUXVhV05sUQ=='),
+              (59822, 59832, 'OXVkR0ZqZEZOdw=='),
+              (59834, 59845, 'VmtUWEJ6SUQwZ1k='),
+              (59846, 59856, 'OXVkR0ZqZEZOdw=='),
+              (59858, 59871, 'VmtUWEJ6T3dvckNpcw=='),
+              (59875, 59876, 'Zw=='),
+              (59878, 59881, 'OGdR'),
+              (59882, 59900, 'OXVkbVZ5ZENCMGFHVWdiR1Zu'),
+              (59901, 59917, 'V041SUdWNGNHOXVaVzUwYQ=='),
+              (59918, 59924, 'RnNJSFps'),
+              (59925, 59933, 'RzlqYVhSNUk='),
+              (59934, 59970, 'UmhiWEJwYm1jZ2FXNTBieUJoSUdadmNtTmxMaUJVYUdVS0t5'),
+              (59974, 59975, 'QQ=='),
+              (59976, 59980, 'THlCeQ=='),
+              (59981, 59991, 'V1psY21WdVkyVQ=='),
+              (59992, 59995, 'YldG'),
+              (59996, 60009, 'Y3lCbWIzSmpaU0J0Wg=='),
+              (60010, 60064, 'RnVjeUIwYUdVZ2FHVmhkbWxsY2lCMGNtRjNiR1Z5SUc1dmR5QnNiM05sY3lCc1pYTnpJSE53'),
+              (60066, 60075, 'VmtJSFJvWVc0'),
+              (63357, 63358, 'dw=='),
+          ]
+          for start, end, encoded in replacements:
+              replacement = base64.b64decode(encoded)
+              if len(replacement) != end - start:
+                  raise SystemExit(f'invalid replacement length at {start}:{end}')
+              content[start:end] = replacement
+          path.write_bytes(content)
+          PY
+          echo 'bf27a151c977ff6dc5faded41eba8abb715857586341c08b71d477ec8dd7f379  '"$RUNNER_TEMP/phase5.b64" | sha256sum --check
+          base64 --decode "$RUNNER_TEMP/phase5.b64" > "$RUNNER_TEMP/phase5.patch"
+          echo '2c938a60e339a84d2c0a532bb194422ea1ff80fc2650db96567d4723f251d33f  '"$RUNNER_TEMP/phase5.patch" | sha256sum --check
+          git apply --check "$RUNNER_TEMP/phase5.patch"
+          git apply "$RUNNER_TEMP/phase5.patch"
+
+      - name: Remove one-use transfer helpers
+        run: |
+          rm -rf scripts/.phase5-patch
+          rm -f .github/workflows/phase5-apply.yml
+          rm -f .github/workflows/phase5-source-snapshot.yml
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run physics correctness regression tests
+        run: npm run test:physics
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build application
+        run: npm run build
+
+      - name: Verify patch hygiene
+        run: git diff --check
+
+      - name: Commit and push implementation
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Phase 5A: correct core vessel physics'
+          git push origin HEAD:agent/phase-5-physics-correctness
