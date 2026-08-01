@@ -193,6 +193,7 @@ export class RapierCollisionWorld {
     obstacleData: Float32Array,
     debugProbeEnabled = false,
     fixtureKind: CollisionFixtureKind | null = null,
+    effectiveMassKg = vessel.massKg,
   ): RapierContactSummary {
     this.ensureVessel(body, vessel);
     const vesselBody = this.vesselBody;
@@ -218,8 +219,11 @@ export class RapierCollisionWorld {
     this.world.step();
 
     const summary = createEmptySummary();
+    const contactMassKg = Number.isFinite(effectiveMassKg)
+      ? Math.max(1, effectiveMassKg)
+      : vessel.massKg;
     let totalCorrectionM = 0;
-    let remainingNormalImpulseNs = vessel.massKg * 18;
+    let remainingNormalImpulseNs = contactMassKg * 18;
     const visitedPairs = new Set<string>();
 
     for (const vesselCollider of this.vesselColliders) {
@@ -302,8 +306,8 @@ export class RapierCollisionWorld {
             const responseScale = isTerrain ? 0.72 : 0.6;
             const impulseNs = Math.min(
               remainingNormalImpulseNs,
-              vessel.massKg * 12,
-              impactSpeedMps * vessel.massKg * responseScale,
+              contactMassKg * 12,
+              impactSpeedMps * contactMassKg * responseScale,
             );
 
             if (impulseNs > 0) {
@@ -321,12 +325,12 @@ export class RapierCollisionWorld {
             if (tangentSpeedMps > 1e-5) {
               const frictionImpulseNs = Math.min(
                 tangentSpeedMps *
-                  vessel.massKg *
+                  contactMassKg *
                   (isTerrain ? 0.18 : 0.06),
-                vessel.massKg * (isTerrain ? 2.5 : 0.8),
+                contactMassKg * (isTerrain ? 2.5 : 0.8),
                 Math.max(
                   impulseNs,
-                  vessel.massKg * predictiveDepthM * 0.9,
+                  contactMassKg * predictiveDepthM * 0.9,
                 ) *
                   (isTerrain ? 0.75 : 0.3),
               );

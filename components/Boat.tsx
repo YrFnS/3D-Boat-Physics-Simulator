@@ -5,17 +5,18 @@ import { useFrame } from '@react-three/fiber';
 import { Vector3, Group, MathUtils, Quaternion } from 'three';
 import { MeshDistortMaterial } from '@react-three/drei';
 import { useSimStore, sharedPhysics } from '@/store/useSimStore';
-import { getWaveHeight } from './Ocean';
+import { sampleOceanSurface } from './Ocean';
 import { useBoatAudio } from './boat/useBoatAudio';
 import { useBoatVisualDamage } from './boat/useBoatVisualDamage';
 import { FixedStepRunner } from '@/sim/core/FixedStepRunner';
 import { SixDofBody } from '@/sim/core/SixDofBody';
 import { SeededRandom } from '@/sim/core/SeededRandom';
 import { getVesselConfig } from '@/sim/vessels/VesselConfig';
-import { DistributedHullForces } from '@/sim/vessels/DistributedHullForces';
+import { SectionalHydrostatics } from '@/sim/vessels/SectionalHydrostatics';
+import { FloodingModel } from '@/sim/vessels/FloodingModel';
+import { displacementBalanceErrorRatio } from '@/sim/vessels/HydrostaticsMath';
 import { EnvironmentalForces } from '@/sim/vessels/EnvironmentalForces';
 import {
-  effectiveDraftOffset,
   normalizedSurgeSpeed,
   planingSpeedRatio,
   waterRelativeSurgeSpeed,
@@ -40,7 +41,12 @@ export default function Boat() {
   const physicsBody = useRef(new SixDofBody());
   const fixedStepRunner = useRef(new FixedStepRunner());
   const simulationRandom = useRef(new SeededRandom(0xb0475eed));
-  const distributedHullForces = useRef(new DistributedHullForces());
+  const sectionalHydrostatics = useRef(new SectionalHydrostatics());
+  const floodingModel = useRef(new FloodingModel());
+  const previousCompartmentExposure = useRef<Record<string, number>>({});
+  const configuredVesselType = useRef<string | null>(null);
+  const addedMass = useRef<[number, number, number]>([0, 0, 0]);
+  const addedInertia = useRef<[number, number, number]>([0, 0, 0]);
   const environmentalForces = useRef(new EnvironmentalForces());
   const rapierCollisionWorld = useRef<RapierCollisionWorld | null>(null);
   const collisionTestEnabled = useRef(false);
@@ -72,6 +78,7 @@ export default function Boat() {
       rightDir: new Vector3(),
       windVelocity: new Vector3(),
       waterVelocity: new Vector3(),
+      baseCurrentVelocity: new Vector3(),
       thrustForce: new Vector3(),
       apparentWind: new Vector3(),
       apparentWindDir: new Vector3(),
@@ -102,10 +109,6 @@ export default function Boat() {
   const engineTemperature = useRef(20);
   const rudderHealth = useRef(100);
   
-  // Phase 4: Slam calculation state
-  const prevVelocityY = useRef(0);
-  const prevSubmergedRatio = useRef(1.0);
-
   // Read active boat reactively to trigger re-renders
   const activeBoat = useSimStore((state) => state.activeBoat);
   const instantRepairTrigger = useSimStore((state) => state.instantRepairTrigger);
@@ -115,12 +118,19 @@ export default function Boat() {
   // Instant Repair Reset Catch
   useEffect(() => {
     if (instantRepairTrigger > 0) {
+      const vessel = getVesselConfig(activeBoat);
       hullHealth.current = 100;
       engineHealth.current = 100;
       rudderHealth.current = 100;
       engineTemperature.current = 20;
+      floodingModel.current.reset(vessel);
+      sectionalHydrostatics.current.reset(vessel);
+      previousCompartmentExposure.current = {};
+      configuredVesselType.current = vessel.type;
+      sharedPhysics.maximumSlamSeverity = 0;
+      useSimStore.getState().setFloodingTelemetry(0, 0);
     }
-  }, [instantRepairTrigger]);
+  }, [activeBoat, instantRepairTrigger]);
 
   useEffect(() => {
     const vesselRequest = parseCalibrationRequest(window.location.search);
@@ -157,9 +167,12 @@ export default function Boat() {
     engineTemperature.current = 20;
     engineRPM.current = vessel.idleRpm;
     rudderAngle.current = 0;
-    prevVelocityY.current = 0;
-    prevSubmergedRatio.current = 1;
     telemetryAccumulator.current = 0;
+    floodingModel.current.reset(vessel);
+    sectionalHydrostatics.current.reset(vessel);
+    previousCompartmentExposure.current = {};
+    configuredVesselType.current = vessel.type;
+    lastSubmergedRatio.current = 0.75;
 
     runner.initialize(body, vessel);
     previousPosition.current.copy(body.position);
@@ -177,9 +190,18 @@ export default function Boat() {
     sharedPhysics.boatQuaternion.copy(body.quaternion);
     sharedPhysics.boatLinearVelocity.set(0, 0, 0);
     sharedPhysics.boatAngularVelocity.set(0, 0, 0);
+    sharedPhysics.displacedVolumeM3 = 0;
+    sharedPhysics.floodingRatio = 0;
+    sharedPhysics.floodedVolumeM3 = 0;
+    sharedPhysics.physicalMassKg = vessel.massKg;
+    sharedPhysics.displacementBalanceErrorRatio = 0;
+    sharedPhysics.centerOfBuoyancy.copy(body.position);
+    sharedPhysics.averageWaterVelocity.set(0, 0, 0);
+    sharedPhysics.maximumSlamSeverity = 0;
     sharedPhysics.simulationTime = 0;
     sharedPhysics.renderTime = 0;
     store.setTelemetry(0, 0, 100, 100, 20, 100);
+    store.setFloodingTelemetry(0, 0);
 
     return () => {
       calibrationRunner.current = null;
@@ -241,19 +263,18 @@ export default function Boat() {
       engineThrust,
       activeBoat,
       setTelemetry,
+      setFloodingTelemetry,
     } = useSimStore.getState();
 
     const vessel = getVesselConfig(activeBoat);
-    body.setMassProperties(
-      vessel.massKg,
-      vessel.principalInertiaKgM2,
-      vessel.angularDampingPerSecond,
-      vessel.centerOfMassLocal,
-    );
-    body.beginStep();
-    body.addForce(
-      scratch.gravityForce.set(0, -vessel.massKg * 9.81, 0),
-    );
+    if (configuredVesselType.current !== vessel.type) {
+      floodingModel.current.reset(vessel);
+      sectionalHydrostatics.current.reset(vessel);
+      previousCompartmentExposure.current = {};
+      configuredVesselType.current = vessel.type;
+      lastSubmergedRatio.current = 0.75;
+      sharedPhysics.maximumSlamSeverity = 0;
+    }
 
     const calibration = calibrationRunner.current;
     const calibrationControls = calibration?.controls(time);
@@ -270,13 +291,64 @@ export default function Boat() {
       ((keys.a || keys.arrowleft ? 1 : 0) -
         (keys.d || keys.arrowright ? 1 : 0));
 
+    const isWinter = MathUtils.clamp(
+      1 - Math.abs(sharedPhysics.season - 0.75) * 4,
+      0,
+      1,
+    );
+    const currentSpeedKnots =
+      Math.hypot(body.linearVelocity.x, body.linearVelocity.z) /
+      0.514444;
+    const activePump =
+      !calibration &&
+      keys.r &&
+      currentSpeedKnots < 2 &&
+      Math.abs(thrustRaw) < 0.1;
+    const floodingResult = floodingModel.current.step({
+      vessel,
+      deltaSeconds: dt,
+      hullHealth: calibration ? 100 : hullHealth.current,
+      engineHealth: engineHealth.current,
+      compartmentExposure: previousCompartmentExposure.current,
+      activePump,
+      winterFactor: calibration ? 0 : isWinter,
+    });
+
+    const addedMassScale = MathUtils.smoothstep(
+      lastSubmergedRatio.current,
+      0.05,
+      0.85,
+    );
+    for (let axis = 0; axis < 3; axis += 1) {
+      addedMass.current[axis] =
+        vessel.hydrodynamics.addedMassKg[axis] * addedMassScale;
+      addedInertia.current[axis] =
+        vessel.hydrodynamics.addedInertiaKgM2[axis] * addedMassScale;
+    }
+
+    body.setMassProperties(
+      floodingResult.physicalMassKg,
+      floodingResult.principalInertiaKgM2,
+      vessel.angularDampingPerSecond,
+      floodingResult.centerOfMassLocal,
+      addedMass.current,
+      addedInertia.current,
+    );
+    body.beginStep();
+    body.addForce(
+      scratch.gravityForce.set(
+        0,
+        -floodingResult.physicalMassKg * 9.81,
+        0,
+      ),
+    );
+
     // --- Vessel Dynamics Configuration ---
-    const mass = vessel.massKg;
+    const mass = floodingResult.physicalMassKg;
     const engineForceMax = vessel.engineForceMaxN;
     const windCoeff = vessel.windAreaCoefficient;
     const turnForceMax = vessel.turnForceMax;
 
-    // --- Complete body-relative vessel axes ---
     // Physics keeps pitch and roll in these axes. Horizontal projection is
     // reserved for navigation heading after the completed simulation step.
     const forwardDir = scratch.forwardDir
@@ -288,15 +360,13 @@ export default function Boat() {
       .applyQuaternion(body.quaternion)
       .normalize();
 
-    // --- Distributed Hull Buoyancy & Hydrodynamic Resistance ---
     const pos = body.position;
     const halfL = vessel.halfLengthM;
-
     const windVelocity = scratch.windVelocity;
-    const waterVelocity = scratch.waterVelocity;
+    const baseCurrentVelocity = scratch.baseCurrentVelocity;
     if (calibration) {
       windVelocity.set(0, 0, 0);
-      waterVelocity.set(0, 0, 0);
+      baseCurrentVelocity.set(0, 0, 0);
     } else {
       const windRad = MathUtils.degToRad(windDir);
       windVelocity
@@ -304,46 +374,72 @@ export default function Boat() {
         .multiplyScalar(windSpeed);
 
       const currentRad = MathUtils.degToRad(currentDir);
-      waterVelocity
+      baseCurrentVelocity
         .set(Math.sin(currentRad), 0, Math.cos(currentRad))
         .multiplyScalar(currentSpeed);
     }
 
     // Recreate the localized ice field used by the ocean shader.
-    const isWinter = Math.max(
-      0,
-      Math.min(
-        1,
-        1 - Math.abs(sharedPhysics.season - 0.75) * 4,
-      ),
-    );
     const iceNoise =
       Math.sin(pos.x * 0.01) * Math.cos(pos.z * 0.01) +
       Math.sin(pos.x * 0.05 + pos.z * 0.04) * 0.5;
     const currentIceFactor = calibration
       ? 0
-      : Math.max(
+      : MathUtils.clamp(
+          (iceNoise * 0.3 + isWinter * 1.5 - 1) * 2,
           0,
-          Math.min(
-            1,
-            (iceNoise * 0.3 + isWinter * 1.5 - 1) * 2,
-          ),
+          1,
         );
 
-    let hullDamageSinkOffset =
-      hullHealth.current < 50
-        ? ((50 - hullHealth.current) / 50) * 0.6
-        : 0;
-    if (hullHealth.current <= 0) {
-      hullDamageSinkOffset += 1.5;
-    }
-
-    const winterDraftPenalty = isWinter * 0.15;
-    const draftOffset = effectiveDraftOffset(
-      vessel.baseDraftM,
-      hullDamageSinkOffset,
-      winterDraftPenalty,
+    // Use the base current for the drag pre-pass. The current step's local
+    // Gerstner orbital velocity is available after the sectional solve and is
+    // used by propulsion, steering, hazards, telemetry, and the next step.
+    const preSolveSurgeSpeed = waterRelativeSurgeSpeed(
+      body.linearVelocity,
+      baseCurrentVelocity,
+      forwardDir,
     );
+    const preSolvePlaningRatio = planingSpeedRatio(
+      preSolveSurgeSpeed,
+      vessel.planingReferenceSpeedMps,
+    );
+    const planingDragReduction = vessel.planingCapable
+      ? MathUtils.lerp(
+          1,
+          0.35,
+          preSolvePlaningRatio * preSolvePlaningRatio,
+        )
+      : 1;
+    const hullDragPenalty =
+      1 + ((100 - hullHealth.current) / 100) * 0.8;
+
+    const hydrostaticResult = sectionalHydrostatics.current.apply({
+      body,
+      vessel,
+      timeSeconds: time,
+      deltaSeconds: dt,
+      baseCurrentVelocity,
+      forwardDragMultiplier:
+        planingDragReduction * hullDragPenalty,
+      lateralDragMultiplier: hullDragPenalty,
+      buoyancyAvailabilityByCompartment:
+        floodingResult.buoyancyAvailabilityByCompartment,
+      physicalMassKg: mass,
+      sampleWater: calibration
+        ? sampleFlatCalibrationWater
+        : sampleOceanSurface,
+    });
+    const submergedRatio = hydrostaticResult.submergedRatio;
+    const waterVelocity = scratch.waterVelocity.copy(
+      hydrostaticResult.averageWaterVelocityWorld,
+    );
+
+    const previousExposure = previousCompartmentExposure.current;
+    for (const key of Object.keys(previousExposure)) {
+      delete previousExposure[key];
+    }
+    Object.assign(previousExposure, hydrostaticResult.compartmentExposure);
+
     const vRelForward = waterRelativeSurgeSpeed(
       body.linearVelocity,
       waterVelocity,
@@ -357,64 +453,48 @@ export default function Boat() {
       vRelForward,
       vessel.planingReferenceSpeedMps,
     );
-    const planingDragReduction = vessel.planingCapable
-      ? MathUtils.lerp(
-          1,
-          0.35,
-          activePlaningSpeedRatio * activePlaningSpeedRatio,
-        )
-      : 1;
-    const hullDragPenalty =
-      1 + ((100 - hullHealth.current) / 100) * 0.8;
-    const buoyancyStiffness =
-      vessel.buoyancyStiffness * (1 - isWinter * 0.1);
+    const displacementErrorRatio = displacementBalanceErrorRatio(
+      hydrostaticResult.displacedVolumeM3,
+      mass,
+      vessel.waterDensityKgM3,
+    );
 
-    const hullForceResult = distributedHullForces.current.apply({
-      body,
-      vessel,
-      timeSeconds: time,
-      waterVelocity,
-      draftOffsetM: draftOffset,
-      buoyancyStiffness,
-      forwardDragMultiplier:
-        planingDragReduction * hullDragPenalty,
-      lateralDragMultiplier: hullDragPenalty,
-      sampleWater: calibration
-        ? sampleFlatCalibrationWater
-        : getWaveHeight,
-    });
-    const submergedRatio = hullForceResult.submergedRatio;
-
-    // --- PHASE 4: REFINED SLAM DAMAGE ---
-    // A sudden transition from air to water with high downward velocity
-    const isSlam = prevSubmergedRatio.current < 0.3 && submergedRatio > 0.4 && prevVelocityY.current < -2.0;
-    
-    if (!calibration && isSlam && time > 2.0) {
-        const slamSeverity = Math.abs(prevVelocityY.current) - 2.0; 
-        
-        // Damage scaling based on severity
-        if (slamSeverity > 0.5) {
-           hullHealth.current = Math.max(0, hullHealth.current - (slamSeverity * 3.0));
-           
-           // Extreme slams also rattle the engine and rudder
-           if (slamSeverity > 2.0) {
-               engineHealth.current = Math.max(0, engineHealth.current - (slamSeverity * 1.5));
-               rudderHealth.current = Math.max(0, rudderHealth.current - (slamSeverity * 1.0));
-           }
-        }
-
-        audio.playSlam(slamSeverity);
+    if (
+      !calibration &&
+      time > 2 &&
+      hydrostaticResult.maximumSlamSeverity > 0
+    ) {
+      hullHealth.current = Math.max(
+        0,
+        hullHealth.current - hydrostaticResult.slamHullDamage,
+      );
+      engineHealth.current = Math.max(
+        0,
+        engineHealth.current - hydrostaticResult.slamEngineDamage,
+      );
+      rudderHealth.current = Math.max(
+        0,
+        rudderHealth.current - hydrostaticResult.slamRudderDamage,
+      );
+      if (hydrostaticResult.slamCompartmentId) {
+        floodingModel.current.registerBreach(
+          vessel,
+          hydrostaticResult.slamCompartmentId,
+          MathUtils.clamp(
+            (hydrostaticResult.maximumSlamSeverity - 0.45) * 0.035,
+            0,
+            0.18,
+          ),
+        );
+      }
+      audio.playSlam(hydrostaticResult.maximumSlamSeverity);
     }
-    
-    // Store for next frame
-    prevVelocityY.current = body.linearVelocity.y;
-    prevSubmergedRatio.current = submergedRatio;
 
     // --- Applied body-relative forces ---
 
     // PLANING HYDRODYNAMICS
     // The speedboat receives bow lift once forward speed builds. Hull
-    // resistance is already reduced inside the distributed point model.
+    // resistance is already reduced inside the sectional hull model.
     const planingFactor =
       activePlaningSpeedRatio *
       activePlaningSpeedRatio *
@@ -665,6 +745,20 @@ export default function Boat() {
         0,
         engineHealth.current - environmentalDamage.engineDamage,
       );
+      if (
+        environmentalDamage.hullDamage > 0 &&
+        environmentalDamage.iceContactSpeedMps > 3.5
+      ) {
+        floodingModel.current.registerBreach(
+          vessel,
+          'bow',
+          MathUtils.clamp(
+            environmentalDamage.hullDamage * 0.004,
+            0,
+            0.08,
+          ),
+        );
+      }
     }
 
     // Rapier resolves compound-hull obstacle and terrain contacts after the
@@ -688,6 +782,7 @@ export default function Boat() {
               collisionTestEnabled.current &&
               Math.abs(thrustRaw) > 0.1,
             calibration?.collisionFixture ?? null,
+            mass,
           );
 
     // Contact impulses and penetration correction happen after integration,
@@ -734,7 +829,7 @@ export default function Boat() {
       ) {
         lastTerrainImpactTime.current = time;
         const normalizedImpulse =
-          collisionSummary.maxTerrainImpulseNs / vessel.massKg;
+          collisionSummary.maxTerrainImpulseNs / mass;
         const severity = terrainImpact - 1.8;
         const damage = Math.min(
           24,
@@ -751,6 +846,15 @@ export default function Boat() {
             rudderHealth.current - damage * 0.32,
           );
         }
+        floodingModel.current.registerBreach(
+          vessel,
+          vRelForward >= 0
+            ? 'bow'
+            : vessel.type === 'trawler'
+              ? 'machinery'
+              : 'engine',
+          MathUtils.clamp(damage / 180, 0, 0.2),
+        );
         audio.playImpact(terrainImpact, 'terrain');
       }
 
@@ -761,7 +865,7 @@ export default function Boat() {
       ) {
         lastObstacleImpactTime.current = time;
         const normalizedImpulse =
-          collisionSummary.maxObstacleImpulseNs / vessel.massKg;
+          collisionSummary.maxObstacleImpulseNs / mass;
         const severity = obstacleImpact - 0.65;
         const headOnFactor =
           collisionSummary.maxObstacleHeadOnFactor;
@@ -784,6 +888,21 @@ export default function Boat() {
               damage * 0.2 * (1 - headOnFactor * 0.35),
           );
         }
+        const impactCompartment =
+          headOnFactor > 0.45
+            ? 'bow'
+            : vessel.type === 'trawler'
+              ? simulationRandom.current.next() < 0.5
+                ? 'port'
+                : 'starboard'
+              : simulationRandom.current.next() < 0.5
+                ? 'cockpit-port'
+                : 'cockpit-starboard';
+        floodingModel.current.registerBreach(
+          vessel,
+          impactCompartment,
+          MathUtils.clamp(damage / 200, 0, 0.18),
+        );
         audio.playImpact(obstacleImpact, 'obstacle');
       }
     }
@@ -816,6 +935,10 @@ export default function Boat() {
       hullHealth: hullHealth.current,
       engineHealth: engineHealth.current,
       rudderHealth: rudderHealth.current,
+      displacedVolumeM3: hydrostaticResult.displacedVolumeM3,
+      physicalMassKg: mass,
+      floodingRatio: floodingResult.floodingRatio,
+      displacementBalanceErrorRatio: displacementErrorRatio,
       collisionSummary,
     });
     sharedPhysics.calibrationProgress = calibration?.progress ?? 0;
@@ -830,6 +953,10 @@ export default function Boat() {
         engineHealth.current,
         engineTemperature.current,
         rudderHealth.current,
+      );
+      setFloodingTelemetry(
+        floodingResult.floodingRatio,
+        floodingResult.totalFloodedVolumeM3,
       );
     }
 
@@ -862,10 +989,20 @@ export default function Boat() {
        engineHealth.current = Math.max(0, engineHealth.current - overheatDamage * dt);
     }
 
-    // Engine Flooding (Phase 4): Drown the engine if fully submerged AND the boat is heavily damaged/sinking
-    // Real marine engines can handle spray and momentary wave submersion as long as intakes are above deck
-    if (submergedRatio > 0.95 && hullHealth.current < 40 && time > 2.0) {
-       engineHealth.current = Math.max(0, engineHealth.current - 15.0 * dt); // Engine slowly drowns
+    // Water in the machinery space now drives engine flooding directly.
+    if (
+      floodingResult.engineCompartmentFloodingRatio > 0.18 &&
+      time > 2
+    ) {
+      const floodingDamagePerSecond = MathUtils.lerp(
+        1.5,
+        16,
+        floodingResult.engineCompartmentFloodingRatio,
+      );
+      engineHealth.current = Math.max(
+        0,
+        engineHealth.current - floodingDamagePerSecond * dt,
+      );
     }
     
     // Hull Health: Degrades very slowly from sustained planing (previously Phase 1)
@@ -881,20 +1018,14 @@ export default function Boat() {
        rudderHealth.current = Math.max(0, rudderHealth.current - (Math.abs(turnTorque) * 0.2) * dt);
     }
     
-    // Continuous slow automatic bilge-pump / foam flotation saves the boat over time
-    // Ensures a user isn't stuck with a permanently swamped boat
-    if (hullHealth.current < 60) {
-       hullHealth.current = Math.min(60, hullHealth.current + 1.0 * dt);
-    }
-    
     // --- Phase 5: Active Repair / Bilge Mechanics ---
-    if (keys.r && Math.abs(speedKnots) < 2.0 && Math.abs(thrustRaw) < 0.1) {
+    if (activePump) {
         hullHealth.current = Math.min(100, hullHealth.current + 8.0 * dt);
         engineHealth.current = Math.min(100, engineHealth.current + 12.0 * dt);
         rudderHealth.current = Math.min(100, rudderHealth.current + 15.0 * dt);
         
-        // Pumping water out (indirectly raises buoyancy through hullHealth)
-        // Also helps cool the engine down slightly faster when stopped and repairing
+        // The compartment model performs the actual active pump-down. Repair
+        // also cools the stopped engine and reduces breach severity over time.
         engineTemperature.current = Math.max(20, engineTemperature.current - 5.0 * dt);
     }
 
@@ -911,6 +1042,10 @@ export default function Boat() {
           engineTemperature.current,
           rudderHealth.current,
         );
+        setFloodingTelemetry(
+          floodingResult.floodingRatio,
+          floodingResult.totalFloodedVolumeM3,
+        );
       }
     }
 
@@ -923,6 +1058,23 @@ export default function Boat() {
       35,
     );
     sharedPhysics.submergedRatio = submergedRatio;
+    sharedPhysics.displacedVolumeM3 =
+      hydrostaticResult.displacedVolumeM3;
+    sharedPhysics.floodingRatio = floodingResult.floodingRatio;
+    sharedPhysics.floodedVolumeM3 =
+      floodingResult.totalFloodedVolumeM3;
+    sharedPhysics.physicalMassKg = mass;
+    sharedPhysics.displacementBalanceErrorRatio = displacementErrorRatio;
+    sharedPhysics.centerOfBuoyancy.copy(
+      hydrostaticResult.centerOfBuoyancyWorld,
+    );
+    sharedPhysics.averageWaterVelocity.copy(
+      hydrostaticResult.averageWaterVelocityWorld,
+    );
+    sharedPhysics.maximumSlamSeverity = Math.max(
+      sharedPhysics.maximumSlamSeverity,
+      hydrostaticResult.maximumSlamSeverity,
+    );
 
     lastSubmergedRatio.current = submergedRatio;
     currentPosition.current.copy(body.position);

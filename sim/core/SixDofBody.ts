@@ -85,6 +85,8 @@ export class SixDofBody extends Object3D {
 
   private readonly accumulatedForce = new Vector3();
   private readonly accumulatedTorque = new Vector3();
+  private readonly principalMass = new Vector3(1, 1, 1);
+  private readonly inversePrincipalMass = new Vector3(1, 1, 1);
   private readonly principalInertia = new Vector3(1, 1, 1);
   private readonly inversePrincipalInertia = new Vector3(1, 1, 1);
   private readonly angularDamping = new Vector3();
@@ -93,6 +95,11 @@ export class SixDofBody extends Object3D {
   private readonly worldCenterOfMass = new Vector3();
   private readonly centerOfMassOffsetWorld = new Vector3();
   private readonly leverArm = new Vector3();
+  private readonly localForce = new Vector3();
+  private readonly localLinearAcceleration = new Vector3();
+  private readonly worldLinearAcceleration = new Vector3();
+  private readonly localLinearImpulse = new Vector3();
+  private readonly deltaLinearVelocity = new Vector3();
   private readonly localTorque = new Vector3();
   private readonly localAngularVelocity = new Vector3();
   private readonly localAngularMomentum = new Vector3();
@@ -112,7 +119,6 @@ export class SixDofBody extends Object3D {
   private readonly lastValidAngularVelocity = new Vector3();
   private hasLastValidState = false;
 
-  private inverseMass = 1;
 
   constructor() {
     super();
@@ -132,14 +138,28 @@ export class SixDofBody extends Object3D {
     principalInertiaKgM2: readonly [number, number, number],
     angularDampingPerSecond: readonly [number, number, number],
     centerOfMassLocal: readonly [number, number, number] = [0, 0, 0],
+    principalAddedMassKg: readonly [number, number, number] = [0, 0, 0],
+    principalAddedInertiaKgM2: readonly [number, number, number] = [0, 0, 0],
   ) {
     const safeMassKg = finitePositive(massKg, 1);
-    this.inverseMass = 1 / safeMassKg;
+    this.principalMass.set(
+      safeMassKg + finiteNonNegative(principalAddedMassKg[0]),
+      safeMassKg + finiteNonNegative(principalAddedMassKg[1]),
+      safeMassKg + finiteNonNegative(principalAddedMassKg[2]),
+    );
+    this.inversePrincipalMass.set(
+      1 / this.principalMass.x,
+      1 / this.principalMass.y,
+      1 / this.principalMass.z,
+    );
 
     this.principalInertia.set(
-      finitePositive(principalInertiaKgM2[0], 1),
-      finitePositive(principalInertiaKgM2[1], 1),
-      finitePositive(principalInertiaKgM2[2], 1),
+      finitePositive(principalInertiaKgM2[0], 1) +
+        finiteNonNegative(principalAddedInertiaKgM2[0]),
+      finitePositive(principalInertiaKgM2[1], 1) +
+        finiteNonNegative(principalAddedInertiaKgM2[1]),
+      finitePositive(principalInertiaKgM2[2], 1) +
+        finiteNonNegative(principalAddedInertiaKgM2[2]),
     );
     this.inversePrincipalInertia.set(
       1 / this.principalInertia.x,
@@ -186,7 +206,18 @@ export class SixDofBody extends Object3D {
   applyImpulseAtPoint(impulseWorld: Vector3, pointWorld: Vector3) {
     if (!vectorIsFinite(impulseWorld) || !vectorIsFinite(pointWorld)) return;
 
-    this.linearVelocity.addScaledVector(impulseWorld, this.inverseMass);
+    this.inverseRotation.copy(this.quaternion).invert();
+    this.localLinearImpulse
+      .copy(impulseWorld)
+      .applyQuaternion(this.inverseRotation);
+    this.deltaLinearVelocity
+      .set(
+        this.localLinearImpulse.x * this.inversePrincipalMass.x,
+        this.localLinearImpulse.y * this.inversePrincipalMass.y,
+        this.localLinearImpulse.z * this.inversePrincipalMass.z,
+      )
+      .applyQuaternion(this.quaternion);
+    this.linearVelocity.add(this.deltaLinearVelocity);
 
     this.getWorldCenterOfMass(this.worldCenterOfMass);
     this.leverArm.copy(pointWorld).sub(this.worldCenterOfMass);
@@ -303,9 +334,21 @@ export class SixDofBody extends Object3D {
     // rotation. This prevents an offset center of mass from orbiting around
     // the visual origin when the vessel pitches or rolls.
     this.getWorldCenterOfMass(this.worldCenterOfMass);
+    this.inverseRotation.copy(this.quaternion).invert();
+    this.localForce
+      .copy(this.accumulatedForce)
+      .applyQuaternion(this.inverseRotation);
+    this.localLinearAcceleration.set(
+      this.localForce.x * this.inversePrincipalMass.x,
+      this.localForce.y * this.inversePrincipalMass.y,
+      this.localForce.z * this.inversePrincipalMass.z,
+    );
+    this.worldLinearAcceleration
+      .copy(this.localLinearAcceleration)
+      .applyQuaternion(this.quaternion);
     this.linearVelocity.addScaledVector(
-      this.accumulatedForce,
-      this.inverseMass * dt,
+      this.worldLinearAcceleration,
+      dt,
     );
     this.worldCenterOfMass.addScaledVector(this.linearVelocity, dt);
 
