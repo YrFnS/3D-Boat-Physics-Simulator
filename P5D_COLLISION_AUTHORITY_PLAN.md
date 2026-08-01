@@ -22,39 +22,47 @@ This preserves the existing hydrodynamic equations while replacing the custom co
 
 ### Split six-degree integration
 
-- [ ] Separate velocity integration from pose integration in `SixDofBody`.
-- [ ] Preserve the existing `integrate(dt)` compatibility path by composing both phases.
-- [ ] Add safe external-state import for position, quaternion, center-of-mass velocity, and angular velocity.
-- [ ] Expose current center of mass and principal inertia needed by the contact solver.
-- [ ] Add deterministic regressions proving split and composed integration remain equivalent without contacts.
+- [x] Separate velocity integration from pose integration in `SixDofBody`.
+- [x] Preserve the existing `integrate(dt)` compatibility path by composing both phases.
+- [x] Add safe external-state import for position, quaternion, center-of-mass velocity, and angular velocity.
+- [x] Expose current center of mass and principal inertia needed by the contact solver.
+- [x] Add deterministic regressions proving split and composed integration remain equivalent without contacts.
 
 ### Dynamic Rapier authority
 
-- [ ] Replace the position-based kinematic vessel proxy with a dynamic rigid body.
-- [ ] Disable collider-contributed mass and provide explicit vessel mass properties.
-- [ ] Synchronize pre-step pose and marine-integrated velocities before each Rapier step.
-- [ ] Read the solved pose and velocities back after each step.
-- [ ] Remove manual normal impulses, heuristic friction impulses, shared impulse budgets, and translation-only penetration correction.
-- [ ] Use actual solver contact impulses and all manifold contacts for diagnostics.
-- [ ] Preserve CCD, soft-CCD prediction, solver iterations, contact skins, fixture behavior, and collision telemetry.
+- [x] Replace the position-based kinematic vessel proxy with a dynamic rigid body.
+- [x] Disable collider-contributed mass and provide explicit vessel mass properties.
+- [x] Synchronize pre-step pose and marine-integrated velocities before each Rapier step.
+- [x] Read the solved pose and velocities back after each step.
+- [x] Remove manual normal impulses, heuristic friction impulses, shared impulse budgets, and translation-only penetration correction.
+- [x] Use actual solver contact impulses and all manifold contacts for diagnostics.
+- [x] Preserve CCD, soft-CCD prediction, solver iterations, contact skins, fixture behavior, and collision telemetry.
 
 ### Contact quality
 
 - [ ] Verify bow, stern, side, grounding, glancing, and head-on response use effective angular mass.
-- [ ] Keep friction bounded by Rapier material coefficients rather than independent hand-tuned impulse caps.
+- [x] Keep friction bounded by Rapier material coefficients rather than independent hand-tuned impulse caps.
 - [ ] Ensure contact outcome no longer depends on vessel-collider iteration order.
 - [ ] Keep residual overlap bounded without directly translating the custom body.
 - [ ] Preserve damage and flooding decisions using measured closing speed and solved impulse.
 
 ### Validation
 
-- [ ] Add no-contact trajectory parity tests.
+- [x] Add no-contact trajectory parity tests.
 - [ ] Add off-center impulse and angular-response tests.
 - [ ] Add contact-order invariance coverage.
 - [ ] Add momentum/energy sanity bounds for glancing and head-on fixtures.
 - [ ] Preserve all 20 vessel calibration scenarios.
 - [ ] Preserve desktop, mobile, product-experience, and Chromium/Firefox/WebKit release gates.
 - [ ] Record before/after collision metrics and any deliberate envelope changes.
+
+## Current checkpoint
+
+The first dynamic-authority implementation is published at `040b8ba332d4a9cc6a7a4e8e4dfaae824a2bcfae`.
+
+The custom rigid body now performs the anisotropic marine velocity update without advancing pose. Rapier receives that state on an explicit-mass dynamic body, advances the pose once, solves its complete contact set, and returns the authoritative transform and velocities. The previous single-contact normal impulse, independent friction impulse, shared impulse budget, and direct position correction have been removed.
+
+The implementation passed deterministic physics regressions, zero-warning lint, TypeScript checking, the production build, dependency audit, and patch-hygiene checks before publication. The permanent 20-scenario vessel, visual, product, and cross-browser matrices are now the active gate for contact calibration and robustness work.
 
 ## Implementation sequence
 
