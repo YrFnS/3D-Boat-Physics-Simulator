@@ -83,11 +83,38 @@ replacement = "".join(
     f"            {line}" if line.strip() else line
     for line in replacement.splitlines(keepends=True)
 )
-collision.write_text(source[:start] + replacement + source[end:], encoding="utf-8")
+source = source[:start] + replacement + source[end:]
+source = replace_once(
+    source,
+    "              summary.maxTerrainImpulseNs += totalSolvedImpulseNs;\n",
+    dedent(
+        """\
+                      summary.maxTerrainImpulseNs = Math.max(
+                        summary.maxTerrainImpulseNs,
+                        maximumSolvedImpulseNs,
+                      );
+        """
+    ),
+    "terrain peak impulse reporting",
+)
+source = replace_once(
+    source,
+    "              summary.maxObstacleImpulseNs += totalSolvedImpulseNs;\n",
+    dedent(
+        """\
+                      summary.maxObstacleImpulseNs = Math.max(
+                        summary.maxObstacleImpulseNs,
+                        maximumSolvedImpulseNs,
+                      );
+        """
+    ),
+    "obstacle peak impulse reporting",
+)
+collision.write_text(source, encoding="utf-8")
 
 regression = Path("scripts/collision-authority.mjs")
 source = regression.read_text(encoding="utf-8")
-function_start = source.index("function collectMaximumSolverImpulse(")
+function_start = source.index("function collectSolverImpulseForStep(")
 function_end = source.index("function runImpactScenario(", function_start)
 function = dedent(
     """\
@@ -144,7 +171,7 @@ function = dedent(
 source = source[:function_start] + function + source[function_end:]
 source = replace_once(
     source,
-    "    const contact = collectMaximumSolverImpulse(\n",
+    "    const contact = collectSolverImpulseForStep(\n",
     "    const contact = collectMaximumContactImpulse(\n",
     "regression collector call",
 )
@@ -171,18 +198,24 @@ source = replace_once(
     source,
     dedent(
         """\
+            maximumImpulseNs = Math.max(
+              maximumImpulseNs,
+              contact.totalImpulseNs,
+            );
             solverContactCount += contact.solverContactCount;
-          }
         """
     ),
     dedent(
         """\
+            maximumImpulseNs = Math.max(
+              maximumImpulseNs,
+              contact.maximumImpulseNs,
+            );
             geometricContactCount += contact.geometricContactCount;
             solverContactCount += contact.solverContactCount;
-          }
         """
     ),
-    "regression accumulators",
+    "regression peak impulse accumulation",
 )
 source = replace_once(
     source,
