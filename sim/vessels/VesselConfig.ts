@@ -66,6 +66,7 @@ export interface MarineEngineConfig {
 
 export interface PropellerConfig {
   pointLocal: readonly [number, number, number];
+  shaftAngleRad: number;
   diameterM: number;
   pitchRatio: number;
   bladeCount: number;
@@ -225,8 +226,8 @@ const VESSEL_CONFIGS = {
       idleRpm: 900,
       ratedRpm: 3_600,
       maximumRpm: 4_500,
-      ratedPowerW: 180_000,
-      peakTorqueNm: 560,
+      ratedPowerW: 240_000,
+      peakTorqueNm: 720,
       rpmRisePerSecond: 1_650,
       rpmFallPerSecond: 2_700,
       loadDroopFraction: 0.18,
@@ -239,6 +240,7 @@ const VESSEL_CONFIGS = {
     },
     propeller: {
       pointLocal: [0, -0.85, 2.25],
+      shaftAngleRad: 0,
       diameterM: 0.65,
       pitchRatio: 0.85,
       bladeCount: 4,
@@ -274,7 +276,7 @@ const VESSEL_CONFIGS = {
       maximumLiftCoefficient: 1.15,
       stallAngleRad: 0.52,
       postStallLiftLossFraction: 0.62,
-      baseDragCoefficient: 0.11,
+      baseDragCoefficient: 0.018,
       inducedDragFactor: 0.13,
       stallDragCoefficient: 0.72,
       maximumDragCoefficient: 1.25,
@@ -450,7 +452,8 @@ const VESSEL_CONFIGS = {
       throttleDeadband: 0.035,
     },
     propeller: {
-      pointLocal: [0, -0.35, 1.95],
+      pointLocal: [0, -0.5, 1.95],
+      shaftAngleRad: 0.17,
       diameterM: 0.48,
       pitchRatio: 1.05,
       bladeCount: 3,
@@ -458,7 +461,7 @@ const VESSEL_CONFIGS = {
       wakeFraction: 0.1,
       thrustDeductionFraction: 0.08,
       rotationDirection: -1,
-      hullReactionTorqueFraction: 0.28,
+      hullReactionTorqueFraction: 0.03,
       thrustCoefficient: [0.22, -0.12, -0.025],
       torqueCoefficient: [0.035, -0.016, -0.0035],
       maximumAbsAdvanceRatio: 1.75,
@@ -478,7 +481,7 @@ const VESSEL_CONFIGS = {
     },
     rudder: {
       pointLocal: [0, -0.15, 1.8],
-      maximumAngleRad: 0.5,
+      maximumAngleRad: 0.4,
       rateRadPerSecond: 2.6,
       areaM2: 0.22,
       aspectRatio: 1.4,
@@ -486,11 +489,11 @@ const VESSEL_CONFIGS = {
       maximumLiftCoefficient: 1.05,
       stallAngleRad: 0.45,
       postStallLiftLossFraction: 0.68,
-      baseDragCoefficient: 0.12,
+      baseDragCoefficient: 0.016,
       inducedDragFactor: 0.16,
       stallDragCoefficient: 0.82,
       maximumDragCoefficient: 1.4,
-      maximumForceN: 18_000,
+      maximumForceN: 8_500,
       propWashFraction: 0.82,
       ventilationStartSubmergenceM: 0.01,
       ventilationFullSubmergenceM: 0.18,

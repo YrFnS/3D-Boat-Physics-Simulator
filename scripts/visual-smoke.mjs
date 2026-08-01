@@ -226,7 +226,18 @@ async function exerciseVesselControls(page, scenarioName) {
   if (scenarioName === 'collision') {
     await page.keyboard.down('w');
     try {
-      await page.waitForTimeout(2_400);
+      // Wait for a real closing-speed impulse instead of assuming the
+      // software renderer advances enough physics in a fixed wall-clock delay.
+      await page.waitForFunction(
+        () => {
+          const dataset = document.documentElement.dataset;
+          return (
+            Number(dataset.simDebugProbeCollisionSequence) > 0 &&
+            Number(dataset.simCollisionMaxImpulse) > 0
+          );
+        },
+        { timeout: 60_000 },
+      );
     } finally {
       await page.keyboard.up('w');
     }

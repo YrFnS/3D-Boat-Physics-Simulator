@@ -48,6 +48,8 @@ interface SpeedTargets {
   steadySpeedMps: NumericRange;
   maximumSpeedMaxMps: number;
   timeToMinimumCruiseMaxSeconds: number;
+  maximumRollDeg: number;
+  maximumPitchDeg: number;
 }
 
 interface StopTargets {
@@ -135,6 +137,8 @@ export const VESSEL_CALIBRATION_TARGETS: Readonly<
       steadySpeedMps: { min: 9, max: 18 },
       maximumSpeedMaxMps: 20,
       timeToMinimumCruiseMaxSeconds: 18,
+      maximumRollDeg: 10,
+      maximumPitchDeg: 12,
     },
     stop: {
       cutoffSpeedMps: { min: 8, max: 19 },
@@ -167,6 +171,8 @@ export const VESSEL_CALIBRATION_TARGETS: Readonly<
       steadySpeedMps: { min: 15, max: 36 },
       maximumSpeedMaxMps: 40,
       timeToMinimumCruiseMaxSeconds: 18,
+      maximumRollDeg: 25,
+      maximumPitchDeg: 35,
     },
     stop: {
       cutoffSpeedMps: { min: 15, max: 37 },
@@ -293,6 +299,7 @@ export class VesselCalibrationRunner {
   private completed = false;
   private resultValue: CalibrationResult | null = null;
   private peakRollDeg = 0;
+  private maximumPitchDeg = 0;
   private finalRollDeg = 0;
   private recoveryTimeSeconds: number | null = null;
   private maximumSpeedMps = 0;
@@ -373,10 +380,11 @@ export class VesselCalibrationRunner {
       };
     }
     if (this.request.scenario === 'turn') {
-      // Sectional hydrostatics and added-mass damping require a slightly
-      // higher representative approach to enter the unchanged speed envelope.
+      // The physical drivetrain maps throttle to governed engine power rather
+      // than directly to thrust. Use representative approach commands that
+      // enter the unchanged maneuvering envelopes before helm application.
       const approachThrottle =
-        this.request.vessel === 'speedboat' ? 0.25 : 0.82;
+        this.request.vessel === 'speedboat' ? 1 : 0.82;
       if (this.turnMeasurementComplete) {
         return { throttle: 0.35, steer: 0 };
       }
@@ -408,6 +416,10 @@ export class VesselCalibrationRunner {
     const rollDeg = MathUtils.radToDeg(this.euler.z);
     this.finalRollDeg = Math.abs(rollDeg);
     this.peakRollDeg = Math.max(this.peakRollDeg, Math.abs(rollDeg));
+    this.maximumPitchDeg = Math.max(
+      this.maximumPitchDeg,
+      Math.abs(pitchDeg),
+    );
 
     switch (this.request.scenario) {
       case 'rest':
@@ -634,6 +646,8 @@ export class VesselCalibrationRunner {
         timeToMinimumCruiseSeconds: roundMetric(
           this.timeToMinimumCruiseSeconds,
         ),
+        maximumRollDeg: roundMetric(this.peakRollDeg),
+        maximumPitchDeg: roundMetric(this.maximumPitchDeg),
       };
       checks = {
         finiteState,
@@ -648,6 +662,10 @@ export class VesselCalibrationRunner {
           this.timeToMinimumCruiseSeconds !== null &&
           this.timeToMinimumCruiseSeconds <=
             speedTargets.timeToMinimumCruiseMaxSeconds,
+        rollBounded:
+          this.peakRollDeg <= speedTargets.maximumRollDeg,
+        pitchBounded:
+          this.maximumPitchDeg <= speedTargets.maximumPitchDeg,
       };
     } else if (this.request.scenario === 'stop') {
       const stopTargets = targets as StopTargets;

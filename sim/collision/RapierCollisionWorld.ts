@@ -15,7 +15,7 @@ const COLLIDER_BORDER_M = 0.08;
 const DEBUG_PROBE_HALF_WIDTH_M = 3.5;
 const DEBUG_PROBE_HALF_HEIGHT_M = 1.5;
 const DEBUG_PROBE_HALF_DEPTH_M = 0.24;
-const DEBUG_PROBE_GAP_M = 0.03;
+const DEBUG_PROBE_GAP_M = CONTACT_PREDICTION_M + 0.08;
 const FIXTURE_WALL_HALF_WIDTH_M = 4.5;
 const FIXTURE_WALL_HALF_HEIGHT_M = 1.8;
 const FIXTURE_WALL_HALF_DEPTH_M = 0.28;
@@ -711,7 +711,7 @@ export class RapierCollisionWorld {
         })
         .setFriction(0.18)
         .setRestitution(0.06)
-        .setContactSkin(CONTACT_PREDICTION_M)
+        .setContactSkin(0)
         .setActiveCollisionTypes(this.rapier.ActiveCollisionTypes.ALL),
     );
   }

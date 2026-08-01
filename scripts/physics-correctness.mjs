@@ -517,6 +517,25 @@ function testPowerLimitedPropulsionAndSignedManeuvering() {
     });
     approximatelyEqual(noFlow.forceMagnitudeN, 0);
 
+    const neutralAheadRudder = computeRudderHydrodynamics({
+      config: vessel.rudder,
+      waterDensityKgM3: vessel.waterDensityKgM3,
+      forwardFlowMps: 6,
+      rightFlowMps: 0,
+      rudderAngleRad: 0,
+      submergenceM: vessel.rudder.ventilationFullSubmergenceM,
+      healthRatio: 1,
+    });
+    assert.ok(
+      neutralAheadRudder.dragCoefficient <= 0.03,
+      `${vesselType} streamlined neutral rudder drag must stay bounded`,
+    );
+    assert.ok(
+      Number.isFinite(vessel.propeller.shaftAngleRad) &&
+        Math.abs(vessel.propeller.shaftAngleRad) <= Math.PI / 6,
+      `${vesselType} propeller shaft angle must stay physically bounded`,
+    );
+
     const aheadRudder = computeRudderHydrodynamics({
       config: vessel.rudder,
       waterDensityKgM3: vessel.waterDensityKgM3,

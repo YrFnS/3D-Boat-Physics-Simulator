@@ -99,6 +99,7 @@ export default function Boat() {
       propellerWaterSample: createWaterSurfaceSample(),
       rudderWaterSample: createWaterSurfaceSample(),
       thrustForce: new Vector3(),
+      thrustDirection: new Vector3(),
       apparentWind: new Vector3(),
       apparentWindDir: new Vector3(),
       windForce: new Vector3(),
@@ -556,10 +557,23 @@ export default function Boat() {
         propellerWaterSample.velocityZ,
       )
       .add(baseCurrentVelocity);
+    const shaftAngleCos = Math.cos(vessel.propeller.shaftAngleRad);
+    const shaftAngleSin = Math.sin(vessel.propeller.shaftAngleRad);
+    const thrustDirection = scratch.thrustDirection
+      .copy(forwardDir)
+      .multiplyScalar(shaftAngleCos)
+      .addScaledVector(
+        scratch.boatUp
+          .set(0, 1, 0)
+          .applyQuaternion(body.quaternion)
+          .normalize(),
+        shaftAngleSin,
+      )
+      .normalize();
     const propellerAdvanceSpeedMps = scratch.propellerRelativeVelocity
       .copy(scratch.propellerPointVelocity)
       .sub(scratch.propellerWaterVelocity)
-      .dot(forwardDir);
+      .dot(thrustDirection);
     const propellerSubmergenceM = Math.max(
       0,
       propellerWaterSample.y - scratch.worldPropeller.y,
@@ -605,11 +619,11 @@ export default function Boat() {
       },
     );
     const thrustForce = scratch.thrustForce
-      .copy(forwardDir)
+      .copy(thrustDirection)
       .multiplyScalar(propulsionResult.propellerThrustN);
     body.addTorque(
       scratch.propellerReactionTorque
-        .copy(forwardDir)
+        .copy(thrustDirection)
         .multiplyScalar(
           -vessel.propeller.rotationDirection *
             Math.sign(propulsionResult.shaftRpm) *
@@ -651,14 +665,27 @@ export default function Boat() {
     body.addForceAtPoint(windForce, scratch.worldWind);
 
     if (vessel.planingCapable && planingFactor > 0) {
+      // The pressure center stays close to the center of mass and moves
+      // modestly aft as the hull climbs onto plane. The angled shaft already
+      // carries its own trim moment, so planing lift must not act as a large
+      // artificial bow or transom lever.
+      const planingCenterOffsetM = halfL * MathUtils.lerp(
+        0.03,
+        0.14,
+        activePlaningSpeedRatio,
+      );
       body.localPointToWorld(
-        scratch.localPlaning.set(0, 0, -halfL * 0.75),
+        scratch.localPlaning.set(
+          0,
+          0,
+          vessel.centerOfMassLocal[2] + planingCenterOffsetM,
+        ),
         scratch.worldPlaning,
       );
       body.addForceAtPoint(
         scratch.planingForce.set(
           0,
-          mass * 9.81 * planingFactor * 0.35,
+          mass * 9.81 * planingFactor * 0.2,
           0,
         ),
         scratch.worldPlaning,
@@ -946,7 +973,12 @@ export default function Boat() {
               damage * 0.18 * headOnFactor,
           );
         }
-        if (severity > 2.5) {
+        const glancingFactor = 1 - headOnFactor;
+        const glancingRudderStrike =
+          severity > 2.1 &&
+          glancingFactor > 0.3 &&
+          normalizedImpulse > 1;
+        if (severity > 2.5 || glancingRudderStrike) {
           rudderHealth.current = Math.max(
             0,
             rudderHealth.current -
