@@ -1,0 +1,54 @@
+name: Export current Phase 5E source
+
+on:
+  push:
+    branches:
+      - agent/phase-5e-physical-calibration
+    paths:
+      - '.github/workflows/phase5e-export-current-source.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: phase5e-current-source-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  export:
+    if: github.actor != 'github-actions[bot]'
+    name: Package exact source and remove exporter
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out exact Phase 5E branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5e-physical-calibration
+          fetch-depth: 0
+
+      - name: Package source
+        run: |
+          tar --exclude=.git -czf "$RUNNER_TEMP/phase5e-current-source.tar.gz" .
+          sha256sum "$RUNNER_TEMP/phase5e-current-source.tar.gz" > "$RUNNER_TEMP/phase5e-current-source.sha256"
+
+      - name: Upload exact source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase5e-current-source
+          path: |
+            ${{ runner.temp }}/phase5e-current-source.tar.gz
+            ${{ runner.temp }}/phase5e-current-source.sha256
+          retention-days: 1
+
+      - name: Remove one-use exporter
+        run: rm -f .github/workflows/phase5e-export-current-source.yml
+
+      - name: Commit exporter cleanup
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -u .github/workflows/phase5e-export-current-source.yml
+          git commit -m 'chore: remove Phase 5E source exporter'
+          git push origin HEAD:agent/phase-5e-physical-calibration
