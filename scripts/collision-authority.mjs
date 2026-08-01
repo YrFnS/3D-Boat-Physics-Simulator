@@ -30,12 +30,12 @@ function kineticEnergyJ(linearVelocity, angularVelocity, inertiaKgM2) {
   );
 }
 
-function collectMaximumSolverImpulse(
+function collectSolverImpulseForStep(
   world,
   vesselColliders,
   vesselColliderHandles,
 ) {
-  let maximumImpulseNs = 0;
+  let totalImpulseNs = 0;
   let solverContactCount = 0;
 
   for (const vesselCollider of vesselColliders) {
@@ -53,13 +53,13 @@ function collectMaximumSolverImpulse(
             Number.isFinite(tangentImpulseXNs) ? tangentImpulseXNs : 0,
             Number.isFinite(tangentImpulseYNs) ? tangentImpulseYNs : 0,
           );
-          maximumImpulseNs = Math.max(maximumImpulseNs, impulseNs);
+          totalImpulseNs += impulseNs;
         }
       });
     });
   }
 
-  return { maximumImpulseNs, solverContactCount };
+  return { totalImpulseNs, solverContactCount };
 }
 
 function runImpactScenario({
@@ -131,14 +131,14 @@ function runImpactScenario({
   let solverContactCount = 0;
   for (let step = 0; step < SIMULATION_STEPS; step += 1) {
     world.step();
-    const contact = collectMaximumSolverImpulse(
+    const contact = collectSolverImpulseForStep(
       world,
       vesselColliders,
       vesselColliderHandles,
     );
     maximumImpulseNs = Math.max(
       maximumImpulseNs,
-      contact.maximumImpulseNs,
+      contact.totalImpulseNs,
     );
     solverContactCount += contact.solverContactCount;
   }

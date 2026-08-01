@@ -394,7 +394,7 @@ export class RapierCollisionWorld {
             }
 
             let maximumImpactSpeedMps = 0;
-            let maximumSolvedImpulseNs = 0;
+            let totalSolvedImpulseNs = 0;
             for (let index = 0; index < solverContactCount; index += 1) {
               const rawPoint = manifold.solverContactPoint(index);
               this.contactPoint.set(rawPoint.x, rawPoint.y, rawPoint.z);
@@ -431,13 +431,12 @@ export class RapierCollisionWorld {
               )
                 ? rawTangentImpulseYNs
                 : 0;
-              maximumSolvedImpulseNs = Math.max(
-                maximumSolvedImpulseNs,
-                Math.hypot(
-                  normalImpulseNs,
-                  tangentImpulseXNs,
-                  tangentImpulseYNs,
-                ),
+              // Calibration compares the complete momentum exchange for
+              // this fixed step, not the largest individual contact point.
+              totalSolvedImpulseNs += Math.hypot(
+                normalImpulseNs,
+                tangentImpulseXNs,
+                tangentImpulseYNs,
               );
             }
 
@@ -478,10 +477,7 @@ export class RapierCollisionWorld {
                 summary.maxTerrainImpactSpeedMps,
                 maximumImpactSpeedMps,
               );
-              summary.maxTerrainImpulseNs = Math.max(
-                summary.maxTerrainImpulseNs,
-                maximumSolvedImpulseNs,
-              );
+              summary.maxTerrainImpulseNs += totalSolvedImpulseNs;
             } else {
               summary.obstacleContactCount += reportedContactCount;
               summary.maxObstacleHeadOnFactor = Math.max(
@@ -492,10 +488,7 @@ export class RapierCollisionWorld {
                 summary.maxObstacleImpactSpeedMps,
                 maximumImpactSpeedMps,
               );
-              summary.maxObstacleImpulseNs = Math.max(
-                summary.maxObstacleImpulseNs,
-                maximumSolvedImpulseNs,
-              );
+              summary.maxObstacleImpulseNs += totalSolvedImpulseNs;
               if (isDebugProbe) {
                 summary.debugProbeContactCount += reportedContactCount;
               }
