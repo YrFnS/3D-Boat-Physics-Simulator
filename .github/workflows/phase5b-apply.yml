@@ -1,7 +1,11 @@
 name: Apply Phase 5B water and hydrostatics
 
-# A second workflow-file commit registers the new branch workflow before use.
 on:
+  pull_request:
+    branches:
+      - agent/phase-4-release-validation
+    paths:
+      - '.github/workflows/phase5b-apply.yml'
   push:
     branches:
       - agent/phase-5b-water-hydrostatics
@@ -12,12 +16,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: phase5b-apply-${{ github.ref }}
+  group: phase5b-apply-${{ github.event.pull_request.head.ref || github.ref }}
   cancel-in-progress: false
 
 jobs:
   apply:
-    if: github.actor != 'github-actions[bot]'
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/phase-5b-water-hydrostatics'
     name: Verify, apply, validate, and publish
     runs-on: ubuntu-latest
     timeout-minutes: 45
