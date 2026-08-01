@@ -1,0 +1,97 @@
+name: Publish refined Phase 5D collision authority
+
+on:
+  push:
+    branches:
+      - agent/phase-5d-collision-authority
+    paths:
+      - '.github/workflows/phase5d-publish-refinement.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: phase5d-publish-refinement-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  publish:
+    if: github.actor != 'github-actions[bot]'
+    name: Reconstruct, validate, clean, and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out Phase 5D branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5d-collision-authority
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify and reconstruct refined source
+        run: |
+          echo 'd161be7a89f34f87f5d342dac52e0c0d7379d88b89307d95c9f121905836b87e  scripts/.phase5d-refinement/part-00' | sha256sum --check
+          echo 'ea68b4dee2136d2f480d0f0838ed936cf4dbb183a946602e6260b82ac6d7afba  scripts/.phase5d-refinement/part-01' | sha256sum --check
+          echo '3048204b10302bf8a5b68fd5873e69b08404d5205e10c6dfa1c15ffd1154b42f  scripts/.phase5d-refinement/part-02' | sha256sum --check
+          echo '4d70f25134bf42794a8597b4e19d9ac565d19d0f19e755261f932fbd15723a62  scripts/.phase5d-refinement/part-03' | sha256sum --check
+          cat scripts/.phase5d-refinement/part-* > "$RUNNER_TEMP/phase5d-refinement.tar.gz.b64"
+          echo '875f2222f11ddb04784dfc48e26a2a5dd71cefe01636521c72e545211f992c54  '"$RUNNER_TEMP/phase5d-refinement.tar.gz.b64" | sha256sum --check
+          base64 --decode "$RUNNER_TEMP/phase5d-refinement.tar.gz.b64" > "$RUNNER_TEMP/phase5d-refinement.tar.gz"
+          echo 'c375a3982f95f735164917b5bf134944caa258a783c38818d6a59ddf10498cee  '"$RUNNER_TEMP/phase5d-refinement.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/phase5d-refinement.tar.gz"
+          git diff --check
+
+      - name: Remove all one-use Phase 5D transfer tooling
+        run: |
+          rm -rf scripts/.phase5d-patch
+          rm -rf scripts/.phase5d-refinement
+          rm -f .github/workflows/phase5d-apply.yml
+          rm -f .github/workflows/phase5d-current-snapshot.yml
+          rm -f .github/workflows/phase5d-review-snapshot.yml
+          rm -f .github/workflows/phase5d-inspect-staged-patch.yml
+          rm -f .github/workflows/phase5d-source-snapshot.yml
+          rm -f .github/workflows/phase5d-publish-refinement.yml
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run deterministic physics regressions
+        run: npm run test:physics
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build application
+        run: npm run build
+
+      - name: Reject dependency advisories
+        run: npm run audit
+
+      - name: Verify collision-authority source invariants
+        run: |
+          git diff --check
+          ! grep -R "applyPositionCorrection\|setNextKinematic\|kinematicPositionBased\|remainingNormalImpulseNs" sim components scripts/physics-correctness.mjs
+          grep -q "RigidBodyDesc.dynamic" sim/collision/RapierCollisionWorld.ts
+          grep -q "applyExternalSolverState" sim/collision/RapierCollisionWorld.ts
+          grep -q "integrateVelocities(dt, !collisionAuthorityActive)" components/Boat.tsx
+
+      - name: Commit and push validated refinement
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'physics: refine Rapier collision authority'
+          git push origin HEAD:agent/phase-5d-collision-authority
