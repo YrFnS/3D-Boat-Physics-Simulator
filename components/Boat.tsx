@@ -674,8 +674,10 @@ export default function Boat() {
       0,
       1,
     );
+    // Positive input means port/left in the UI, while positive physical
+    // rudder angle is starboard/right in the body-axis hydrodynamic model.
     let targetRudder =
-      steerRaw * vessel.rudder.maximumAngleRad * rudderHealthRatio;
+      -steerRaw * vessel.rudder.maximumAngleRad * rudderHealthRatio;
     if (rudderHealth.current > 0 && rudderHealth.current < 40) {
       targetRudder +=
         (simulationRandom.current.next() - 0.5) *
@@ -842,7 +844,8 @@ export default function Boat() {
             sharedPhysics.obstacles,
             !calibration &&
               collisionTestEnabled.current &&
-              Math.abs(thrustRaw) > 0.1,
+              thrustRaw > 0.1 &&
+              vRelForward > 0.35,
             calibration?.collisionFixture ?? null,
             mass,
           );

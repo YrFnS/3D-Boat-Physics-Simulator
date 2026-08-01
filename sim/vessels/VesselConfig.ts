@@ -238,7 +238,7 @@ const VESSEL_CONFIGS = {
       throttleDeadband: 0.035,
     },
     propeller: {
-      pointLocal: [0, -0.45, 2.25],
+      pointLocal: [0, -0.85, 2.25],
       diameterM: 0.65,
       pitchRatio: 0.85,
       bladeCount: 4,
@@ -265,7 +265,7 @@ const VESSEL_CONFIGS = {
       propWashGain: 0.9,
     },
     rudder: {
-      pointLocal: [0, -0.35, 2.1],
+      pointLocal: [0, -0.8, 2.1],
       maximumAngleRad: 0.8,
       rateRadPerSecond: 1.8,
       areaM2: 0.42,

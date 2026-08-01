@@ -392,11 +392,14 @@ export function resolveRudderForceComponents(
   const forwardUnit = finiteOr(forwardFlowMps, 0) / flowSpeedMps;
   const rightUnit = finiteOr(rightFlowMps, 0) / flowSpeedMps;
   return {
+    // Lift is perpendicular to the incoming flow while drag opposes it. This
+    // orientation also makes a neutral rudder damp sideslip instead of
+    // amplifying it.
     forwardN:
-      hydrodynamics.liftN * rightUnit -
+      -hydrodynamics.liftN * rightUnit -
       hydrodynamics.dragN * forwardUnit,
     rightN:
-      -hydrodynamics.liftN * forwardUnit -
+      hydrodynamics.liftN * forwardUnit -
       hydrodynamics.dragN * rightUnit,
   };
 }
@@ -484,8 +487,17 @@ export class MarinePropulsionSystem {
       const commandCurve = Math.sqrt(normalizedCommand);
       targetRpm =
         engine.idleRpm +
-        commandCurve * (engine.maximumRpm - engine.idleRpm);
-      const loadDroop = Math.max(0, this.previousLoadRatio - 0.92);
+        commandCurve * (engine.ratedRpm - engine.idleRpm);
+
+      // A loaded marine engine should govern near rated RPM. Only a genuinely
+      // unloaded or ventilated propeller is allowed to spin toward the limiter.
+      const unloadedFraction = clamp(1 - this.previousLoadRatio, 0, 1);
+      targetRpm +=
+        unloadedFraction *
+        normalizedCommand *
+        (engine.maximumRpm - engine.ratedRpm) *
+        engine.unloadedOverRevFraction;
+      const loadDroop = Math.max(0, this.previousLoadRatio - 1);
       targetRpm *= 1 - loadDroop * engine.loadDroopFraction;
       targetRpm +=
         (1 - ventilationFactor) *

@@ -522,7 +522,7 @@ function testPowerLimitedPropulsionAndSignedManeuvering() {
       waterDensityKgM3: vessel.waterDensityKgM3,
       forwardFlowMps: 6,
       rightFlowMps: 0,
-      rudderAngleRad: vessel.rudder.maximumAngleRad * 0.6,
+      rudderAngleRad: -vessel.rudder.maximumAngleRad * 0.6,
       submergenceM: vessel.rudder.ventilationFullSubmergenceM,
       healthRatio: 1,
     });
@@ -534,12 +534,31 @@ function testPowerLimitedPropulsionAndSignedManeuvering() {
     assert.ok(aheadRudder.forceMagnitudeN > 0);
     assert.ok(aheadComponents.rightN < 0);
 
+    const neutralSideslip = computeRudderHydrodynamics({
+      config: vessel.rudder,
+      waterDensityKgM3: vessel.waterDensityKgM3,
+      forwardFlowMps: 6,
+      rightFlowMps: 1.5,
+      rudderAngleRad: 0,
+      submergenceM: vessel.rudder.ventilationFullSubmergenceM,
+      healthRatio: 1,
+    });
+    const neutralSideslipComponents = resolveRudderForceComponents(
+      neutralSideslip,
+      6,
+      1.5,
+    );
+    assert.ok(
+      neutralSideslipComponents.rightN < 0,
+      `${vesselType} neutral rudder must damp starboard sideslip`,
+    );
+
     const asternRudder = computeRudderHydrodynamics({
       config: vessel.rudder,
       waterDensityKgM3: vessel.waterDensityKgM3,
       forwardFlowMps: -6,
       rightFlowMps: 0,
-      rudderAngleRad: vessel.rudder.maximumAngleRad * 0.6,
+      rudderAngleRad: -vessel.rudder.maximumAngleRad * 0.6,
       submergenceM: vessel.rudder.ventilationFullSubmergenceM,
       healthRatio: 1,
     });
