@@ -7,10 +7,7 @@ import type { VesselConfig } from '@/sim/vessels/VesselConfig';
 
 const TERRAIN_SIZE_M = 3_000;
 const TERRAIN_SEGMENTS = 96;
-const CONTACT_SLOP_M = 0.012;
 const CONTACT_PREDICTION_M = 0.12;
-const MAX_POSITION_CORRECTION_M = 0.22;
-const MAX_TOTAL_CORRECTION_M = 0.55;
 const COLLIDER_BORDER_M = 0.08;
 const DEBUG_PROBE_HALF_WIDTH_M = 3.5;
 const DEBUG_PROBE_HALF_HEIGHT_M = 1.5;
@@ -118,13 +115,12 @@ function createTerrainMesh() {
 }
 
 /**
- * Rapier-backed contact detector for the custom marine-force body.
+ * Dynamic Rapier collision authority for the custom marine-force body.
  *
- * The vessel remains integrated by SixDofBody so the bespoke buoyancy and
- * hydrodynamic force model stays authoritative. Rapier owns collision geometry
- * and contact manifolds. A kinematic compound hull is synchronized to the
- * custom body each fixed step, then penetration, normals, and contact points
- * are converted into bounded impulses and positional correction.
+ * SixDofBody integrates anisotropic marine forces into velocity. Rapier then
+ * advances the pose exactly once, resolves every contact manifold with its
+ * effective mass and angular inertia, and returns the solved state. This keeps
+ * the bespoke hydrodynamic model while removing the hand-tuned contact solver.
  */
 export class RapierCollisionWorld {
   private readonly world: RAPIER.World;
@@ -146,10 +142,9 @@ export class RapierCollisionWorld {
   private readonly separation = new Vector3();
   private readonly contactPoint = new Vector3();
   private readonly pointVelocity = new Vector3();
-  private readonly impulse = new Vector3();
-  private readonly tangent = new Vector3();
-  private readonly correction = new Vector3();
   private readonly vesselCenterOfMass = new Vector3();
+  private readonly centerOfMassLocal = new Vector3();
+  private readonly principalInertia = new Vector3();
   private readonly debugProbePosition = new Vector3();
   private readonly fixturePosition = new Vector3();
   private readonly forward = new Vector3();
@@ -197,33 +192,75 @@ export class RapierCollisionWorld {
   ): RapierContactSummary {
     this.ensureVessel(body, vessel);
     const vesselBody = this.vesselBody;
-    if (!vesselBody) return createEmptySummary();
+    if (!vesselBody) {
+      body.integratePose(deltaSeconds);
+      return createEmptySummary();
+    }
 
     this.syncObstacles(obstacleData);
     this.syncDebugProbe(body, vessel, debugProbeEnabled);
     this.syncCalibrationFixture(body, vessel, fixtureKind);
 
-    vesselBody.setNextKinematicTranslation({
-      x: body.position.x,
-      y: body.position.y,
-      z: body.position.z,
-    });
-    vesselBody.setNextKinematicRotation({
-      x: body.quaternion.x,
-      y: body.quaternion.y,
-      z: body.quaternion.z,
-      w: body.quaternion.w,
-    });
+    const contactMassKg = Number.isFinite(effectiveMassKg)
+      ? Math.max(1, effectiveMassKg)
+      : vessel.massKg;
+    body.getCenterOfMassLocal(this.centerOfMassLocal);
+    body.getPrincipalInertia(this.principalInertia);
+    vesselBody.setAdditionalMassProperties(
+      contactMassKg,
+      {
+        x: this.centerOfMassLocal.x,
+        y: this.centerOfMassLocal.y,
+        z: this.centerOfMassLocal.z,
+      },
+      {
+        x: this.principalInertia.x,
+        y: this.principalInertia.y,
+        z: this.principalInertia.z,
+      },
+      { x: 0, y: 0, z: 0, w: 1 },
+      true,
+    );
+    vesselBody.resetForces(true);
+    vesselBody.resetTorques(true);
+    vesselBody.setTranslation(
+      {
+        x: body.position.x,
+        y: body.position.y,
+        z: body.position.z,
+      },
+      true,
+    );
+    vesselBody.setRotation(
+      {
+        x: body.quaternion.x,
+        y: body.quaternion.y,
+        z: body.quaternion.z,
+        w: body.quaternion.w,
+      },
+      true,
+    );
+    vesselBody.setLinvel(
+      {
+        x: body.linearVelocity.x,
+        y: body.linearVelocity.y,
+        z: body.linearVelocity.z,
+      },
+      true,
+    );
+    vesselBody.setAngvel(
+      {
+        x: body.angularVelocity.x,
+        y: body.angularVelocity.y,
+        z: body.angularVelocity.z,
+      },
+      true,
+    );
 
     this.world.timestep = MathUtils.clamp(deltaSeconds, 1 / 240, 1 / 20);
     this.world.step();
 
     const summary = createEmptySummary();
-    const contactMassKg = Number.isFinite(effectiveMassKg)
-      ? Math.max(1, effectiveMassKg)
-      : vessel.massKg;
-    let totalCorrectionM = 0;
-    let remainingNormalImpulseNs = contactMassKg * 18;
     const visitedPairs = new Set<string>();
 
     for (const vesselCollider of this.vesselColliders) {
@@ -249,20 +286,6 @@ export class RapierCollisionWorld {
             const contactCount = manifold.numContacts();
             if (contactCount <= 0) return;
 
-            let signedContactDistanceM = Number.POSITIVE_INFINITY;
-            for (let index = 0; index < contactCount; index += 1) {
-              signedContactDistanceM = Math.min(
-                signedContactDistanceM,
-                manifold.contactDist(index),
-              );
-            }
-            const penetrationM = Math.max(0, -signedContactDistanceM);
-            const predictiveDepthM = Math.max(
-              0,
-              CONTACT_PREDICTION_M - signedContactDistanceM,
-            );
-            if (predictiveDepthM <= 0) return;
-
             const isCalibrationFixture =
               otherCollider.handle === this.calibrationFixtureCollider?.handle;
             const fixtureIsTerrain =
@@ -274,137 +297,112 @@ export class RapierCollisionWorld {
             const isDebugProbe =
               otherCollider.handle === this.debugProbeCollider?.handle;
 
-            if (manifold.numSolverContacts() > 0) {
-              const rawPoint = manifold.solverContactPoint(0);
-              this.contactPoint.set(rawPoint.x, rawPoint.y, rawPoint.z);
-            } else {
-              const colliderPosition = vesselCollider.translation();
-              this.contactPoint.set(
-                colliderPosition.x,
-                colliderPosition.y,
-                colliderPosition.z,
-              );
-            }
-
             const rawNormal = manifold.normal();
             this.normal.set(rawNormal.x, rawNormal.y, rawNormal.z);
             if (!flipped) this.normal.negate();
-
-            body.getWorldCenterOfMass(this.vesselCenterOfMass);
-            this.separation
-              .copy(this.vesselCenterOfMass)
-              .sub(this.contactPoint);
-            if (this.normal.dot(this.separation) < 0) {
-              this.normal.negate();
-            }
             if (this.normal.lengthSq() <= 1e-8) return;
             this.normal.normalize();
 
-            body.velocityAtPoint(this.contactPoint, this.pointVelocity);
-            const normalSpeedMps = this.pointVelocity.dot(this.normal);
-            const impactSpeedMps = Math.max(0, -normalSpeedMps);
-            const responseScale = isTerrain ? 0.72 : 0.6;
-            const impulseNs = Math.min(
-              remainingNormalImpulseNs,
-              contactMassKg * 12,
-              impactSpeedMps * contactMassKg * responseScale,
-            );
+            const solverContactCount = manifold.numSolverContacts();
+            for (let index = 0; index < contactCount; index += 1) {
+              const signedContactDistanceM = manifold.contactDist(index);
+              const penetrationM = Math.max(0, -signedContactDistanceM);
 
-            if (impulseNs > 0) {
-              body.applyImpulseAtPoint(
-                this.impulse.copy(this.normal).multiplyScalar(impulseNs),
-                this.contactPoint,
-              );
-              remainingNormalImpulseNs -= impulseNs;
-            }
-
-            this.tangent
-              .copy(this.pointVelocity)
-              .addScaledVector(this.normal, -normalSpeedMps);
-            const tangentSpeedMps = this.tangent.length();
-            if (tangentSpeedMps > 1e-5) {
-              const frictionImpulseNs = Math.min(
-                tangentSpeedMps *
-                  contactMassKg *
-                  (isTerrain ? 0.18 : 0.06),
-                contactMassKg * (isTerrain ? 2.5 : 0.8),
-                Math.max(
-                  impulseNs,
-                  contactMassKg * predictiveDepthM * 0.9,
-                ) *
-                  (isTerrain ? 0.75 : 0.3),
-              );
-              if (frictionImpulseNs > 0) {
-                body.applyImpulseAtPoint(
-                  this.impulse
-                    .copy(this.tangent)
-                    .multiplyScalar(-frictionImpulseNs / tangentSpeedMps),
-                  this.contactPoint,
+              if (solverContactCount > 0) {
+                const rawPoint = manifold.solverContactPoint(
+                  Math.min(index, solverContactCount - 1),
+                );
+                this.contactPoint.set(rawPoint.x, rawPoint.y, rawPoint.z);
+              } else {
+                const colliderPosition = vesselCollider.translation();
+                this.contactPoint.set(
+                  colliderPosition.x,
+                  colliderPosition.y,
+                  colliderPosition.z,
                 );
               }
-            }
 
-            const correctionM = Math.min(
-              MAX_POSITION_CORRECTION_M,
-              Math.max(0, penetrationM - CONTACT_SLOP_M) * 0.58,
-              Math.max(0, MAX_TOTAL_CORRECTION_M - totalCorrectionM),
-            );
-            if (correctionM > 0) {
-              body.applyPositionCorrection(
-                this.correction
-                  .copy(this.normal)
-                  .multiplyScalar(correctionM),
-              );
-              totalCorrectionM += correctionM;
-            }
+              body.getWorldCenterOfMass(this.vesselCenterOfMass);
+              this.separation
+                .copy(this.vesselCenterOfMass)
+                .sub(this.contactPoint);
+              if (this.normal.dot(this.separation) < 0) {
+                this.normal.negate();
+              }
 
-            summary.contactCount += 1;
-            if (isCalibrationFixture) {
-              summary.fixtureContactCount += 1;
-              summary.fixtureKind = this.calibrationFixtureKind;
-            }
-            // Diagnostics track unresolved overlap after the bounded
-            // correction actually applied to the authoritative custom body.
-            summary.maxPenetrationM = Math.max(
-              summary.maxPenetrationM,
-              Math.max(0, penetrationM - correctionM),
-            );
-            if (isTerrain) {
-              summary.terrainContactCount += 1;
-              summary.maxTerrainImpactSpeedMps = Math.max(
-                summary.maxTerrainImpactSpeedMps,
-                impactSpeedMps,
+              // SixDofBody still contains the pre-solve velocity here, so the
+              // measured closing speed is not contaminated by the response.
+              body.velocityAtPoint(this.contactPoint, this.pointVelocity);
+              const normalSpeedMps = this.pointVelocity.dot(this.normal);
+              const impactSpeedMps = Math.max(0, -normalSpeedMps);
+              const normalImpulseNs = Math.abs(
+                manifold.contactImpulse(index),
               );
-              summary.maxTerrainImpulseNs = Math.max(
-                summary.maxTerrainImpulseNs,
-                impulseNs,
+              const solvedImpulseNs = Math.hypot(
+                normalImpulseNs,
+                manifold.contactTangentImpulseX(index),
+                manifold.contactTangentImpulseY(index),
               );
-            } else {
-              summary.obstacleContactCount += 1;
-              this.forward
-                .set(0, 0, -1)
-                .applyQuaternion(body.quaternion)
-                .normalize();
-              summary.maxObstacleHeadOnFactor = Math.max(
-                summary.maxObstacleHeadOnFactor,
-                Math.abs(this.normal.dot(this.forward)),
+
+              summary.contactCount += 1;
+              summary.maxPenetrationM = Math.max(
+                summary.maxPenetrationM,
+                penetrationM,
               );
-              summary.maxObstacleImpactSpeedMps = Math.max(
-                summary.maxObstacleImpactSpeedMps,
-                impactSpeedMps,
-              );
-              summary.maxObstacleImpulseNs = Math.max(
-                summary.maxObstacleImpulseNs,
-                impulseNs,
-              );
-              if (isDebugProbe) summary.debugProbeContactCount += 1;
+              if (isCalibrationFixture) {
+                summary.fixtureContactCount += 1;
+                summary.fixtureKind = this.calibrationFixtureKind;
+              }
+
+              if (isTerrain) {
+                summary.terrainContactCount += 1;
+                summary.maxTerrainImpactSpeedMps = Math.max(
+                  summary.maxTerrainImpactSpeedMps,
+                  impactSpeedMps,
+                );
+                summary.maxTerrainImpulseNs = Math.max(
+                  summary.maxTerrainImpulseNs,
+                  solvedImpulseNs,
+                );
+              } else {
+                summary.obstacleContactCount += 1;
+                this.forward
+                  .set(0, 0, -1)
+                  .applyQuaternion(body.quaternion)
+                  .normalize();
+                summary.maxObstacleHeadOnFactor = Math.max(
+                  summary.maxObstacleHeadOnFactor,
+                  Math.abs(this.normal.dot(this.forward)),
+                );
+                summary.maxObstacleImpactSpeedMps = Math.max(
+                  summary.maxObstacleImpactSpeedMps,
+                  impactSpeedMps,
+                );
+                summary.maxObstacleImpulseNs = Math.max(
+                  summary.maxObstacleImpulseNs,
+                  solvedImpulseNs,
+                );
+                if (isDebugProbe) summary.debugProbeContactCount += 1;
+              }
             }
           },
         );
       });
     }
 
-    summary.totalPositionCorrectionM = totalCorrectionM;
+    const solvedTranslation = vesselBody.translation();
+    const solvedRotation = vesselBody.rotation();
+    const solvedLinearVelocity = vesselBody.linvel();
+    const solvedAngularVelocity = vesselBody.angvel();
+    const imported = body.importExternalSolverState({
+      position: solvedTranslation,
+      quaternion: solvedRotation,
+      linearVelocity: solvedLinearVelocity,
+      angularVelocity: solvedAngularVelocity,
+    });
+    if (!imported) {
+      body.integratePose(deltaSeconds);
+    }
 
     if (
       summary.debugProbeContactCount > 0 &&
@@ -431,7 +429,9 @@ export class RapierCollisionWorld {
     this.removeCalibrationFixture();
 
     this.vesselType = vessel.type;
-    const bodyDescription = this.rapier.RigidBodyDesc.kinematicPositionBased()
+    body.getCenterOfMassLocal(this.centerOfMassLocal);
+    body.getPrincipalInertia(this.principalInertia);
+    const bodyDescription = this.rapier.RigidBodyDesc.dynamic()
       .setTranslation(body.position.x, body.position.y, body.position.z)
       .setRotation({
         x: body.quaternion.x,
@@ -439,7 +439,34 @@ export class RapierCollisionWorld {
         z: body.quaternion.z,
         w: body.quaternion.w,
       })
-      .setCanSleep(false);
+      .setLinvel(
+        body.linearVelocity.x,
+        body.linearVelocity.y,
+        body.linearVelocity.z,
+      )
+      .setAngvel({
+        x: body.angularVelocity.x,
+        y: body.angularVelocity.y,
+        z: body.angularVelocity.z,
+      })
+      .setGravityScale(0)
+      .setLinearDamping(0)
+      .setAngularDamping(0)
+      .setCanSleep(false)
+      .setAdditionalMassProperties(
+        vessel.massKg,
+        {
+          x: this.centerOfMassLocal.x,
+          y: this.centerOfMassLocal.y,
+          z: this.centerOfMassLocal.z,
+        },
+        {
+          x: this.principalInertia.x,
+          y: this.principalInertia.y,
+          z: this.principalInertia.z,
+        },
+        { x: 0, y: 0, z: 0, w: 1 },
+      );
     this.vesselBody = this.world.createRigidBody(bodyDescription);
     this.vesselBody.enableCcd(true);
     this.vesselBody.setSoftCcdPrediction(
@@ -491,6 +518,7 @@ export class RapierCollisionWorld {
           ),
         )
           .setTranslation(piece.x, piece.y, piece.z)
+          .setDensity(0)
           .setFriction(0.22)
           .setRestitution(0.04)
           .setContactSkin(CONTACT_PREDICTION_M)

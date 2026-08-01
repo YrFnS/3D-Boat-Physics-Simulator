@@ -852,19 +852,19 @@ export default function Boat() {
       }
     }
 
-    // Rapier resolves compound-hull obstacle and terrain contacts after the
-    // custom marine forces have been integrated for this fixed step.
+    // The custom marine solver updates anisotropic velocity first. Rapier then
+    // advances the pose exactly once and owns every contact impulse, friction
+    // constraint, restitution response, and penetration recovery.
     motionLimits.current.maxAngularSpeedRadPerSecond =
       vessel.maxAngularSpeedRadPerSecond;
-
-    // --- Integrate the accumulated six-degree-of-freedom forces ---
-    body.integrate(dt);
+    body.integrateVelocities(dt);
     body.enforceMotionLimits(motionLimits.current);
 
+    const collisionWorldEnabled =
+      !calibration || calibration.usesCollisionWorld;
     const collisionSummary =
-      calibration && !calibration.usesCollisionWorld
-        ? undefined
-        : rapierCollisionWorld.current?.step(
+      collisionWorldEnabled && rapierCollisionWorld.current
+        ? rapierCollisionWorld.current.step(
             body,
             vessel,
             dt,
@@ -875,10 +875,14 @@ export default function Boat() {
               vRelForward > 0.35,
             calibration?.collisionFixture ?? null,
             mass,
-          );
+          )
+        : undefined;
+    if (!collisionSummary) {
+      body.integratePose(dt);
+    }
 
-    // Contact impulses and penetration correction happen after integration,
-    // so validate and clamp the complete final state again.
+    // Contact resolution can change both linear and angular velocity, so clamp
+    // and validate the authoritative post-solve state.
     body.enforceMotionLimits(motionLimits.current);
 
     if (collisionSummary) {
