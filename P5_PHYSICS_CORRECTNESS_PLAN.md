@@ -10,35 +10,35 @@ Preserve the stable fixed-step six-degree architecture and existing gameplay whi
 
 ### Fixed-step timing
 
-- [ ] Make the substep budget capable of consuming the configured maximum frame delta.
-- [ ] Account for time removed by frame-delta clamping as dropped simulation time.
-- [ ] Account for discarded accumulator backlog without double counting.
-- [ ] Add deterministic runner tests covering low-FPS frames, long stalls, interpolation, and reset behavior.
+- [x] Make the substep budget capable of consuming the configured maximum frame delta.
+- [x] Account for time removed by frame-delta clamping as dropped simulation time.
+- [x] Account for discarded accumulator backlog without double counting.
+- [x] Add deterministic runner tests covering low-FPS frames, long stalls, interpolation, and reset behavior.
 
 ### Vessel reference frames
 
-- [ ] Use complete body-space forward/right/up axes for hydrodynamic drag.
-- [ ] Use complete body-space axes for thrust and rudder-force application.
-- [ ] Keep horizontal projection only for navigation heading and presentation.
-- [ ] Base planing and forward-flow decisions on signed water-relative surge speed.
+- [x] Use complete body-space forward/right/up axes for hydrodynamic drag.
+- [x] Use complete body-space axes for thrust and rudder-force application.
+- [x] Keep horizontal projection only for navigation heading and presentation.
+- [x] Base planing and forward-flow decisions on signed water-relative surge speed.
 
 ### Damage, flooding, and environmental forces
 
-- [ ] Correct the damage and winter draft-offset sign so reduced buoyancy lowers the vessel instead of lifting it.
-- [ ] Replace direct ice, tornado, and whirlpool velocity edits with forces, torques, or explicit impulses.
-- [ ] Keep random hazard behavior deterministic and timestep-scaled.
-- [ ] Apply safety invariants after collision and environmental impulses.
+- [x] Correct the damage and winter draft-offset sign so reduced buoyancy lowers the vessel instead of lifting it.
+- [x] Replace direct ice, tornado, and whirlpool velocity edits with forces, torques, or explicit impulses.
+- [x] Keep random hazard behavior deterministic and timestep-scaled.
+- [x] Apply safety invariants after collision and environmental impulses.
 
 ### Invalid-state recovery
 
-- [ ] Preserve the last valid transform and momentum state.
-- [ ] Roll back to the last valid state when an invalid force poisons an integration step.
-- [ ] Avoid teleporting an invalid vessel to the world origin.
+- [x] Preserve the last valid transform and momentum state.
+- [x] Roll back to the last valid state when an invalid force poisons an integration step.
+- [x] Avoid teleporting an invalid vessel to the world origin.
 
 ### Regression validation
 
-- [ ] Add pure deterministic physics-correctness tests.
-- [ ] Extend CI so correctness tests run before browser calibration.
+- [x] Add pure deterministic physics-correctness tests.
+- [x] Extend CI so correctness tests run before browser calibration.
 - [ ] Re-run lint, TypeScript, production build, physics calibration, collision calibration, visual smoke, and release validation.
 - [ ] Record any intended calibration-envelope changes rather than silently widening targets.
 
