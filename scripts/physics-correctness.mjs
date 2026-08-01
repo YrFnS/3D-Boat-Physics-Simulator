@@ -18,6 +18,13 @@ import {
   waterRelativeSurgeSpeed,
 } from '../sim/vessels/PhysicsCorrectness.ts';
 import { getVesselConfig } from '../sim/vessels/VesselConfig.ts';
+import {
+  computeRudderHydrodynamics,
+  evaluatePropellerOpenWater,
+  MarinePropulsionSystem,
+  propellerCavitationFactor,
+  resolveRudderForceComponents,
+} from '../sim/vessels/PropulsionSystem.ts';
 import { sampleGerstnerSurface } from '../sim/water/GerstnerWater.ts';
 import { createWaterSurfaceSample } from '../sim/water/WaterSurface.ts';
 
@@ -413,6 +420,180 @@ function testMassAwareReferenceForcesAndAddedMass() {
   );
 }
 
+
+function runPropulsionToSteadyState(
+  vessel,
+  throttle,
+  engineHealthRatio = 1,
+  propellerSubmergenceM = 1,
+) {
+  const system = new MarinePropulsionSystem();
+  system.reset(vessel.engine);
+  let result;
+  for (let index = 0; index < 600; index += 1) {
+    result = system.step(vessel.engine, vessel.propeller, {
+      deltaSeconds: 1 / 60,
+      throttle,
+      engineHealthRatio,
+      temperatureEfficiency: 1,
+      combustionEfficiency: 1,
+      waterDensityKgM3: vessel.waterDensityKgM3,
+      propellerAdvanceSpeedMps: 0,
+      propellerSubmergenceM,
+    });
+  }
+  return { ...result };
+}
+
+function testPowerLimitedPropulsionAndSignedManeuvering() {
+  for (const vesselType of ['trawler', 'speedboat']) {
+    const vessel = getVesselConfig(vesselType);
+    const ahead = runPropulsionToSteadyState(vessel, 1);
+    assertFiniteValues(Object.values(ahead), `${vesselType} ahead drivetrain`);
+    assert.ok(ahead.engineRpm > vessel.engine.idleRpm);
+    assert.ok(ahead.shaftRpm > 0);
+    assert.ok(ahead.propellerThrustN > 0);
+    assert.ok(ahead.deliveredShaftPowerW <= vessel.engine.ratedPowerW * 1.01);
+    assert.ok(
+      ahead.absorbedShaftPowerW <= ahead.deliveredShaftPowerW * 1.01,
+      `${vesselType} propeller load must remain within delivered shaft power`,
+    );
+
+    const astern = runPropulsionToSteadyState(vessel, -1);
+    assertFiniteValues(Object.values(astern), `${vesselType} astern drivetrain`);
+    assert.ok(astern.shaftRpm < 0);
+    assert.ok(astern.propellerThrustN < 0);
+    assert.ok(
+      Math.abs(astern.deliveredShaftPowerW) <
+        ahead.deliveredShaftPowerW,
+      `${vesselType} astern power must respect the reverse-power limit`,
+    );
+
+    const damaged = runPropulsionToSteadyState(vessel, 1, 0.35);
+    assert.ok(
+      damaged.deliveredShaftPowerW < ahead.deliveredShaftPowerW * 0.5,
+      `${vesselType} engine damage must reduce delivered shaft power`,
+    );
+
+    const submerged = evaluatePropellerOpenWater(
+      vessel.propeller,
+      vessel.waterDensityKgM3,
+      ahead.shaftRpm,
+      1,
+      0,
+      vessel.propeller.ventilationFullSubmergenceM,
+    );
+    const ventilated = evaluatePropellerOpenWater(
+      vessel.propeller,
+      vessel.waterDensityKgM3,
+      ahead.shaftRpm,
+      1,
+      0,
+      0,
+    );
+    assert.ok(
+      Math.abs(ventilated.propellerThrustN) <
+        Math.abs(submerged.propellerThrustN),
+      `${vesselType} ventilation must reduce propeller thrust`,
+    );
+
+    const cavitating = propellerCavitationFactor(
+      vessel.propeller,
+      vessel.waterDensityKgM3,
+      Math.abs(ahead.shaftRpm) / 30,
+      vessel.propeller.maximumThrustN * 3,
+    );
+    assert.ok(cavitating < 1);
+    assert.ok(cavitating >= vessel.propeller.minimumCavitationFactor);
+
+    const noFlow = computeRudderHydrodynamics({
+      config: vessel.rudder,
+      waterDensityKgM3: vessel.waterDensityKgM3,
+      forwardFlowMps: 0,
+      rightFlowMps: 0,
+      rudderAngleRad: vessel.rudder.maximumAngleRad,
+      submergenceM: vessel.rudder.ventilationFullSubmergenceM,
+      healthRatio: 1,
+    });
+    approximatelyEqual(noFlow.forceMagnitudeN, 0);
+
+    const neutralAheadRudder = computeRudderHydrodynamics({
+      config: vessel.rudder,
+      waterDensityKgM3: vessel.waterDensityKgM3,
+      forwardFlowMps: 6,
+      rightFlowMps: 0,
+      rudderAngleRad: 0,
+      submergenceM: vessel.rudder.ventilationFullSubmergenceM,
+      healthRatio: 1,
+    });
+    assert.ok(
+      neutralAheadRudder.dragCoefficient <= 0.03,
+      `${vesselType} streamlined neutral rudder drag must stay bounded`,
+    );
+    assert.ok(
+      Number.isFinite(vessel.propeller.shaftAngleRad) &&
+        Math.abs(vessel.propeller.shaftAngleRad) <= Math.PI / 6,
+      `${vesselType} propeller shaft angle must stay physically bounded`,
+    );
+
+    const aheadRudder = computeRudderHydrodynamics({
+      config: vessel.rudder,
+      waterDensityKgM3: vessel.waterDensityKgM3,
+      forwardFlowMps: 6,
+      rightFlowMps: 0,
+      rudderAngleRad: -vessel.rudder.maximumAngleRad * 0.6,
+      submergenceM: vessel.rudder.ventilationFullSubmergenceM,
+      healthRatio: 1,
+    });
+    const aheadComponents = resolveRudderForceComponents(
+      aheadRudder,
+      6,
+      0,
+    );
+    assert.ok(aheadRudder.forceMagnitudeN > 0);
+    assert.ok(aheadComponents.rightN < 0);
+
+    const neutralSideslip = computeRudderHydrodynamics({
+      config: vessel.rudder,
+      waterDensityKgM3: vessel.waterDensityKgM3,
+      forwardFlowMps: 6,
+      rightFlowMps: 1.5,
+      rudderAngleRad: 0,
+      submergenceM: vessel.rudder.ventilationFullSubmergenceM,
+      healthRatio: 1,
+    });
+    const neutralSideslipComponents = resolveRudderForceComponents(
+      neutralSideslip,
+      6,
+      1.5,
+    );
+    assert.ok(
+      neutralSideslipComponents.rightN < 0,
+      `${vesselType} neutral rudder must damp starboard sideslip`,
+    );
+
+    const asternRudder = computeRudderHydrodynamics({
+      config: vessel.rudder,
+      waterDensityKgM3: vessel.waterDensityKgM3,
+      forwardFlowMps: -6,
+      rightFlowMps: 0,
+      rudderAngleRad: -vessel.rudder.maximumAngleRad * 0.6,
+      submergenceM: vessel.rudder.ventilationFullSubmergenceM,
+      healthRatio: 1,
+    });
+    const asternComponents = resolveRudderForceComponents(
+      asternRudder,
+      -6,
+      0,
+    );
+    assert.ok(
+      Math.sign(asternComponents.rightN) ===
+        -Math.sign(aheadComponents.rightN),
+      `${vesselType} rudder side force must reverse in astern flow`,
+    );
+  }
+}
+
 function testLastValidStateAndMotionLimits() {
   const body = new SixDofBody();
   body.position.set(12, 3, -4);
@@ -465,6 +646,7 @@ testDampingAlwaysDissipatesEnergy();
 testCompartmentFloodingAndPumping();
 testLocalizedSlamScaling();
 testMassAwareReferenceForcesAndAddedMass();
+testPowerLimitedPropulsionAndSignedManeuvering();
 testLastValidStateAndMotionLimits();
 
 console.log('Physics correctness regression tests passed.');

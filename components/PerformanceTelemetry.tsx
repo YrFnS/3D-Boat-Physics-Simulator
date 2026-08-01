@@ -28,6 +28,20 @@ const PHYSICS_DATASET_KEYS = [
   'simAverageWaterVelocityY',
   'simAverageWaterVelocityZ',
   'simMaximumSlamSeverity',
+  'simEngineRpm',
+  'simShaftRpm',
+  'simDeliveredShaftPowerKw',
+  'simAbsorbedShaftPowerKw',
+  'simPropellerThrustN',
+  'simPropellerAdvanceRatio',
+  'simPropellerLoadRatio',
+  'simCavitationFactor',
+  'simVentilationFactor',
+  'simPropWashSpeedMps',
+  'simRudderAngleDeg',
+  'simRudderForceN',
+  'simRudderFlowSpeedMps',
+  'simRudderAngleOfAttackDeg',
   'simDroppedTime',
   'simCollisionReady',
   'simCollisionSequence',
@@ -108,6 +122,42 @@ function publishPhysicsDiagnostics() {
   );
   root.dataset.simMaximumSlamSeverity = String(
     sharedPhysics.maximumSlamSeverity,
+  );
+  root.dataset.simEngineRpm = String(sharedPhysics.engineRpm);
+  root.dataset.simShaftRpm = String(sharedPhysics.shaftRpm);
+  root.dataset.simDeliveredShaftPowerKw = String(
+    sharedPhysics.deliveredShaftPowerW / 1_000,
+  );
+  root.dataset.simAbsorbedShaftPowerKw = String(
+    sharedPhysics.absorbedShaftPowerW / 1_000,
+  );
+  root.dataset.simPropellerThrustN = String(
+    sharedPhysics.propellerThrustN,
+  );
+  root.dataset.simPropellerAdvanceRatio = String(
+    sharedPhysics.propellerAdvanceRatio,
+  );
+  root.dataset.simPropellerLoadRatio = String(
+    sharedPhysics.propellerLoadRatio,
+  );
+  root.dataset.simCavitationFactor = String(
+    sharedPhysics.cavitationFactor,
+  );
+  root.dataset.simVentilationFactor = String(
+    sharedPhysics.ventilationFactor,
+  );
+  root.dataset.simPropWashSpeedMps = String(
+    sharedPhysics.propWashSpeedMps,
+  );
+  root.dataset.simRudderAngleDeg = String(
+    sharedPhysics.rudderAngleRad * (180 / Math.PI),
+  );
+  root.dataset.simRudderForceN = String(sharedPhysics.rudderForceN);
+  root.dataset.simRudderFlowSpeedMps = String(
+    sharedPhysics.rudderFlowSpeedMps,
+  );
+  root.dataset.simRudderAngleOfAttackDeg = String(
+    sharedPhysics.rudderAngleOfAttackRad * (180 / Math.PI),
   );
   root.dataset.simDroppedTime = String(sharedPhysics.droppedSimulationTime);
   root.dataset.simCollisionReady = String(sharedPhysics.collisionReady);
