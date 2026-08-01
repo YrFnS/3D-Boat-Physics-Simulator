@@ -1,0 +1,90 @@
+name: Finalize Phase 5D collision authority
+
+on:
+  push:
+    branches:
+      - agent/phase-5d-collision-authority
+    paths:
+      - '.github/workflows/phase5d-finalize.yml'
+      - 'scripts/.phase5d-finalize-patch/**'
+
+permissions:
+  contents: write
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+concurrency:
+  group: phase5d-finalize-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    name: Harden, validate, and publish collision authority
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out Phase 5D branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/phase-5d-collision-authority
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Reconstruct and apply verified robustness patch
+        run: |
+          cat scripts/.phase5d-finalize-patch/part-* > "$RUNNER_TEMP/phase5d-finalize.patch.gz.b64"
+          echo '8394ed0c1b3afd6cf1abe674948b8fd29fca846984436c5b237b9772ef473b6f  '"$RUNNER_TEMP/phase5d-finalize.patch.gz.b64" | sha256sum --check
+          base64 --decode "$RUNNER_TEMP/phase5d-finalize.patch.gz.b64" > "$RUNNER_TEMP/phase5d-finalize.patch.gz"
+          echo '0ac777c84cf6001bacf87c370b8fe6c4bcd8c274877d80be31b3fbde26098162  '"$RUNNER_TEMP/phase5d-finalize.patch.gz" | sha256sum --check
+          gzip -dc "$RUNNER_TEMP/phase5d-finalize.patch.gz" > "$RUNNER_TEMP/phase5d-finalize.patch"
+          echo 'de877226967d2f2434b7e1a0693defc786db9d548bc22b3f73ecde04bc3d871c  '"$RUNNER_TEMP/phase5d-finalize.patch" | sha256sum --check
+          git apply --check "$RUNNER_TEMP/phase5d-finalize.patch"
+          git apply "$RUNNER_TEMP/phase5d-finalize.patch"
+          git diff --check
+
+      - name: Remove one-use transfer and snapshot tooling
+        run: |
+          rm -rf scripts/.phase5d-patch
+          rm -rf scripts/.phase5d-finalize-patch
+          rm -f .github/workflows/phase5d-apply.yml
+          rm -f .github/workflows/phase5d-review-snapshot.yml
+          rm -f .github/workflows/phase5d-source-snapshot.yml
+          rm -f .github/workflows/phase5d-finalize.yml
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run marine and collision-authority regressions
+        run: npm run test:physics
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build application
+        run: npm run build
+
+      - name: Dependency audit
+        run: npm run audit
+
+      - name: Verify final patch hygiene
+        run: git diff --check
+
+      - name: Commit and push validated robustness work
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'test: harden Phase 5D contact authority'
+          git push origin HEAD:agent/phase-5d-collision-authority
