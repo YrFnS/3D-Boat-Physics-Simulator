@@ -1,6 +1,19 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { evaluatePhysicalCalibrationReport } from '../sim/calibration/PhysicalCalibration.ts';
+import { PHYSICAL_REFERENCE_PROFILES } from '../sim/calibration/ReferenceProfiles.ts';
+import { EXTERNAL_REFERENCE_PROFILES } from '../sim/calibration/ExternalReferenceProfiles.ts';
+import { createVesselConfigurationMeasurements } from '../sim/calibration/VesselConfigurationMeasurements.ts';
+import {
+  evaluateReferenceVesselConfigurations,
+  REFERENCE_VESSEL_CONFIGURATIONS,
+} from '../sim/calibration/ReferenceVesselConfigurations.ts';
+import {
+  evaluateReferenceLoadingCases,
+  REFERENCE_LOADING_CASES,
+} from '../sim/calibration/ReferenceLoadingCases.ts';
+import { getVesselConfig } from '../sim/vessels/VesselConfig.ts';
 
 const baseUrl = process.env.CALIBRATION_BASE_URL ?? 'http://127.0.0.1:3000';
 const outputDirectory = path.resolve('artifacts/physics-calibration');
@@ -28,6 +41,17 @@ const scenarios = vessels.flatMap((vessel) =>
     queryKey,
   })),
 );
+const physicalProfiles = [
+  ...PHYSICAL_REFERENCE_PROFILES,
+  ...EXTERNAL_REFERENCE_PROFILES,
+];
+const configurationScenarioEntries = createVesselConfigurationMeasurements(
+  vessels.map((vessel) => getVesselConfig(vessel)),
+).map((measurement) => ({
+  vessel: measurement.vessel,
+  scenario: measurement.scenario,
+  calibration: { result: measurement },
+}));
 
 const browser = await chromium.launch({
   headless: true,
@@ -161,11 +185,43 @@ report.summary = {
   failed: report.scenarios.filter((scenario) => !scenario.passed).length,
 };
 
-await fs.writeFile(
-  path.join(outputDirectory, 'report.json'),
-  `${JSON.stringify(report, null, 2)}\n`,
-  'utf8',
+// Physical-reference comparison is deliberately separate from the simulator's
+// pass/fail result. The v1 baselines exercise regression continuity. Provisional
+// manufacturer profiles expose current geometry, loading, power, and speed gaps
+// but cannot certify real-world agreement without matched trial evidence.
+report.physicalCalibration = evaluatePhysicalCalibrationReport(
+  [...report.scenarios, ...configurationScenarioEntries],
+  physicalProfiles,
 );
+report.referenceConfigurations = evaluateReferenceVesselConfigurations(
+  REFERENCE_VESSEL_CONFIGURATIONS,
+);
+report.referenceLoadingCases = evaluateReferenceLoadingCases(
+  REFERENCE_LOADING_CASES,
+);
+
+await Promise.all([
+  fs.writeFile(
+    path.join(outputDirectory, 'report.json'),
+    `${JSON.stringify(report, null, 2)}\n`,
+    'utf8',
+  ),
+  fs.writeFile(
+    path.join(outputDirectory, 'physical-comparison.json'),
+    `${JSON.stringify(report.physicalCalibration, null, 2)}\n`,
+    'utf8',
+  ),
+  fs.writeFile(
+    path.join(outputDirectory, 'reference-configurations.json'),
+    `${JSON.stringify(report.referenceConfigurations, null, 2)}\n`,
+    'utf8',
+  ),
+  fs.writeFile(
+    path.join(outputDirectory, 'reference-loading-cases.json'),
+    `${JSON.stringify(report.referenceLoadingCases, null, 2)}\n`,
+    'utf8',
+  ),
+]);
 
 console.log(JSON.stringify(report, null, 2));
 if (failed) process.exitCode = 1;
