@@ -39,8 +39,20 @@ Preserve the stable fixed-step six-degree architecture and existing gameplay whi
 
 - [x] Add pure deterministic physics-correctness tests.
 - [x] Extend CI so correctness tests run before browser calibration.
-- [ ] Re-run lint, TypeScript, production build, physics calibration, collision calibration, visual smoke, and release validation.
-- [ ] Record any intended calibration-envelope changes rather than silently widening targets.
+- [x] Re-run lint, TypeScript, production build, physics calibration, collision calibration, visual smoke, product experience, and release validation.
+- [x] Preserve every existing calibration envelope; restore the representative speedboat turn-entry fixture from `0.21` to `0.24` throttle after corrected body-relative forces reduced its approach speed.
+
+## Validated checkpoint
+
+Phase 5A passed the complete repository validation matrix at commit `cc07a5df0f5867ed2c940b5a09907abf3f9e0ccb`:
+
+- CI, deterministic correctness tests, lint, TypeScript, production build, and dependency audit.
+- 16 of 16 trawler, speedboat, grounding, glancing, and impact calibration scenarios.
+- Desktop and mobile visual smoke.
+- Session, navigation, gameplay, onboarding, settings, and persistence flows.
+- Chromium, Firefox, and WebKit release validation, physical benchmark harness checks, screenshot integrity, and recovery paths.
+
+The speedboat turn calibration entered at `17.52758 m/s` against the unchanged `14–37 m/s` envelope, completed `180.53515°` of heading change, produced a `20.16159 m` turn radius, and remained below the existing roll limit.
 
 ## Exit criteria
 
