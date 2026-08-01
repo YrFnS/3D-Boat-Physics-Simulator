@@ -1,5 +1,6 @@
 name: Apply Phase 5 physics correctness
 
+# Activation commit after the workflow exists on the branch.
 on:
   push:
     branches:
