@@ -109,6 +109,8 @@ export interface RudderConfig {
   maximumDragCoefficient: number;
   maximumForceN: number;
   propWashFraction: number;
+  /** Multiplies hydrodynamic steering authority when local flow is astern. */
+  asternAuthorityFactor: number;
   ventilationStartSubmergenceM: number;
   ventilationFullSubmergenceM: number;
   minimumVentilationFactor: number;
@@ -226,8 +228,8 @@ const VESSEL_CONFIGS = {
       idleRpm: 900,
       ratedRpm: 3_600,
       maximumRpm: 4_500,
-      ratedPowerW: 240_000,
-      peakTorqueNm: 720,
+      ratedPowerW: 10_000,
+      peakTorqueNm: 80,
       rpmRisePerSecond: 1_650,
       rpmFallPerSecond: 2_700,
       loadDroopFraction: 0.18,
@@ -235,7 +237,7 @@ const VESSEL_CONFIGS = {
       gearRatioAhead: 2.4,
       gearRatioAstern: 2.8,
       drivelineEfficiency: 0.91,
-      reversePowerFraction: 0.72,
+      reversePowerFraction: 0.35,
       throttleDeadband: 0.035,
     },
     propeller: {
@@ -256,7 +258,7 @@ const VESSEL_CONFIGS = {
       maximumReverseThrustCoefficient: 0.16,
       minimumTorqueCoefficient: 0.006,
       maximumTorqueCoefficient: 0.04,
-      maximumThrustN: 20_000,
+      maximumThrustN: 5_000,
       cavitationTipSpeedMps: 54,
       cavitationReferenceSpeedMps: 12,
       cavitationLoadingThreshold: 1.15,
@@ -282,6 +284,7 @@ const VESSEL_CONFIGS = {
       maximumDragCoefficient: 1.25,
       maximumForceN: 8_000,
       propWashFraction: 0.72,
+      asternAuthorityFactor: 1,
       ventilationStartSubmergenceM: 0.02,
       ventilationFullSubmergenceM: 0.28,
       minimumVentilationFactor: 0.05,
@@ -439,8 +442,8 @@ const VESSEL_CONFIGS = {
       idleRpm: 900,
       ratedRpm: 6_200,
       maximumRpm: 7_000,
-      ratedPowerW: 360_000,
-      peakTorqueNm: 620,
+      ratedPowerW: 109_500,
+      peakTorqueNm: 220,
       rpmRisePerSecond: 2_700,
       rpmFallPerSecond: 3_600,
       loadDroopFraction: 0.14,
@@ -469,7 +472,7 @@ const VESSEL_CONFIGS = {
       maximumReverseThrustCoefficient: 0.18,
       minimumTorqueCoefficient: 0.006,
       maximumTorqueCoefficient: 0.045,
-      maximumThrustN: 28_000,
+      maximumThrustN: 14_000,
       cavitationTipSpeedMps: 78,
       cavitationReferenceSpeedMps: 22,
       cavitationLoadingThreshold: 1.25,
@@ -480,21 +483,22 @@ const VESSEL_CONFIGS = {
       propWashGain: 1,
     },
     rudder: {
-      pointLocal: [0, -0.15, 1.8],
+      pointLocal: [0, -0.38, 1.8],
       maximumAngleRad: 0.4,
       rateRadPerSecond: 2.6,
-      areaM2: 0.22,
+      areaM2: 0.25,
       aspectRatio: 1.4,
-      liftSlopePerRad: 3.8,
-      maximumLiftCoefficient: 1.05,
+      liftSlopePerRad: 4.15,
+      maximumLiftCoefficient: 1.12,
       stallAngleRad: 0.45,
       postStallLiftLossFraction: 0.68,
       baseDragCoefficient: 0.016,
       inducedDragFactor: 0.16,
       stallDragCoefficient: 0.82,
       maximumDragCoefficient: 1.4,
-      maximumForceN: 8_500,
+      maximumForceN: 12_800,
       propWashFraction: 0.82,
+      asternAuthorityFactor: 0.70,
       ventilationStartSubmergenceM: 0.01,
       ventilationFullSubmergenceM: 0.18,
       minimumVentilationFactor: 0.04,
@@ -638,7 +642,7 @@ const VESSEL_CONFIGS = {
       localPosition: [0, 0.52, 0.05],
     },
     planingCapable: true,
-    planingReferenceSpeedMps: 15,
+    planingReferenceSpeedMps: 7.5,
     windPointLocal: [0, 0.85, 0.35],
   },
 } as const satisfies Readonly<Record<VesselType, VesselConfig>>;

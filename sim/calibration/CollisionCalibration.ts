@@ -52,6 +52,7 @@ export interface CollisionCalibrationResult {
 
 const STEPS_PER_RENDER_FRAME = 180;
 const RELEASE_COMMAND_SECONDS = 3.2;
+const RELEASE_COMMAND_END_SECONDS = 13.5;
 const CONTACT_RELEASE_GRACE_SECONDS = 0.55;
 
 const TARGETS: Readonly<
@@ -199,7 +200,7 @@ export class CollisionCalibrationRunner {
 
   constructor(readonly request: CollisionCalibrationRequest) {
     this.collisionFixture = fixtureForScenario(request.scenario);
-    this.durationSeconds = request.scenario === 'grounding' ? 12 : 8;
+    this.durationSeconds = request.scenario === 'grounding' ? 15 : 8;
   }
 
   get isComplete() {
@@ -236,8 +237,9 @@ export class CollisionCalibrationRunner {
     if (this.request.scenario === 'grounding') {
       return {
         throttle:
-          timeSeconds >= RELEASE_COMMAND_SECONDS && timeSeconds < 9
-            ? -0.72
+          timeSeconds >= RELEASE_COMMAND_SECONDS &&
+          timeSeconds < RELEASE_COMMAND_END_SECONDS
+            ? -1
             : 0,
         steer: 0,
       };

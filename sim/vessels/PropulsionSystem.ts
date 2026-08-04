@@ -353,7 +353,12 @@ export function computeRudderHydrodynamics(
     Math.max(1, finiteOr(input.waterDensityKgM3, 1_025)) *
     flowSpeedMps *
     flowSpeedMps;
-  const authority = ventilationFactor * healthRatio;
+  const asternAuthorityFactor =
+    forwardFlowMps < 0
+      ? clamp(config.asternAuthorityFactor, 0, 1)
+      : 1;
+  const authority =
+    ventilationFactor * healthRatio * asternAuthorityFactor;
   let liftN =
     dynamicPressurePa * config.areaM2 * liftCoefficient * authority;
   let dragN =

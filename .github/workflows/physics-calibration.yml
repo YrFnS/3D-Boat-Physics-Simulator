@@ -13,6 +13,7 @@ on:
       - scripts/physics-calibration.mjs
       - scripts/physics-correctness.mjs
       - scripts/physical-calibration-contract.mjs
+      - scripts/reference-vessel-validation.mjs
       - package.json
       - package-lock.json
       - .github/workflows/physics-calibration.yml
@@ -30,6 +31,7 @@ on:
       - scripts/physics-calibration.mjs
       - scripts/physics-correctness.mjs
       - scripts/physical-calibration-contract.mjs
+      - scripts/reference-vessel-validation.mjs
       - package.json
       - package-lock.json
       - .github/workflows/physics-calibration.yml
@@ -112,6 +114,15 @@ jobs:
         with:
           name: physics-calibration
           path: artifacts/physics-calibration
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload physical-reference baseline
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: physical-reference-baseline
+          path: artifacts/physical-reference
           if-no-files-found: error
           retention-days: 14
 
