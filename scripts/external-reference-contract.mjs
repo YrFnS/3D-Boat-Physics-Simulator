@@ -98,7 +98,8 @@ assert.equal(
 assert.equal(
   axopar.metrics.find((metric) => metric.metric === 'configuredRatedPowerW')
     ?.withinEnvelope,
-  false,
+  true,
+  'The calibrated speedboat power must remain within the official engine range.',
 );
 assert.equal(
   axopar.metrics.find((metric) => metric.metric === 'configuredPlaningCapableFlag')

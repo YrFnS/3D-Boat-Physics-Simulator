@@ -119,7 +119,7 @@ try {
     const calibration = await page.evaluate(() => {
       const dataset = document.documentElement.dataset;
       const rawResult = dataset.simCalibrationResult;
-      let result = null;
+      let result;
 
       try {
         result = rawResult ? JSON.parse(rawResult) : null;

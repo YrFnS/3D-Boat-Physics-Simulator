@@ -724,7 +724,7 @@ async function runCalibrationProbe(browser, engineName, probe) {
 
     calibration = await page.evaluate(() => {
       const dataset = document.documentElement.dataset;
-      let result = null;
+      let result;
       try {
         result = dataset.simCalibrationResult
           ? JSON.parse(dataset.simCalibrationResult)
