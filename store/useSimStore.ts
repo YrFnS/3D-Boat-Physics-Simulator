@@ -167,6 +167,28 @@ export const sharedPhysics = {
   boatAngularVelocity: new Vector3(),
   boatSpeed: 0,
   submergedRatio: 0,
+  displacedVolumeM3: 0,
+  floodingRatio: 0,
+  floodedVolumeM3: 0,
+  physicalMassKg: 0,
+  displacementBalanceErrorRatio: 0,
+  centerOfBuoyancy: new Vector3(),
+  averageWaterVelocity: new Vector3(),
+  maximumSlamSeverity: 0,
+  engineRpm: 0,
+  shaftRpm: 0,
+  deliveredShaftPowerW: 0,
+  absorbedShaftPowerW: 0,
+  propellerThrustN: 0,
+  propellerAdvanceRatio: 0,
+  propellerLoadRatio: 0,
+  cavitationFactor: 1,
+  ventilationFactor: 1,
+  propWashSpeedMps: 0,
+  rudderAngleRad: 0,
+  rudderForceN: 0,
+  rudderFlowSpeedMps: 0,
+  rudderAngleOfAttackRad: 0,
   simulationTime: 0,
   renderTime: 0,
   fixedStepAlpha: 0,
@@ -235,6 +257,8 @@ export interface SimState {
   engineHealth: number;
   engineTemperature: number;
   rudderHealth: number;
+  floodingRatio: number;
+  floodedVolumeM3: number;
 
   targetTime: number;
   targetSeason: number;
@@ -261,6 +285,10 @@ export interface SimState {
     engine: number,
     temperature: number,
     rudder: number,
+  ) => void;
+  setFloodingTelemetry: (
+    floodingRatio: number,
+    floodedVolumeM3: number,
   ) => void;
   setKey: (key: string, value: boolean) => void;
   clearKeys: () => void;
@@ -308,6 +336,8 @@ function resetTelemetry() {
     engineHealth: 100,
     engineTemperature: 20,
     rudderHealth: 100,
+    floodingRatio: 0,
+    floodedVolumeM3: 0,
   };
 }
 
@@ -385,6 +415,11 @@ export const useSimStore = create<SimState>((set, get) => ({
       engineHealth,
       engineTemperature,
       rudderHealth,
+    }),
+  setFloodingTelemetry: (floodingRatio, floodedVolumeM3) =>
+    set({
+      floodingRatio: Math.max(0, Math.min(1, floodingRatio)),
+      floodedVolumeM3: Math.max(0, floodedVolumeM3),
     }),
   setKey: (key, value) =>
     set((state) => {

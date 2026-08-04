@@ -7,6 +7,7 @@ const AUTOMATION_QUERY_KEYS = [
   'collisionCalibration',
   'collisionTest',
   'autostart',
+  'benchmark',
 ] as const;
 
 function readAutomationMode() {

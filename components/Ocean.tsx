@@ -25,13 +25,11 @@ import {
 } from '@/store/useSimStore';
 import { getTerrainHeight } from '@/lib/terrain';
 import { sharedWakeField } from './WakeField';
-
-interface WaveDefinition {
-  x: number;
-  y: number;
-  z: number;
-  w: number;
-}
+import {
+  sampleGerstnerSurface,
+  type GerstnerWaveDefinition,
+} from '@/sim/water/GerstnerWater';
+import type { WaterSurfaceSample } from '@/sim/water/WaterSurface';
 
 interface OceanQualityConfig {
   innerSegments: number;
@@ -50,7 +48,7 @@ const QUALITY_CONFIG: Record<RenderQuality, OceanQualityConfig> = {
   ultra: { innerSegments: 256, radialSegments: 18, detail: 1 },
 };
 
-const CACHED_WAVES: WaveDefinition[] = [
+const CACHED_WAVES: GerstnerWaveDefinition[] = [
   { x: 0.894427, y: 0.447214, z: 0.12, w: 30 },
   { x: 0.707107, y: 0.707107, z: 0.1, w: 12 },
   { x: -0.196116, y: 0.980581, z: 0.08, w: 7 },
@@ -484,55 +482,12 @@ export const getWaveData = () => {
   return CACHED_WAVES;
 };
 
-export interface WaveHeightSample {
-  x: number;
-  y: number;
-  z: number;
-}
-
-export const getWaveHeight = (
+export const sampleOceanSurface = (
   x: number,
   z: number,
   time: number,
-  target?: WaveHeightSample,
-): WaveHeightSample => {
-  const waves = getWaveData();
-  let restingX = x;
-  let restingZ = z;
-
-  // Invert horizontal Gerstner displacement so CPU physics samples the same
-  // world-space surface rendered by the GPU.
-  for (let iteration = 0; iteration < 3; iteration += 1) {
-    let offsetX = 0;
-    let offsetZ = 0;
-
-    for (const wave of waves) {
-      const waveNumber = (2 * Math.PI) / wave.w;
-      const phaseSpeed = Math.sqrt(9.8 / waveNumber);
-      const phase =
-        waveNumber *
-        (wave.x * restingX + wave.y * restingZ - phaseSpeed * time);
-      const amplitude = wave.z / waveNumber;
-      const cosine = Math.cos(phase);
-
-      offsetX += wave.x * amplitude * cosine * 0.4;
-      offsetZ += wave.y * amplitude * cosine * 0.4;
-    }
-
-    restingX = x - offsetX;
-    restingZ = z - offsetZ;
-  }
-
-  let height = 0;
-  for (const wave of waves) {
-    const waveNumber = (2 * Math.PI) / wave.w;
-    const phaseSpeed = Math.sqrt(9.8 / waveNumber);
-    const phase =
-      waveNumber *
-      (wave.x * restingX + wave.y * restingZ - phaseSpeed * time);
-    height += (wave.z / waveNumber) * Math.sin(phase);
-  }
-
+  target: WaterSurfaceSample,
+): WaterSurfaceSample => {
   const terrainHeight = getTerrainHeight(x, z);
   let dampening =
     terrainHeight > -10
@@ -552,23 +507,21 @@ export const getWaveHeight = (
   );
   dampening *= 1 - ice * 0.95;
 
-  const deltaX = x - sharedPhysics.whirlpoolPos.x;
-  const deltaZ = z - sharedPhysics.whirlpoolPos.z;
-  const vortexDistance = Math.hypot(deltaX, deltaZ);
-  const vortex =
-    vortexDistance < 160
-      ? 1 - MathUtils.smoothstep(vortexDistance, 0, 160)
-      : 0;
-
-  let finalHeight = height * dampening;
-  finalHeight *= 1 - Math.pow(vortex, 1.5);
-  finalHeight -= Math.pow(vortex, 3) * 80 * dampening;
-
-  const sample = target ?? { x: 0, y: 0, z: 0 };
-  sample.x = x;
-  sample.y = finalHeight + OCEAN_HEIGHT;
-  sample.z = z;
-  return sample;
+  return sampleGerstnerSurface(
+    getWaveData(),
+    x,
+    z,
+    time,
+    {
+      baseHeightM: OCEAN_HEIGHT,
+      dampening,
+      vortexX: sharedPhysics.whirlpoolPos.x,
+      vortexZ: sharedPhysics.whirlpoolPos.z,
+      vortexRadiusM: 160,
+      vortexDepthM: 80,
+    },
+    target,
+  );
 };
 
 export default function Ocean() {

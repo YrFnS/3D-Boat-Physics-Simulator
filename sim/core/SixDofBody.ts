@@ -11,6 +11,19 @@ export interface SixDofBodySpawn {
   headingDeg: number;
 }
 
+export interface SixDofMotionLimits {
+  maxHorizontalSpeedMps: number;
+  maxVerticalSpeedMps: number;
+  maxAngularSpeedRadPerSecond: number;
+}
+
+export interface SixDofExternalState {
+  position: { x: number; y: number; z: number };
+  quaternion: { x: number; y: number; z: number; w: number };
+  linearVelocity: { x: number; y: number; z: number };
+  angularVelocity: { x: number; y: number; z: number };
+}
+
 let queuedBodySpawn: SixDofBodySpawn | null = null;
 
 export function queueNextSixDofBodySpawn(spawn: SixDofBodySpawn) {
@@ -46,8 +59,21 @@ function quaternionIsFinite(value: Quaternion) {
     Number.isFinite(value.x) &&
     Number.isFinite(value.y) &&
     Number.isFinite(value.z) &&
-    Number.isFinite(value.w)
+    Number.isFinite(value.w) &&
+    value.lengthSq() > EPSILON
   );
+}
+
+function finitePositive(value: number, fallback: number) {
+  return Number.isFinite(value) && value > EPSILON ? value : fallback;
+}
+
+function finiteNonNegative(value: number) {
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function finiteLimit(value: number) {
+  return Number.isFinite(value) ? Math.max(0, value) : Number.POSITIVE_INFINITY;
 }
 
 /**
@@ -57,8 +83,9 @@ function quaternionIsFinite(value: Quaternion) {
  * velocity is stored in world space for point-velocity queries, while inertia
  * and damping are evaluated in the vessel's principal body axes.
  *
- * Rapier supplies contact manifolds, but this body remains authoritative for
- * marine forces, momentum, orientation, and contact impulses.
+ * This body remains authoritative for marine-force evaluation and the
+ * anisotropic velocity update. A dynamic external rigid-body solver may own
+ * pose advancement and contact response, then import its solved state here.
  */
 export class SixDofBody extends Object3D {
   readonly linearVelocity = new Vector3();
@@ -66,6 +93,8 @@ export class SixDofBody extends Object3D {
 
   private readonly accumulatedForce = new Vector3();
   private readonly accumulatedTorque = new Vector3();
+  private readonly principalMass = new Vector3(1, 1, 1);
+  private readonly inversePrincipalMass = new Vector3(1, 1, 1);
   private readonly principalInertia = new Vector3(1, 1, 1);
   private readonly inversePrincipalInertia = new Vector3(1, 1, 1);
   private readonly angularDamping = new Vector3();
@@ -74,6 +103,11 @@ export class SixDofBody extends Object3D {
   private readonly worldCenterOfMass = new Vector3();
   private readonly centerOfMassOffsetWorld = new Vector3();
   private readonly leverArm = new Vector3();
+  private readonly localForce = new Vector3();
+  private readonly localLinearAcceleration = new Vector3();
+  private readonly worldLinearAcceleration = new Vector3();
+  private readonly localLinearImpulse = new Vector3();
+  private readonly deltaLinearVelocity = new Vector3();
   private readonly localTorque = new Vector3();
   private readonly localAngularVelocity = new Vector3();
   private readonly localAngularMomentum = new Vector3();
@@ -87,18 +121,24 @@ export class SixDofBody extends Object3D {
   private readonly rotationAxis = new Vector3();
   private readonly pointOffset = new Vector3();
 
-  private inverseMass = 1;
+  private readonly lastValidPosition = new Vector3();
+  private readonly lastValidQuaternion = new Quaternion();
+  private readonly lastValidLinearVelocity = new Vector3();
+  private readonly lastValidAngularVelocity = new Vector3();
+  private hasLastValidState = false;
+
 
   constructor() {
     super();
     const spawn = consumeQueuedBodySpawn();
-    if (!spawn) return;
-
-    this.position.set(spawn.x, spawn.y, spawn.z);
-    this.quaternion.setFromAxisAngle(
-      WORLD_UP,
-      (-spawn.headingDeg * Math.PI) / 180,
-    );
+    if (spawn) {
+      this.position.set(spawn.x, spawn.y, spawn.z);
+      this.quaternion.setFromAxisAngle(
+        WORLD_UP,
+        (-spawn.headingDeg * Math.PI) / 180,
+      );
+    }
+    this.captureValidState();
   }
 
   setMassProperties(
@@ -106,25 +146,52 @@ export class SixDofBody extends Object3D {
     principalInertiaKgM2: readonly [number, number, number],
     angularDampingPerSecond: readonly [number, number, number],
     centerOfMassLocal: readonly [number, number, number] = [0, 0, 0],
+    principalAddedMassKg: readonly [number, number, number] = [0, 0, 0],
+    principalAddedInertiaKgM2: readonly [number, number, number] = [0, 0, 0],
   ) {
-    const safeMassKg = Math.max(EPSILON, massKg);
-    this.inverseMass = 1 / safeMassKg;
+    const safeMassKg = finitePositive(massKg, 1);
+    this.principalMass.set(
+      safeMassKg + finiteNonNegative(principalAddedMassKg[0]),
+      safeMassKg + finiteNonNegative(principalAddedMassKg[1]),
+      safeMassKg + finiteNonNegative(principalAddedMassKg[2]),
+    );
+    this.inversePrincipalMass.set(
+      1 / this.principalMass.x,
+      1 / this.principalMass.y,
+      1 / this.principalMass.z,
+    );
 
     this.principalInertia.set(
-      Math.max(EPSILON, principalInertiaKgM2[0]),
-      Math.max(EPSILON, principalInertiaKgM2[1]),
-      Math.max(EPSILON, principalInertiaKgM2[2]),
+      finitePositive(principalInertiaKgM2[0], 1) +
+        finiteNonNegative(principalAddedInertiaKgM2[0]),
+      finitePositive(principalInertiaKgM2[1], 1) +
+        finiteNonNegative(principalAddedInertiaKgM2[1]),
+      finitePositive(principalInertiaKgM2[2], 1) +
+        finiteNonNegative(principalAddedInertiaKgM2[2]),
     );
     this.inversePrincipalInertia.set(
       1 / this.principalInertia.x,
       1 / this.principalInertia.y,
       1 / this.principalInertia.z,
     );
-    this.angularDamping.fromArray(angularDampingPerSecond);
-    this.centerOfMassLocal.fromArray(centerOfMassLocal);
+    this.angularDamping.set(
+      finiteNonNegative(angularDampingPerSecond[0]),
+      finiteNonNegative(angularDampingPerSecond[1]),
+      finiteNonNegative(angularDampingPerSecond[2]),
+    );
+    this.centerOfMassLocal.set(
+      Number.isFinite(centerOfMassLocal[0]) ? centerOfMassLocal[0] : 0,
+      Number.isFinite(centerOfMassLocal[1]) ? centerOfMassLocal[1] : 0,
+      Number.isFinite(centerOfMassLocal[2]) ? centerOfMassLocal[2] : 0,
+    );
   }
 
   beginStep() {
+    if (this.hasFiniteState()) {
+      this.captureValidState();
+    } else {
+      this.restoreLastValidState();
+    }
     this.accumulatedForce.set(0, 0, 0);
     this.accumulatedTorque.set(0, 0, 0);
   }
@@ -147,7 +214,18 @@ export class SixDofBody extends Object3D {
   applyImpulseAtPoint(impulseWorld: Vector3, pointWorld: Vector3) {
     if (!vectorIsFinite(impulseWorld) || !vectorIsFinite(pointWorld)) return;
 
-    this.linearVelocity.addScaledVector(impulseWorld, this.inverseMass);
+    this.inverseRotation.copy(this.quaternion).invert();
+    this.localLinearImpulse
+      .copy(impulseWorld)
+      .applyQuaternion(this.inverseRotation);
+    this.deltaLinearVelocity
+      .set(
+        this.localLinearImpulse.x * this.inversePrincipalMass.x,
+        this.localLinearImpulse.y * this.inversePrincipalMass.y,
+        this.localLinearImpulse.z * this.inversePrincipalMass.z,
+      )
+      .applyQuaternion(this.quaternion);
+    this.linearVelocity.add(this.deltaLinearVelocity);
 
     this.getWorldCenterOfMass(this.worldCenterOfMass);
     this.leverArm.copy(pointWorld).sub(this.worldCenterOfMass);
@@ -172,16 +250,52 @@ export class SixDofBody extends Object3D {
     }
   }
 
-  applyPositionCorrection(correctionWorld: Vector3) {
-    if (!vectorIsFinite(correctionWorld)) return;
-    this.position.add(correctionWorld);
-  }
-
   getWorldCenterOfMass(target: Vector3) {
     return target
       .copy(this.centerOfMassLocal)
       .applyQuaternion(this.quaternion)
       .add(this.position);
+  }
+
+  getCenterOfMassLocal(target: Vector3) {
+    return target.copy(this.centerOfMassLocal);
+  }
+
+  getPrincipalInertia(target: Vector3) {
+    return target.copy(this.principalInertia);
+  }
+
+  importExternalSolverState(state: SixDofExternalState) {
+    this.position.set(
+      state.position.x,
+      state.position.y,
+      state.position.z,
+    );
+    this.quaternion.set(
+      state.quaternion.x,
+      state.quaternion.y,
+      state.quaternion.z,
+      state.quaternion.w,
+    );
+    this.linearVelocity.set(
+      state.linearVelocity.x,
+      state.linearVelocity.y,
+      state.linearVelocity.z,
+    );
+    this.angularVelocity.set(
+      state.angularVelocity.x,
+      state.angularVelocity.y,
+      state.angularVelocity.z,
+    );
+
+    if (!this.hasFiniteState()) {
+      this.restoreLastValidState();
+      return false;
+    }
+
+    this.quaternion.normalize();
+    this.captureValidState();
+    return true;
   }
 
   localPointToWorld(localPoint: Vector3, target: Vector3) {
@@ -200,19 +314,82 @@ export class SixDofBody extends Object3D {
       .add(this.linearVelocity);
   }
 
-  integrate(deltaSeconds: number) {
-    const dt = Math.max(0, deltaSeconds);
-    if (dt <= 0) return;
-
-    // Integrate the center of mass, then reconstruct the model origin after
-    // rotation. This prevents an offset center of mass from orbiting around
-    // the visual origin when the vessel pitches or rolls.
-    this.getWorldCenterOfMass(this.worldCenterOfMass);
-    this.linearVelocity.addScaledVector(
-      this.accumulatedForce,
-      this.inverseMass * dt,
+  hasFiniteState() {
+    return (
+      vectorIsFinite(this.position) &&
+      quaternionIsFinite(this.quaternion) &&
+      vectorIsFinite(this.linearVelocity) &&
+      vectorIsFinite(this.angularVelocity)
     );
-    this.worldCenterOfMass.addScaledVector(this.linearVelocity, dt);
+  }
+
+  enforceMotionLimits(limits: SixDofMotionLimits) {
+    if (!this.hasFiniteState()) {
+      this.restoreLastValidState();
+      return false;
+    }
+
+    const maxHorizontalSpeedMps = finiteLimit(
+      limits.maxHorizontalSpeedMps,
+    );
+    const horizontalSpeedMps = Math.hypot(
+      this.linearVelocity.x,
+      this.linearVelocity.z,
+    );
+    if (
+      horizontalSpeedMps > maxHorizontalSpeedMps &&
+      horizontalSpeedMps > EPSILON
+    ) {
+      const scale = maxHorizontalSpeedMps / horizontalSpeedMps;
+      this.linearVelocity.x *= scale;
+      this.linearVelocity.z *= scale;
+    }
+
+    const maxVerticalSpeedMps = finiteLimit(limits.maxVerticalSpeedMps);
+    this.linearVelocity.y = Math.max(
+      -maxVerticalSpeedMps,
+      Math.min(maxVerticalSpeedMps, this.linearVelocity.y),
+    );
+
+    const maxAngularSpeedRadPerSecond = finiteLimit(
+      limits.maxAngularSpeedRadPerSecond,
+    );
+    const angularSpeedRadPerSecond = this.angularVelocity.length();
+    if (
+      angularSpeedRadPerSecond > maxAngularSpeedRadPerSecond &&
+      angularSpeedRadPerSecond > EPSILON
+    ) {
+      this.angularVelocity.multiplyScalar(
+        maxAngularSpeedRadPerSecond / angularSpeedRadPerSecond,
+      );
+    }
+
+    this.captureValidState();
+    return true;
+  }
+
+  integrateVelocities(deltaSeconds: number) {
+    const dt = Number.isFinite(deltaSeconds)
+      ? Math.max(0, deltaSeconds)
+      : 0;
+    if (dt <= 0) return true;
+
+    this.inverseRotation.copy(this.quaternion).invert();
+    this.localForce
+      .copy(this.accumulatedForce)
+      .applyQuaternion(this.inverseRotation);
+    this.localLinearAcceleration.set(
+      this.localForce.x * this.inversePrincipalMass.x,
+      this.localForce.y * this.inversePrincipalMass.y,
+      this.localForce.z * this.inversePrincipalMass.z,
+    );
+    this.worldLinearAcceleration
+      .copy(this.localLinearAcceleration)
+      .applyQuaternion(this.quaternion);
+    this.linearVelocity.addScaledVector(
+      this.worldLinearAcceleration,
+      dt,
+    );
 
     // Euler's rigid-body equation in principal axes:
     // I * angularAcceleration = torque - angularVelocity x (I * angularVelocity)
@@ -248,14 +425,40 @@ export class SixDofBody extends Object3D {
       this.localAngularVelocity.z * Math.exp(-this.angularDamping.z * dt),
     );
 
-    let localAngularSpeed = this.localAngularVelocity.length();
+    const localAngularSpeed = this.localAngularVelocity.length();
     if (localAngularSpeed > MAX_ANGULAR_SPEED_RAD_PER_SECOND) {
       this.localAngularVelocity.multiplyScalar(
         MAX_ANGULAR_SPEED_RAD_PER_SECOND / localAngularSpeed,
       );
-      localAngularSpeed = MAX_ANGULAR_SPEED_RAD_PER_SECOND;
     }
+    this.angularVelocity
+      .copy(this.localAngularVelocity)
+      .applyQuaternion(this.quaternion);
 
+    if (!this.hasFiniteState()) {
+      this.restoreLastValidState();
+      return false;
+    }
+    return true;
+  }
+
+  integratePose(deltaSeconds: number) {
+    const dt = Number.isFinite(deltaSeconds)
+      ? Math.max(0, deltaSeconds)
+      : 0;
+    if (dt <= 0) return true;
+
+    // Advance the center of mass exactly once, then reconstruct the model
+    // origin after rotation. This phase can be replaced by an external rigid-
+    // body solver without changing the marine force and added-mass equations.
+    this.getWorldCenterOfMass(this.worldCenterOfMass);
+    this.worldCenterOfMass.addScaledVector(this.linearVelocity, dt);
+
+    this.inverseRotation.copy(this.quaternion).invert();
+    this.localAngularVelocity
+      .copy(this.angularVelocity)
+      .applyQuaternion(this.inverseRotation);
+    const localAngularSpeed = this.localAngularVelocity.length();
     this.worldAngularVelocity
       .copy(this.localAngularVelocity)
       .applyQuaternion(this.quaternion);
@@ -280,18 +483,44 @@ export class SixDofBody extends Object3D {
       .copy(this.worldCenterOfMass)
       .sub(this.centerOfMassOffsetWorld);
 
-    // A single invalid force must not permanently poison subsequent steps.
-    if (!vectorIsFinite(this.linearVelocity)) {
-      this.linearVelocity.set(0, 0, 0);
+    if (!this.hasFiniteState()) {
+      this.restoreLastValidState();
+      return false;
     }
-    if (!vectorIsFinite(this.angularVelocity)) {
-      this.angularVelocity.set(0, 0, 0);
-    }
-    if (!vectorIsFinite(this.position)) {
+    this.captureValidState();
+    return true;
+  }
+
+  integrate(deltaSeconds: number) {
+    if (!this.integrateVelocities(deltaSeconds)) return;
+    this.integratePose(deltaSeconds);
+  }
+
+  private captureValidState() {
+    if (!this.hasFiniteState()) return false;
+    this.quaternion.normalize();
+    this.lastValidPosition.copy(this.position);
+    this.lastValidQuaternion.copy(this.quaternion);
+    this.lastValidLinearVelocity.copy(this.linearVelocity);
+    this.lastValidAngularVelocity.copy(this.angularVelocity);
+    this.hasLastValidState = true;
+    return true;
+  }
+
+  private restoreLastValidState() {
+    if (!this.hasLastValidState) {
       this.position.set(0, 0, 0);
-    }
-    if (!quaternionIsFinite(this.quaternion)) {
       this.quaternion.identity();
+      this.linearVelocity.set(0, 0, 0);
+      this.angularVelocity.set(0, 0, 0);
+      this.captureValidState();
+    } else {
+      this.position.copy(this.lastValidPosition);
+      this.quaternion.copy(this.lastValidQuaternion);
+      this.linearVelocity.copy(this.lastValidLinearVelocity);
+      this.angularVelocity.copy(this.lastValidAngularVelocity);
     }
+    this.accumulatedForce.set(0, 0, 0);
+    this.accumulatedTorque.set(0, 0, 0);
   }
 }

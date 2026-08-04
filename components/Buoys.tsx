@@ -12,7 +12,8 @@ import {
   Vector3,
 } from 'three';
 import { getTerrainHeight } from '@/lib/terrain';
-import { getWaveHeight } from './Ocean';
+import { sampleOceanSurface } from './Ocean';
+import { createWaterSurfaceSample } from '@/sim/water/WaterSurface';
 import {
   type RenderQuality,
   sharedPhysics,
@@ -86,6 +87,7 @@ function Buoy({ x, z, id }: BuoyProps) {
       targetQuaternion: new Quaternion(),
       rockQuaternion: new Quaternion(),
       euler: new Euler(),
+      waterSample: createWaterSurfaceSample(),
     }),
     [],
   );
@@ -124,20 +126,18 @@ function Buoy({ x, z, id }: BuoyProps) {
     frameCounter.current = (frameCounter.current + 1) % updateEvery;
 
     if (frameCounter.current === 0) {
-      const wave = getWaveHeight(x, z, elapsed);
+      const wave = sampleOceanSurface(
+        x,
+        z,
+        elapsed,
+        temporary.waterSample,
+      );
       lastSurfaceHeight.current = wave.y;
       mesh.position.y = wave.y;
 
       if (distanceSquared < 360_000) {
-        const sampleDistance = 0.75;
-        const waveX = getWaveHeight(x + sampleDistance, z, elapsed);
-        const waveZ = getWaveHeight(x, z + sampleDistance, elapsed);
         temporary.normal
-          .set(
-            (wave.y - waveX.y) / sampleDistance,
-            1,
-            (wave.y - waveZ.y) / sampleDistance,
-          )
+          .set(wave.normalX, wave.normalY, wave.normalZ)
           .normalize();
       } else {
         temporary.normal.set(0, 1, 0);

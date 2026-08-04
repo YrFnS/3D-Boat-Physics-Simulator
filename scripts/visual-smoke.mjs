@@ -75,6 +75,18 @@ function physicsSnapshotIsBounded(snapshot) {
       snapshot.quaternionNorm,
       snapshot.directionLength,
       snapshot.submergedRatio,
+      snapshot.hydrostatics.displacedVolumeM3,
+      snapshot.hydrostatics.floodingRatio,
+      snapshot.hydrostatics.floodedVolumeM3,
+      snapshot.hydrostatics.physicalMassKg,
+      snapshot.hydrostatics.displacementBalanceErrorRatio,
+      snapshot.hydrostatics.centerOfBuoyancy.x,
+      snapshot.hydrostatics.centerOfBuoyancy.y,
+      snapshot.hydrostatics.centerOfBuoyancy.z,
+      snapshot.hydrostatics.averageWaterVelocity.x,
+      snapshot.hydrostatics.averageWaterVelocity.y,
+      snapshot.hydrostatics.averageWaterVelocity.z,
+      snapshot.hydrostatics.maximumSlamSeverity,
       snapshot.droppedTime,
       snapshot.hullHealth,
       snapshot.collision.sequence,
@@ -99,6 +111,18 @@ function physicsSnapshotIsBounded(snapshot) {
     snapshot.directionLength < 1.1 &&
     snapshot.submergedRatio >= 0 &&
     snapshot.submergedRatio <= 1 &&
+    snapshot.hydrostatics.displacedVolumeM3 >= 0 &&
+    snapshot.hydrostatics.displacedVolumeM3 < 20 &&
+    snapshot.hydrostatics.floodingRatio >= 0 &&
+    snapshot.hydrostatics.floodingRatio <= 1 &&
+    snapshot.hydrostatics.floodedVolumeM3 >= 0 &&
+    snapshot.hydrostatics.floodedVolumeM3 < 10 &&
+    snapshot.hydrostatics.physicalMassKg >= 700 &&
+    snapshot.hydrostatics.physicalMassKg < 5_000 &&
+    snapshot.hydrostatics.displacementBalanceErrorRatio >= 0 &&
+    snapshot.hydrostatics.displacementBalanceErrorRatio < 2 &&
+    snapshot.hydrostatics.maximumSlamSeverity >= 0 &&
+    snapshot.hydrostatics.maximumSlamSeverity <= 8.01 &&
     snapshot.droppedTime >= 0 &&
     snapshot.hullHealth >= 0 &&
     snapshot.hullHealth <= 100 &&
@@ -133,6 +157,26 @@ async function readPhysicsSnapshot(page) {
       quaternionNorm: readNumber('simQuaternionNorm'),
       directionLength: readNumber('simDirectionLength'),
       submergedRatio: readNumber('simSubmergedRatio'),
+      hydrostatics: {
+        displacedVolumeM3: readNumber('simDisplacedVolumeM3'),
+        floodingRatio: readNumber('simFloodingRatio'),
+        floodedVolumeM3: readNumber('simFloodedVolumeM3'),
+        physicalMassKg: readNumber('simPhysicalMassKg'),
+        displacementBalanceErrorRatio: readNumber(
+          'simDisplacementBalanceErrorRatio',
+        ),
+        centerOfBuoyancy: {
+          x: readNumber('simCenterOfBuoyancyX'),
+          y: readNumber('simCenterOfBuoyancyY'),
+          z: readNumber('simCenterOfBuoyancyZ'),
+        },
+        averageWaterVelocity: {
+          x: readNumber('simAverageWaterVelocityX'),
+          y: readNumber('simAverageWaterVelocityY'),
+          z: readNumber('simAverageWaterVelocityZ'),
+        },
+        maximumSlamSeverity: readNumber('simMaximumSlamSeverity'),
+      },
       droppedTime: readNumber('simDroppedTime'),
       hullHealth: readNumber('simHullHealth'),
       collision: {
@@ -182,7 +226,18 @@ async function exerciseVesselControls(page, scenarioName) {
   if (scenarioName === 'collision') {
     await page.keyboard.down('w');
     try {
-      await page.waitForTimeout(2_400);
+      // Wait for a real closing-speed impulse instead of assuming the
+      // software renderer advances enough physics in a fixed wall-clock delay.
+      await page.waitForFunction(
+        () => {
+          const dataset = document.documentElement.dataset;
+          return (
+            Number(dataset.simDebugProbeCollisionSequence) > 0 &&
+            Number(dataset.simCollisionMaxImpulse) > 0
+          );
+        },
+        { timeout: 60_000 },
+      );
     } finally {
       await page.keyboard.up('w');
     }

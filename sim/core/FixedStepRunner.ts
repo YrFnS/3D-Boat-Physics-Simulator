@@ -17,16 +17,15 @@ export type FixedStepCallback = (
 ) => void;
 
 const DEFAULT_STEP_SECONDS = 1 / 60;
-const DEFAULT_MAX_SUB_STEPS = 5;
 const DEFAULT_MAX_FRAME_DELTA_SECONDS = 0.1;
 
 /**
  * Accumulator-based fixed timestep runner.
  *
  * Rendering may happen at any refresh rate, while simulation callbacks always
- * receive the same step duration. Excess backlog is discarded after the
- * configured substep budget so a suspended tab cannot trigger a spiral of
- * death when it resumes.
+ * receive the same step duration. The default substep budget can consume the
+ * complete accepted frame delta. Time removed by the frame clamp or any
+ * residual backlog discard is recorded for diagnostics.
  */
 export class FixedStepRunner {
   readonly stepSeconds: number;
@@ -39,15 +38,11 @@ export class FixedStepRunner {
 
   constructor(options: FixedStepRunnerOptions = {}) {
     this.stepSeconds = options.stepSeconds ?? DEFAULT_STEP_SECONDS;
-    this.maxSubSteps = options.maxSubSteps ?? DEFAULT_MAX_SUB_STEPS;
     this.maxFrameDeltaSeconds =
       options.maxFrameDeltaSeconds ?? DEFAULT_MAX_FRAME_DELTA_SECONDS;
 
     if (!Number.isFinite(this.stepSeconds) || this.stepSeconds <= 0) {
       throw new Error('FixedStepRunner stepSeconds must be positive.');
-    }
-    if (!Number.isInteger(this.maxSubSteps) || this.maxSubSteps < 1) {
-      throw new Error('FixedStepRunner maxSubSteps must be a positive integer.');
     }
     if (
       !Number.isFinite(this.maxFrameDeltaSeconds) ||
@@ -55,6 +50,20 @@ export class FixedStepRunner {
     ) {
       throw new Error(
         'FixedStepRunner maxFrameDeltaSeconds must be positive.',
+      );
+    }
+    const minimumSubSteps = Math.ceil(
+      (this.maxFrameDeltaSeconds - Number.EPSILON) /
+        this.stepSeconds,
+    );
+    this.maxSubSteps = options.maxSubSteps ?? minimumSubSteps;
+    if (!Number.isInteger(this.maxSubSteps) || this.maxSubSteps < 1) {
+      throw new Error('FixedStepRunner maxSubSteps must be a positive integer.');
+    }
+
+    if (this.maxSubSteps < minimumSubSteps) {
+      throw new Error(
+        'FixedStepRunner maxSubSteps must cover maxFrameDeltaSeconds.',
       );
     }
   }
@@ -69,7 +78,10 @@ export class FixedStepRunner {
 
   reset(simulationTimeSeconds = 0) {
     this.accumulatorSeconds = 0;
-    this.currentSimulationTimeSeconds = Math.max(0, simulationTimeSeconds);
+    this.currentSimulationTimeSeconds =
+      Number.isFinite(simulationTimeSeconds)
+        ? Math.max(0, simulationTimeSeconds)
+        : 0;
     this.totalDroppedTimeSeconds = 0;
   }
 
@@ -77,14 +89,17 @@ export class FixedStepRunner {
     frameDeltaSeconds: number,
     step: FixedStepCallback,
   ): FixedStepAdvanceResult {
-    const safeFrameDelta = Number.isFinite(frameDeltaSeconds)
-      ? Math.min(
-          Math.max(frameDeltaSeconds, 0),
-          this.maxFrameDeltaSeconds,
-        )
+    const nonNegativeFrameDelta = Number.isFinite(frameDeltaSeconds)
+      ? Math.max(frameDeltaSeconds, 0)
       : 0;
+    const acceptedFrameDelta = Math.min(
+      nonNegativeFrameDelta,
+      this.maxFrameDeltaSeconds,
+    );
 
-    this.accumulatorSeconds += safeFrameDelta;
+    this.totalDroppedTimeSeconds +=
+      nonNegativeFrameDelta - acceptedFrameDelta;
+    this.accumulatorSeconds += acceptedFrameDelta;
 
     let steps = 0;
     while (
@@ -93,11 +108,14 @@ export class FixedStepRunner {
     ) {
       this.currentSimulationTimeSeconds += this.stepSeconds;
       step(this.stepSeconds, this.currentSimulationTimeSeconds);
-      this.accumulatorSeconds -= this.stepSeconds;
+      this.accumulatorSeconds = Math.max(
+        0,
+        this.accumulatorSeconds - this.stepSeconds,
+      );
       steps += 1;
     }
 
-    if (this.accumulatorSeconds >= this.stepSeconds) {
+    if (this.accumulatorSeconds + Number.EPSILON >= this.stepSeconds) {
       const retainedTime = this.accumulatorSeconds % this.stepSeconds;
       this.totalDroppedTimeSeconds +=
         this.accumulatorSeconds - retainedTime;

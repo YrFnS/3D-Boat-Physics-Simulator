@@ -2,8 +2,14 @@
 
 import { OrbitControls } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
-import { useEffect, useMemo } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  type RefObject,
+} from 'react';
 import { MathUtils, type PerspectiveCamera, Vector3 } from 'three';
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { useExperienceSettings } from '@/store/useExperienceSettings';
 import {
   sharedPhysics,
@@ -13,6 +19,35 @@ import {
 
 interface CameraDriverProps {
   mode: Exclude<CameraMode, 'orbit'>;
+}
+
+interface OrbitTargetDriverProps {
+  controlsRef: RefObject<OrbitControlsImpl | null>;
+}
+
+function OrbitTargetDriver({ controlsRef }: OrbitTargetDriverProps) {
+  const activeBoat = useSimStore((state) => state.activeBoat);
+  const scratch = useMemo(
+    () => ({
+      target: new Vector3(),
+      delta: new Vector3(),
+    }),
+    [],
+  );
+
+  useFrame((state) => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+
+    scratch.target.copy(sharedPhysics.boatPos);
+    scratch.target.y += activeBoat === 'speedboat' ? 1 : 1.6;
+    scratch.delta.copy(scratch.target).sub(controls.target);
+    controls.target.copy(scratch.target);
+    state.camera.position.add(scratch.delta);
+    controls.update();
+  });
+
+  return null;
 }
 
 function CameraDriver({ mode }: CameraDriverProps) {
@@ -70,14 +105,17 @@ function CameraDriver({ mode }: CameraDriverProps) {
       scratch.desiredLookAt.y += activeBoat === 'speedboat' ? 1.1 : 1.7;
       camera.up.lerp(scratch.worldUp, response).normalize();
     } else if (mode === 'helm') {
+      // The procedural trawler cabin is a solid mesh. Keep its helm camera
+      // just ahead of the windshield and roof overhang so the player sees the
+      // bow and horizon instead of the underside of the cabin roof.
       const helmPosition =
         activeBoat === 'speedboat'
           ? scratch.localPosition.set(0, 1.28, -0.45)
-          : scratch.localPosition.set(0, 2.35, 0.25);
+          : scratch.localPosition.set(0, 2.35, -1.15);
       const helmLookAt =
         activeBoat === 'speedboat'
           ? scratch.localLookAt.set(0, 1.05, -24)
-          : scratch.localLookAt.set(0, 2.05, -30);
+          : scratch.localLookAt.set(0, 1.5, -30);
 
       scratch.desiredPosition
         .copy(helmPosition)
@@ -120,6 +158,7 @@ function CameraDriver({ mode }: CameraDriverProps) {
 
 export default function CameraRig() {
   const camera = useThree((state) => state.camera) as PerspectiveCamera;
+  const orbitControlsRef = useRef<OrbitControlsImpl | null>(null);
   const cameraMode = useSimStore((state) => state.cameraMode);
   const sessionPhase = useSimStore((state) => state.sessionPhase);
   const cameraFov = useExperienceSettings((state) => state.cameraFov);
@@ -143,6 +182,7 @@ export default function CameraRig() {
   return (
     <>
       <OrbitControls
+        ref={orbitControlsRef}
         makeDefault
         enabled={effectiveMode === 'orbit'}
         enablePan={false}
@@ -154,6 +194,9 @@ export default function CameraRig() {
         minDistance={4}
         maxDistance={150}
       />
+      {effectiveMode === 'orbit' && (
+        <OrbitTargetDriver controlsRef={orbitControlsRef} />
+      )}
       {effectiveMode !== 'orbit' && <CameraDriver mode={effectiveMode} />}
     </>
   );

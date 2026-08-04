@@ -1,0 +1,173 @@
+name: Release validation
+
+on:
+  pull_request:
+    paths:
+      - app/**
+      - components/**
+      - hooks/**
+      - lib/**
+      - sim/**
+      - store/**
+      - scripts/release-validation.mjs
+      - scripts/release-visual-audit.mjs
+      - scripts/hardware-benchmark-smoke.mjs
+      - package.json
+      - package-lock.json
+      - next.config.ts
+      - README.md
+      - RELEASE_CHECKLIST.md
+      - P4_RELEASE_VALIDATION_PLAN.md
+      - .github/workflows/release-validation.yml
+  push:
+    branches:
+      - main
+    paths:
+      - app/**
+      - components/**
+      - hooks/**
+      - lib/**
+      - sim/**
+      - store/**
+      - scripts/release-validation.mjs
+      - scripts/release-visual-audit.mjs
+      - scripts/hardware-benchmark-smoke.mjs
+      - package.json
+      - package-lock.json
+      - next.config.ts
+      - README.md
+      - RELEASE_CHECKLIST.md
+      - P4_RELEASE_VALIDATION_PLAN.md
+      - .github/workflows/release-validation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  release:
+    name: Cross-browser release candidate matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install committed dependencies
+        run: npm ci
+
+      - name: Validate source and dependency graph
+        run: npm run validate
+
+      - name: Install release-test browsers without changing the lockfile
+        run: |
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium firefox webkit
+
+      - name: Prepare headed Firefox for software-rendered CI
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/release-validation.mjs')
+          source = path.read_text(encoding='utf-8')
+          marker = "name: 'firefox'"
+          marker_index = source.find(marker)
+          if marker_index < 0:
+              raise SystemExit('Firefox launch definition was not found.')
+
+          next_engine_index = source.find("name: 'webkit'", marker_index)
+          if next_engine_index < 0:
+              raise SystemExit('WebKit launch definition was not found.')
+
+          firefox_block = source[marker_index:next_engine_index]
+          if firefox_block.count('headless: true') != 1:
+              raise SystemExit('Expected one headless Firefox launch option.')
+
+          updated_block = firefox_block.replace(
+              'headless: true',
+              'headless: false',
+              1,
+          )
+          path.write_text(
+              source[:marker_index] + updated_block + source[next_engine_index:],
+              encoding='utf-8',
+          )
+          PY
+
+      - name: Prepare standalone production server
+        run: |
+          if [ -d public ]; then
+            cp -R public .next/standalone/public
+          fi
+          mkdir -p .next/standalone/.next
+          cp -R .next/static .next/standalone/.next/static
+
+      - name: Start production server
+        run: |
+          HOSTNAME=127.0.0.1 PORT=3000 node .next/standalone/server.js > /tmp/boat-release-server.log 2>&1 &
+          echo $! > /tmp/boat-release-server.pid
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:3000/ > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/boat-release-server.log
+          exit 1
+
+      - name: Run cross-browser release validation
+        id: release_validation
+        continue-on-error: true
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          MOZ_WEBRENDER: '1'
+        run: >-
+          xvfb-run --auto-servernum
+          --server-args='-screen 0 1600x1200x24'
+          node scripts/release-validation.mjs
+
+      - name: Validate physical benchmark harness
+        id: hardware_benchmark
+        if: always()
+        continue-on-error: true
+        run: node scripts/hardware-benchmark-smoke.mjs
+
+      - name: Reject blank or uniform 3D screenshots
+        id: visual_audit
+        if: always()
+        continue-on-error: true
+        run: node scripts/release-visual-audit.mjs
+
+      - name: Collect production server log
+        if: always()
+        run: |
+          mkdir -p artifacts/release-validation
+          cp /tmp/boat-release-server.log artifacts/release-validation/server.log || true
+
+      - name: Upload release-validation artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-validation
+          path: artifacts/release-validation
+          if-no-files-found: error
+          retention-days: 21
+
+      - name: Enforce release-validation result
+        if: >-
+          steps.release_validation.outcome != 'success' ||
+          steps.hardware_benchmark.outcome != 'success' ||
+          steps.visual_audit.outcome != 'success'
+        run: exit 1

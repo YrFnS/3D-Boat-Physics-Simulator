@@ -1,0 +1,125 @@
+# Phase 5C — Propulsion and Maneuvering Physics
+
+Phase 5C replaces the remaining force-only engine and minimum-bite steering approximations with a coherent browser-scale propulsion train. It builds on the validated Phase 5B water-state, sectional hydrostatics, flooding, and slamming foundation while leaving collision authority unchanged.
+
+## Goal
+
+Make acceleration, maximum speed, reverse handling, prop wash, steering authority, and power demand emerge from engine, gearbox, propeller, rudder, and local water-flow state rather than a fixed thrust force and absolute-speed steering factors.
+
+## Scope
+
+### Engine and driveline
+
+- [x] Add vessel-specific idle, rated, and maximum engine RPM.
+- [x] Add rated shaft power, torque-curve shape, gearbox ratio, driveline efficiency, and rotational response.
+- [x] Model throttle as an engine-command target rather than a direct force multiplier.
+- [x] Keep engine RPM, shaft RPM, delivered power, and load finite and deterministic.
+- [x] Reduce available power from engine damage without creating discontinuities.
+
+### Propeller model
+
+- [x] Add propeller diameter, pitch ratio, blade count, wake fraction, thrust deduction, and signed rotation direction.
+- [x] Compute advance speed from local water-relative flow at the propeller.
+- [x] Derive advance ratio, thrust coefficient, torque coefficient, thrust, shaft torque, and absorbed power.
+- [x] Preserve correct ahead and astern signs.
+- [x] Limit output through engine power, propeller loading, cavitation, and ventilation factors.
+- [x] Apply propeller force at the configured shaft position so trim and yaw torque remain physical.
+
+### Rudder and maneuvering
+
+- [x] Sample local inflow at the rudder from vessel motion, ambient water, and signed prop wash.
+- [x] Replace the fixed minimum steering bite with lift and drag based on angle of attack and local flow speed.
+- [x] Support correct ahead, astern, and near-zero-speed steering behavior.
+- [x] Add stall saturation and bounded rudder side force.
+- [x] Apply lift and drag at the configured rudder center of pressure.
+- [x] Keep damaged-rudder authority continuous and bounded.
+
+### Telemetry and presentation
+
+- [x] Expose engine RPM, shaft RPM, shaft power, propeller thrust, advance ratio, cavitation, ventilation, prop wash, and rudder load.
+- [x] Keep existing HUD and audio integrations compatible while moving their source to physical drivetrain state.
+- [x] Preserve deterministic calibration exports and browser diagnostics.
+
+### Calibration and validation
+
+- [x] Add pure regressions for power limits, signed advance ratio, ahead/astern thrust, zero-flow rudder behavior, prop-wash steering, cavitation, ventilation, and damage response.
+- [x] Add reverse acceleration and reverse-turn browser calibration coverage for both vessels.
+- [x] Preserve the repository-owned still-water, stability, stopping, collision, visual, product, and release gates without weakening their definitions to hide the new model.
+- [x] Record intentional maneuvering changes with measured results.
+- [x] Validate a real propulsion-driven collision impulse instead of a predictive-skin-only contact.
+
+## Validated implementation checkpoint
+
+The live vessel force path now uses a typed engine, gearbox, open-water propeller, signed prop wash, and local-flow rudder model.
+
+The main implementation is recorded at `d2bfcbfe8ba4c738c5399ace40855f6d0261634d`. Browser diagnostics then exposed and corrected several integration defects at `bd78909debabb4d1ee3da66ffcce12ec9cef583a`:
+
+- The displacement trawler’s propeller and rudder centers are below its calibrated static waterline instead of being nearly fully ventilated.
+- A neutral rudder damps lateral sideslip rather than amplifying it, and UI steering input maps to the physical rudder-angle sign.
+- A loaded engine governs near rated RPM; only a genuinely unloaded or ventilating propeller can approach the limiter.
+- The collision probe begins beyond the predictive contact region and waits for a measured closing-speed impulse.
+
+The final reverse-maneuvering checkpoint is `d07d435fe984832658f54bb70f8ad21601a12585`. Its checksum-controlled workflow passed source validation, the expanded 20-scenario vessel calibration, and desktop, mobile, and collision visual smoke before removing its one-use patch and workflow files.
+
+### Final calibration summary
+
+- **20 of 20 vessel scenarios passed.**
+- **3 of 3 visual-smoke scenarios passed.**
+- The collision smoke recorded Rapier contact, an obstacle classification, a nonzero impulse, and bounded residual penetration.
+- No existing forward acceptance envelope was widened to hide the propulsion model.
+- The speedboat forward-turn fixture now uses full representative power because throttle controls governed engine power rather than direct force.
+- The speedboat reverse-turn fixture uses `-0.76` throttle; its measured radius is `4.01243 m` against the unchanged `4 m` minimum.
+
+| Vessel and scenario | Measured result |
+|---|---:|
+| Trawler steady ahead speed | 9.58263 m/s |
+| Trawler stopping distance | 31.29862 m |
+| Trawler 180° turn radius | 6.30528 m |
+| Trawler steady astern speed | 5.83685 m/s |
+| Trawler reverse-turn radius | 7.41070 m |
+| Speedboat steady ahead speed | 22.01584 m/s |
+| Speedboat stopping distance | 52.54029 m |
+| Speedboat 180° turn radius | 31.04722 m |
+| Speedboat steady astern speed | 7.03294 m/s |
+| Speedboat reverse-turn radius | 4.01243 m |
+
+This documentation checkpoint intentionally retriggers the permanent CI, physics-calibration, visual-smoke, product-experience, and cross-browser release workflows on a normal repository-authored head. PR #15 remains unmerged until that exact-head matrix is green.
+
+## Implementation sequence
+
+### 5C.1 — Typed drivetrain and propeller math
+
+Add vessel drivetrain configuration, pure engine/propeller calculations, telemetry types, and deterministic tests without changing the live force path.
+
+### 5C.2 — Authoritative propulsion force
+
+Replace fixed thrust with shaft-power-limited propeller thrust at the configured propeller point. Preserve current controls and validate straight-line acceleration, speed, stopping, and finite-state behavior.
+
+### 5C.3 — Rudder inflow and signed maneuvering
+
+Replace minimum-bite steering with local-flow lift/drag, signed prop wash, reverse behavior, stall saturation, and bounded rudder loads.
+
+### 5C.4 — Calibration and release validation
+
+Add reverse fixtures, record final metrics, run every permanent repository gate, remove compatibility and temporary transfer code, and finalize the PR only after all checks pass.
+
+## Exit criteria
+
+Phase 5C is complete when:
+
+1. Maximum speed is power-limited rather than the result of a fixed unbounded force.
+2. Propeller thrust and torque respond to signed water-relative advance speed.
+3. Ahead and astern commands produce correctly signed thrust and shaft state.
+4. A stopped vessel without prop wash has negligible rudder authority.
+5. Prop wash creates low-speed steering authority with the correct sign.
+6. Cavitation and ventilation reduce thrust smoothly under their intended conditions.
+7. Engine and rudder damage reduce output continuously without invalid state.
+8. Straight-line, stopping, turning, reverse, collision, visual, product, and cross-browser release checks pass with documented metrics.
+
+## Deferred
+
+- Multiple engines, controllable-pitch propellers, waterjets, azimuth drives, and bow thrusters.
+- A dynamic Rapier vessel or complete custom effective-mass contact solver.
+- Imported manufacturer propeller open-water curves.
+- Full engine thermal, fuel, exhaust, and electrical simulation.
+- CFD-resolved hull-propeller-rudder interaction and free-surface ventilation sheets.

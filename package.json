@@ -1,6 +1,6 @@
 {
   "name": "3d-boat-physics-simulator",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -10,8 +10,9 @@
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
     "audit": "npm audit --audit-level=low",
-    "validate": "npm run lint && npm run typecheck && npm run build && npm run audit",
-    "clean": "node -e \"require('node:fs').rmSync('.next',{recursive:true,force:true})\""
+    "validate": "npm run test:physics && npm run lint && npm run typecheck && npm run build && npm run audit",
+    "clean": "node -e \"require('node:fs').rmSync('.next',{recursive:true,force:true})\"",
+    "test:physics": "node --experimental-strip-types --no-warnings scripts/physics-correctness.mjs && node --no-warnings scripts/collision-authority.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.19.3",
