@@ -28,25 +28,25 @@
     "react-dom": "19.2.8",
     "sharp": "0.35.3",
     "simplex-noise": "^4.0.3",
-    "three": "0.182.0",
-    "zustand": "^5.0.12"
+    "three": "0.185.1",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
-    "@eslint/js": "9.39.5",
+    "@eslint/js": "10.0.1",
     "@next/eslint-plugin-next": "16.2.12",
-    "@tailwindcss/postcss": "4.1.11",
-    "@types/node": "^22",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "^26",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@types/three": "0.182.0",
-    "autoprefixer": "^10.4.21",
-    "eslint": "9.39.5",
+    "@types/three": "0.185.1",
+    "autoprefixer": "^10.5.4",
+    "eslint": "10.0.1",
     "eslint-plugin-react-hooks": "7.1.1",
-    "globals": "16.4.0",
-    "postcss": "8.5.22",
-    "tailwindcss": "4.1.11",
+    "globals": "17.8.0",
+    "postcss": "8.5.25",
+    "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.58.2"
+    "typescript-eslint": "8.65.0"
   },
   "overrides": {
     "postcss": "$postcss",
