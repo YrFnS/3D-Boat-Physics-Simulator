@@ -1,0 +1,67 @@
+name: Validate world direction migration
+
+on:
+  push:
+    branches:
+      - agent/simulator-stabilization
+
+permissions:
+  contents: write
+
+concurrency:
+  group: world-direction-validation
+  cancel-in-progress: false
+
+env:
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  validate-and-finish:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Keep the standalone Node physics graph alias-free
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('sim/core/SixDofBody.ts')
+          source = path.read_text(encoding='utf-8')
+          old = "import { headingDegreesToYawRadians } from '@/sim/world/WorldDirection';"
+          new = "import { headingDegreesToYawRadians } from '../world/WorldDirection.ts';"
+          if source.count(old) != 1:
+              raise SystemExit('Expected the SixDofBody world-direction import exactly once.')
+          path.write_text(source.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate complete source and physics graph
+        run: npm run validate
+
+      - name: Commit validated compatibility fix and remove one-shot workflow
+        shell: bash
+        run: |
+          rm .github/workflows/validate-world-direction-migration.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: keep physics runner imports portable"
+          git push origin HEAD:agent/simulator-stabilization
