@@ -8,6 +8,14 @@ import {
   SCENARIOS,
   type ScenarioId,
 } from '@/sim/scenarios/ScenarioCatalog';
+import {
+  ASSISTED_ENVIRONMENT_REASON,
+  canEditScenarioEnvironment,
+  normalizeScenarioSeason,
+  normalizeScenarioTimeHours,
+  scenarioEnvironmentFromDefinition,
+  type ScenarioRunMode,
+} from '@/sim/scenarios/ScoredScenarioAuthority';
 
 export type BoatType = 'trawler' | 'speedboat';
 export type RenderQuality = 'low' | 'medium' | 'high' | 'ultra';
@@ -75,6 +83,8 @@ export interface ScenarioCheckpointState {
 export interface ScenarioResult {
   outcome: 'completed' | 'failed';
   reason: string;
+  runMode: ScenarioRunMode;
+  assistanceReason: string | null;
   elapsedSeconds: number;
   score: number;
   waypointsCompleted: number;
@@ -125,6 +135,8 @@ function createScenarioGameplayState(
 ) {
   return {
     scenarioRunStatus,
+    scenarioRunMode: 'standard' as ScenarioRunMode,
+    scenarioAssistanceReason: '',
     activeWaypointIndex: 0,
     scenarioElapsedSeconds: 0,
     scenarioProgress: 0,
@@ -233,6 +245,8 @@ export interface SimState {
 
   scenarioRunStatus: ScenarioRunStatus;
   scenarioRunId: number;
+  scenarioRunMode: ScenarioRunMode;
+  scenarioAssistanceReason: string;
   activeWaypointIndex: number;
   scenarioElapsedSeconds: number;
   scenarioProgress: number;
@@ -295,6 +309,8 @@ export interface SimState {
   clearKeys: () => void;
   setTargetTime: (value: number) => void;
   setTargetSeason: (value: number) => void;
+  enableAssistedConditions: () => void;
+  restoreScenarioEnvironment: () => void;
   setQualityMode: (mode: QualityMode) => void;
   setRenderQuality: (quality: RenderQuality) => void;
   setPerformanceTelemetry: (telemetry: PerformanceTelemetry) => void;
@@ -375,12 +391,42 @@ export const useSimStore = create<SimState>((set, get) => ({
 
   instantRepairTrigger: 0,
 
-  setWindSpeed: (windSpeed) => set({ windSpeed }),
+  setWindSpeed: (windSpeed) =>
+    set((state) =>
+      canEditScenarioEnvironment(
+        state.scenarioRunStatus,
+        state.scenarioRunMode,
+      )
+        ? { windSpeed: Math.max(0, Math.min(60, windSpeed)) }
+        : {},
+    ),
   setWindDir: (windDir) =>
-    set({ windDir: normalizeHeadingDegrees(windDir) }),
-  setCurrentSpeed: (currentSpeed) => set({ currentSpeed }),
+    set((state) =>
+      canEditScenarioEnvironment(
+        state.scenarioRunStatus,
+        state.scenarioRunMode,
+      )
+        ? { windDir: normalizeHeadingDegrees(windDir) }
+        : {},
+    ),
+  setCurrentSpeed: (currentSpeed) =>
+    set((state) =>
+      canEditScenarioEnvironment(
+        state.scenarioRunStatus,
+        state.scenarioRunMode,
+      )
+        ? { currentSpeed: Math.max(0, Math.min(10, currentSpeed)) }
+        : {},
+    ),
   setCurrentDir: (currentDir) =>
-    set({ currentDir: normalizeHeadingDegrees(currentDir) }),
+    set((state) =>
+      canEditScenarioEnvironment(
+        state.scenarioRunStatus,
+        state.scenarioRunMode,
+      )
+        ? { currentDir: normalizeHeadingDegrees(currentDir) }
+        : {},
+    ),
   setEngineThrust: (engineThrust) =>
     set({ engineThrust: Math.max(-1, Math.min(1, engineThrust)) }),
   setActiveBoat: (activeBoat) => {
@@ -392,9 +438,11 @@ export const useSimStore = create<SimState>((set, get) => ({
       return;
     }
 
+    const scenario = getScenarioDefinition(state.activeScenario);
     queueScenarioSpawn(0, 0, 0);
     set({
       activeBoat,
+      ...scenarioEnvironmentFromDefinition(scenario),
       engineThrust: 0,
       keys: createEmptyKeys(),
       resetVesselTrigger: state.resetVesselTrigger + 1,
@@ -435,8 +483,48 @@ export const useSimStore = create<SimState>((set, get) => ({
       };
     }),
   clearKeys: () => set({ keys: createEmptyKeys() }),
-  setTargetTime: (targetTime) => set({ targetTime }),
-  setTargetSeason: (targetSeason) => set({ targetSeason }),
+  setTargetTime: (targetTime) =>
+    set((state) =>
+      canEditScenarioEnvironment(
+        state.scenarioRunStatus,
+        state.scenarioRunMode,
+      )
+        ? { targetTime: normalizeScenarioTimeHours(targetTime) }
+        : {},
+    ),
+  setTargetSeason: (targetSeason) =>
+    set((state) =>
+      canEditScenarioEnvironment(
+        state.scenarioRunStatus,
+        state.scenarioRunMode,
+      )
+        ? { targetSeason: normalizeScenarioSeason(targetSeason) }
+        : {},
+    ),
+  enableAssistedConditions: () =>
+    set((state) =>
+      state.scenarioRunStatus === 'active' &&
+      state.scenarioRunMode === 'standard'
+        ? {
+            scenarioRunMode: 'assisted',
+            scenarioAssistanceReason: ASSISTED_ENVIRONMENT_REASON,
+            scenarioEventMessage:
+              'Assisted conditions enabled. This attempt is excluded from standard records.',
+          }
+        : {},
+    ),
+  restoreScenarioEnvironment: () => {
+    const state = get();
+    const scenario = getScenarioDefinition(state.activeScenario);
+    set({
+      ...scenarioEnvironmentFromDefinition(scenario),
+      scenarioEventMessage:
+        state.scenarioRunStatus === 'active' &&
+        state.scenarioRunMode === 'assisted'
+          ? 'Scenario preset restored. This attempt remains assisted.'
+          : state.scenarioEventMessage,
+    });
+  },
   setQualityMode: (qualityMode) =>
     set((state) => ({
       qualityMode,
@@ -450,12 +538,7 @@ export const useSimStore = create<SimState>((set, get) => ({
     const scenario = getScenarioDefinition(activeScenario);
     set({
       activeScenario,
-      windSpeed: scenario.windSpeed,
-      windDir: scenario.windDir,
-      currentSpeed: scenario.currentSpeed,
-      currentDir: scenario.currentDir,
-      targetTime: scenario.targetTime,
-      targetSeason: scenario.targetSeason,
+      ...scenarioEnvironmentFromDefinition(scenario),
       ...createScenarioGameplayState('inactive'),
     });
   },
@@ -468,12 +551,7 @@ export const useSimStore = create<SimState>((set, get) => ({
       activeScenario,
       activeBoat: requestedBoat ?? state.activeBoat,
       sessionPhase: 'running',
-      windSpeed: scenario.windSpeed,
-      windDir: scenario.windDir,
-      currentSpeed: scenario.currentSpeed,
-      currentDir: scenario.currentDir,
-      targetTime: scenario.targetTime,
-      targetSeason: scenario.targetSeason,
+      ...scenarioEnvironmentFromDefinition(scenario),
       engineThrust: 0,
       keys: createEmptyKeys(),
       resetVesselTrigger: state.resetVesselTrigger + 1,
@@ -528,12 +606,7 @@ export const useSimStore = create<SimState>((set, get) => ({
     queueScenarioSpawn(0, 0, 0);
     set({
       sessionPhase: 'running',
-      windSpeed: scenario.windSpeed,
-      windDir: scenario.windDir,
-      currentSpeed: scenario.currentSpeed,
-      currentDir: scenario.currentDir,
-      targetTime: scenario.targetTime,
-      targetSeason: scenario.targetSeason,
+      ...scenarioEnvironmentFromDefinition(scenario),
       engineThrust: 0,
       keys: createEmptyKeys(),
       resetVesselTrigger: state.resetVesselTrigger + 1,
@@ -542,13 +615,16 @@ export const useSimStore = create<SimState>((set, get) => ({
       ...resetTelemetry(),
     });
   },
-  returnToMenu: () =>
+  returnToMenu: () => {
+    const scenario = getScenarioDefinition(get().activeScenario);
     set({
       sessionPhase: 'menu',
+      ...scenarioEnvironmentFromDefinition(scenario),
       engineThrust: 0,
       keys: createEmptyKeys(),
       ...createScenarioGameplayState('inactive'),
-    }),
+    });
+  },
   setCameraMode: (cameraMode) => set({ cameraMode }),
   cycleCameraMode: () =>
     set((state) => {
@@ -579,12 +655,7 @@ export const useSimStore = create<SimState>((set, get) => ({
           typeof preferences.hudVisible === 'boolean'
             ? preferences.hudVisible
             : state.hudVisible,
-        windSpeed: scenario.windSpeed,
-        windDir: scenario.windDir,
-        currentSpeed: scenario.currentSpeed,
-        currentDir: scenario.currentDir,
-        targetTime: scenario.targetTime,
-        targetSeason: scenario.targetSeason,
+        ...scenarioEnvironmentFromDefinition(scenario),
       };
     }),
   setScenarioNavigation: (telemetry) =>

@@ -35,7 +35,7 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
 ## P1 — Mission and damage fairness
 
 - [x] Drive mission time, travelled distance, and maximum speed from fixed simulation steps, preserving time across recovery while rejecting teleport distance.
-- [ ] Lock scenario environment presets during scored missions or mark modified runs as assisted.
+- [x] Lock standard mission presets, require an explicit assisted-mode transition for custom conditions, and exclude assisted attempts from standard records.
 - [ ] Replace generic radius completion with typed gate, relay, cargo, and rescue interactions.
 - [ ] Remove unexplained normal-operation hull wear.
 - [ ] Rebalance field repair and account for repair use in scoring.

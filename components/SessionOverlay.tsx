@@ -179,7 +179,7 @@ function LaunchBriefing() {
                 </h2>
               </div>
               <div className="text-right text-[10px] text-slate-500">
-                Environment presets remain editable after launch
+                Standard mission presets lock after launch
               </div>
             </div>
 
@@ -340,6 +340,7 @@ function RunningToolbar() {
   const state = useSimStore(
     useShallow((store) => ({
       activeScenario: store.activeScenario,
+      scenarioRunMode: store.scenarioRunMode,
       cameraMode: store.cameraMode,
       pauseSession: store.pauseSession,
       cycleCameraMode: store.cycleCameraMode,
@@ -355,8 +356,17 @@ function RunningToolbar() {
           <div className="text-[8px] font-bold uppercase tracking-[0.18em] text-slate-500">
             Active passage
           </div>
-          <div className="mt-0.5 text-xs font-semibold text-slate-200">
+          <div className="mt-0.5 flex items-center gap-2 text-xs font-semibold text-slate-200">
             {scenario.title}
+            <span
+              className={`rounded-full px-2 py-0.5 text-[7px] font-black uppercase tracking-wider ${
+                state.scenarioRunMode === 'assisted'
+                  ? 'bg-amber-300/12 text-amber-200'
+                  : 'bg-emerald-300/10 text-emerald-200'
+              }`}
+            >
+              {state.scenarioRunMode === 'assisted' ? 'Assisted' : 'Standard'}
+            </span>
           </div>
         </div>
         <div className="mx-1 h-7 w-px bg-white/10" />
@@ -421,6 +431,7 @@ function PauseMenu() {
     useShallow((store) => ({
       activeScenario: store.activeScenario,
       activeBoat: store.activeBoat,
+      scenarioRunMode: store.scenarioRunMode,
       cameraMode: store.cameraMode,
       resumeSession: store.resumeSession,
       restartScenario: store.restartScenario,
@@ -442,7 +453,7 @@ function PauseMenu() {
               {scenario.title}
             </h2>
             <p className="mt-1 text-xs text-slate-400">
-              {state.activeBoat} · physics and environmental time are frozen
+              {state.activeBoat} · {state.scenarioRunMode === 'assisted' ? 'assisted conditions' : 'standard scoring'} · physics and environmental time are frozen
             </p>
           </div>
           <button

@@ -8,6 +8,7 @@ import {
   Home,
   MapPinned,
   PackageCheck,
+  Settings2,
   RefreshCcw,
   Route,
   ShieldCheck,
@@ -71,9 +72,12 @@ export default function ScenarioResultOverlay({
   const nextScenarioId = getNextScenarioId(state.activeScenario);
   const nextScenario = getScenarioDefinition(nextScenarioId);
   const completed = result.outcome === 'completed';
-  const matchedBestScore = completed && result.score >= history.bestScore;
+  const assisted = result.runMode === 'assisted';
+  const matchedBestScore =
+    completed && !assisted && result.score >= history.bestScore;
   const matchedBestTime =
     completed &&
+    !assisted &&
     history.bestTimeSeconds !== null &&
     Math.abs(result.elapsedSeconds - history.bestTimeSeconds) < 0.11;
 
@@ -128,7 +132,7 @@ export default function ScenarioResultOverlay({
             }`}
           >
             <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-500">
-              Mission score
+              {assisted ? 'Assisted score' : 'Mission score'}
             </div>
             <div className="mt-1 font-mono text-3xl font-black text-sky-300">
               {result.score}
@@ -141,6 +145,22 @@ export default function ScenarioResultOverlay({
             )}
           </div>
         </div>
+
+        {assisted && (
+          <div className="mt-5 flex gap-3 rounded-2xl border border-amber-300/25 bg-amber-300/[0.08] p-4 text-amber-100">
+            <Settings2 className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.18em]">
+                Assisted result · excluded from standard records
+              </div>
+              <p className="mt-1 text-xs leading-5 text-slate-300">
+                {result.assistanceReason ||
+                  'Custom environmental conditions were used for this attempt.'}{' '}
+                The displayed score is informational and cannot replace a standard best score, time, hull record, or attempt count.
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-5">
           <div className="rounded-xl border border-white/8 bg-white/[0.035] p-3">
@@ -234,8 +254,13 @@ export default function ScenarioResultOverlay({
 
         <div className="mt-4 flex flex-col gap-2 rounded-2xl border border-white/8 bg-white/[0.025] px-4 py-3 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <span className="font-semibold text-slate-200">Scenario record:</span>{' '}
+            <span className="font-semibold text-slate-200">Standard record:</span>{' '}
             {history.completions} completed from {history.attempts} attempts
+            {history.assistedAttempts > 0 && (
+              <span className="text-amber-300">
+                {' '}· {history.assistedAttempts} assisted
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3 font-mono text-[11px]">
             <span>Best {history.bestScore}/1000</span>

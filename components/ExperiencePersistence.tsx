@@ -2,6 +2,9 @@
 
 import { useEffect } from 'react';
 import {
+  isScenarioEnvironmentLocked,
+} from '@/sim/scenarios/ScoredScenarioAuthority';
+import {
   type ExperiencePreferences,
   type SimState,
   useSimStore,
@@ -36,6 +39,20 @@ function writeDataset(state: SimState) {
   dataset.simActiveBoat = state.activeBoat;
   dataset.simResetVesselTrigger = String(state.resetVesselTrigger);
   dataset.simScenarioRunStatus = state.scenarioRunStatus;
+  dataset.simScenarioRunMode = state.scenarioRunMode;
+  dataset.simScenarioEnvironmentLocked = isScenarioEnvironmentLocked(
+    state.scenarioRunStatus,
+    state.scenarioRunMode,
+  )
+    ? '1'
+    : '0';
+  dataset.simScenarioAssistanceReason = state.scenarioAssistanceReason;
+  dataset.simWindSpeed = String(state.windSpeed);
+  dataset.simWindDir = String(state.windDir);
+  dataset.simCurrentSpeed = String(state.currentSpeed);
+  dataset.simCurrentDir = String(state.currentDir);
+  dataset.simTargetTime = String(state.targetTime);
+  dataset.simTargetSeason = String(state.targetSeason);
   dataset.simActiveWaypointIndex = String(state.activeWaypointIndex);
   dataset.simScenarioProgress = String(state.scenarioProgress);
   dataset.simScenarioElapsedSeconds = String(
@@ -46,6 +63,7 @@ function writeDataset(state: SimState) {
     state.navigationBearingDeg,
   );
   dataset.simScenarioResult = state.scenarioResult?.outcome ?? '';
+  dataset.simScenarioResultRunMode = state.scenarioResult?.runMode ?? '';
   dataset.simScenarioEntityCount = String(
     state.completedScenarioEntityIds.length,
   );

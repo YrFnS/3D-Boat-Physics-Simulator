@@ -33,6 +33,16 @@ function readExperienceState(page) {
       activeBoat: dataset.simActiveBoat ?? '',
       resetVesselTrigger: Number(dataset.simResetVesselTrigger ?? '0'),
       scenarioRunStatus: dataset.simScenarioRunStatus ?? '',
+      scenarioRunMode: dataset.simScenarioRunMode ?? '',
+      scenarioEnvironmentLocked:
+        dataset.simScenarioEnvironmentLocked ?? '',
+      scenarioAssistanceReason:
+        dataset.simScenarioAssistanceReason ?? '',
+      scenarioResultRunMode: dataset.simScenarioResultRunMode ?? '',
+      windSpeed: Number(dataset.simWindSpeed ?? '0'),
+      assistedHistoryAttempts: Number(
+        dataset.simScenarioHistoryAssistedAttempts ?? '0',
+      ),
       activeWaypointIndex: Number(dataset.simActiveWaypointIndex ?? '0'),
       scenarioProgress: Number(dataset.simScenarioProgress ?? '0'),
       scenarioElapsedSeconds: Number(
@@ -286,6 +296,12 @@ allPassed =
       const launched = await readExperienceState(page);
       checks.navigationChartVisible = true;
       checks.navigationState = navigationStateIsValid(launched);
+      checks.standardEnvironmentLocked =
+        launched.scenarioRunMode === 'standard' &&
+        launched.scenarioEnvironmentLocked === '1' &&
+        (await page.getByLabel('Wind speed').isDisabled()) &&
+        (await page.getByLabel('Current speed').isDisabled()) &&
+        (await page.getByRole('button', { name: 'Dawn' }).isDisabled());
 
       await page.keyboard.press('c');
       await waitForDataset(page, 'simCameraMode', 'helm');
@@ -428,6 +444,60 @@ allPassed =
 
 allPassed =
   (await runFlow(
+    'assisted-environment-flow',
+    {
+      viewport: { width: 1280, height: 820 },
+      deviceScaleFactor: 1,
+      isMobile: false,
+      hasTouch: false,
+    },
+    async ({ page, checks }) => {
+      await page.getByRole('button', { name: /Begin passage/i }).click();
+      await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForCollisionRuntimeReady(page);
+      await waitForNavigationReady(page);
+
+      const standard = await readExperienceState(page);
+      checks.standardStartsLocked =
+        standard.scenarioRunMode === 'standard' &&
+        standard.scenarioEnvironmentLocked === '1' &&
+        (await page.getByLabel('Wind speed').isDisabled());
+
+      await page
+        .getByRole('button', { name: 'Use custom conditions' })
+        .first()
+        .click();
+      await waitForDataset(page, 'simScenarioRunMode', 'assisted');
+      await waitForDataset(page, 'simScenarioEnvironmentLocked', '0');
+      const windControl = page.getByLabel('Wind speed');
+      await windControl.fill('12.5');
+      await waitForDataset(page, 'simWindSpeed', '12.5');
+
+      const assisted = await readExperienceState(page);
+      checks.assistedUnlock =
+        assisted.scenarioRunMode === 'assisted' &&
+        assisted.scenarioEnvironmentLocked === '0' &&
+        assisted.scenarioAssistanceReason.length > 0 &&
+        !(await windControl.isDisabled()) &&
+        Math.abs(assisted.windSpeed - 12.5) < 0.001;
+      checks.assistedDisclosure =
+        (await page.getByText('Assisted conditions', { exact: true }).count()) > 0;
+
+      await page
+        .getByRole('button', { name: 'Restore scenario preset' })
+        .first()
+        .click();
+      await waitForDataset(page, 'simWindSpeed', '8');
+      const restored = await readExperienceState(page);
+      checks.restorePresetKeepsAssisted =
+        restored.scenarioRunMode === 'assisted' &&
+        restored.scenarioEnvironmentLocked === '0' &&
+        Math.abs(restored.windSpeed - 8) < 0.001;
+    },
+  )) && allPassed;
+
+allPassed =
+  (await runFlow(
     'mission-completion-flow',
     {
       viewport: { width: 1180, height: 780 },
@@ -446,7 +516,8 @@ allPassed =
       checks.completionState =
         resultState.sessionPhase === 'paused' &&
         resultState.scenarioRunStatus === 'completed' &&
-        resultState.scenarioResult === 'completed';
+        resultState.scenarioResult === 'completed' &&
+        resultState.scenarioResultRunMode === 'standard';
       checks.completionActions =
         (await page.getByRole('button', { name: /Retry passage/i }).count()) === 1 &&
         (await page.getByRole('button', { name: /Briefing/i }).count()) === 1 &&

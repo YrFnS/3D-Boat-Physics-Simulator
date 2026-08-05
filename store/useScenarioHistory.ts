@@ -3,20 +3,14 @@ import {
   SCENARIOS,
   type ScenarioId,
 } from '@/sim/scenarios/ScenarioCatalog';
+import {
+  applyScenarioHistoryResult,
+  type ScenarioHistoryPolicyRecord,
+} from '@/sim/scenarios/ScoredScenarioAuthority';
 import type { BoatType, ScenarioResult } from '@/store/useSimStore';
 
-export interface ScenarioHistoryRecord {
-  attempts: number;
-  completions: number;
-  failures: number;
-  bestScore: number;
-  bestTimeSeconds: number | null;
-  bestHullHealth: number;
-  lastScore: number;
-  lastOutcome: ScenarioResult['outcome'] | null;
-  lastBoat: BoatType | null;
-  lastPlayedAt: string | null;
-}
+export type ScenarioHistoryRecord =
+  ScenarioHistoryPolicyRecord<BoatType>;
 
 export type ScenarioHistorySnapshot = Record<
   ScenarioId,
@@ -47,6 +41,9 @@ function createEmptyRecord(): ScenarioHistoryRecord {
     lastOutcome: null,
     lastBoat: null,
     lastPlayedAt: null,
+    assistedAttempts: 0,
+    assistedCompletions: 0,
+    assistedFailures: 0,
   };
 }
 
@@ -94,6 +91,15 @@ function normalizeRecord(
         : null,
     lastPlayedAt:
       typeof value.lastPlayedAt === 'string' ? value.lastPlayedAt : null,
+    assistedAttempts: Math.floor(
+      finiteNonNegative(value.assistedAttempts, 0),
+    ),
+    assistedCompletions: Math.floor(
+      finiteNonNegative(value.assistedCompletions, 0),
+    ),
+    assistedFailures: Math.floor(
+      finiteNonNegative(value.assistedFailures, 0),
+    ),
   };
 }
 
@@ -113,37 +119,16 @@ export const useScenarioHistory = create<ScenarioHistoryState>((set) => ({
     }),
 
   recordResult: (scenarioId, boat, result) =>
-    set((state) => {
-      const current = state.records[scenarioId];
-      const completed = result.outcome === 'completed';
-      const bestTimeSeconds = completed
-        ? current.bestTimeSeconds === null
-          ? result.elapsedSeconds
-          : Math.min(current.bestTimeSeconds, result.elapsedSeconds)
-        : current.bestTimeSeconds;
-
-      return {
-        records: {
-          ...state.records,
-          [scenarioId]: {
-            attempts: current.attempts + 1,
-            completions: current.completions + (completed ? 1 : 0),
-            failures: current.failures + (completed ? 0 : 1),
-            bestScore: completed
-              ? Math.max(current.bestScore, result.score)
-              : current.bestScore,
-            bestTimeSeconds,
-            bestHullHealth: completed
-              ? Math.max(current.bestHullHealth, result.hullHealth)
-              : current.bestHullHealth,
-            lastScore: result.score,
-            lastOutcome: result.outcome,
-            lastBoat: boat,
-            lastPlayedAt: new Date().toISOString(),
-          },
-        },
-      };
-    }),
+    set((state) => ({
+      records: {
+        ...state.records,
+        [scenarioId]: applyScenarioHistoryResult(
+          state.records[scenarioId],
+          boat,
+          result,
+        ),
+      },
+    })),
 
   clearHistory: () =>
     set({

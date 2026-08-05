@@ -209,6 +209,9 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
         latestStore.completedScenarioEntityIds.includes(entity.id),
       ).length;
       const baseResult = {
+        runMode: latestStore.scenarioRunMode,
+        assistanceReason:
+          latestStore.scenarioAssistanceReason || null,
         elapsedSeconds: missionStatistics.elapsedSeconds,
         waypointsCompleted,
         totalWaypoints: route.length,
