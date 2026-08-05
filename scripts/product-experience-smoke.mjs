@@ -54,6 +54,10 @@ async function waitForDataset(page, key, value) {
   );
 }
 
+async function waitForCollisionRuntimeReady(page) {
+  await waitForDataset(page, 'simCollisionRuntimeStatus', 'ready');
+}
+
 async function waitForCanvasReady(page) {
   await page.waitForFunction(
     () => {
@@ -198,6 +202,7 @@ async function runFlow(
     await waitForCanvasReady(page);
     await waitForDataset(page, 'simSessionPhase', 'menu');
     await page.getByRole('heading', { name: 'Choose your passage.' }).waitFor();
+    await waitForCollisionRuntimeReady(page);
 
     checks.briefingVisible = true;
     checks.scenarioCardsVisible =
@@ -268,10 +273,12 @@ allPassed =
 
       await page.getByRole('button', { name: /speedboat/i }).first().click();
       await waitForDataset(page, 'simActiveBoat', 'speedboat');
+      await waitForCollisionRuntimeReady(page);
       checks.vesselSelection = true;
 
       await page.getByRole('button', { name: /Begin passage/i }).click();
       await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForCollisionRuntimeReady(page);
       await waitForNavigationReady(page);
       await page.locator('[aria-label="Marine navigation chart"]').waitFor();
       checks.launch = true;
@@ -299,6 +306,7 @@ allPassed =
         launched.resetVesselTrigger,
         { timeout: 60_000 },
       );
+      await waitForCollisionRuntimeReady(page);
       const afterReset = await readExperienceState(page);
       checks.vesselReset =
         afterReset.scenarioRunStatus === 'active' &&
@@ -324,6 +332,7 @@ allPassed =
         afterReset.resetVesselTrigger,
         { timeout: 60_000 },
       );
+      await waitForCollisionRuntimeReady(page);
       await waitForNavigationReady(page);
       const afterRestart = await readExperienceState(page);
       checks.restart =
@@ -342,6 +351,7 @@ allPassed =
       await page.waitForSelector('canvas', { timeout: 60_000 });
       await waitForCanvasReady(page);
       await waitForDataset(page, 'simSessionPhase', 'menu');
+      await waitForCollisionRuntimeReady(page);
       const restored = await readExperienceState(page);
       checks.preferencePersistence =
         restored.scenario === 'storm-passage' &&
@@ -364,6 +374,7 @@ allPassed =
     async ({ page, checks }) => {
       await page.getByRole('button', { name: /Begin passage/i }).click();
       await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForCollisionRuntimeReady(page);
       await waitForNavigationReady(page);
       await page.locator('[aria-label="Marine navigation chart"]').waitFor();
       const launched = await readExperienceState(page);
@@ -406,6 +417,7 @@ allPassed =
     async ({ page, checks }) => {
       await page.getByRole('button', { name: /Begin passage/i }).click();
       await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForCollisionRuntimeReady(page);
       await waitForNavigationReady(page);
       await waitForDataset(page, 'simScenarioResult', 'completed');
       await page.getByText('Passage complete', { exact: true }).waitFor();
@@ -437,6 +449,7 @@ allPassed =
     async ({ page, checks }) => {
       await page.getByRole('button', { name: /Begin passage/i }).click();
       await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForCollisionRuntimeReady(page);
       await waitForNavigationReady(page);
       await waitForDataset(page, 'simScenarioResult', 'failed');
       await page.getByText('Passage failed', { exact: true }).waitFor();
