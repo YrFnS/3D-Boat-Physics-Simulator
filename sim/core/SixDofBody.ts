@@ -1,5 +1,5 @@
 import { Object3D, Quaternion, Vector3 } from 'three';
-import { headingDegreesToYawRadians } from '@/sim/world/WorldDirection';
+import { headingDegreesToYawRadians } from '../world/WorldDirection.ts';
 
 const EPSILON = 1e-8;
 const MAX_ANGULAR_SPEED_RAD_PER_SECOND = Math.PI * 4;
