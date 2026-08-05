@@ -13,6 +13,7 @@ import { useBenchmarkMode } from '@/hooks/useBenchmarkMode';
 import { useDebugMode } from '@/hooks/useDebugMode';
 import {
   type RenderQuality,
+  sharedPhysics,
   useSimStore,
 } from '@/store/useSimStore';
 import BenchmarkPanel from './BenchmarkPanel';
@@ -75,6 +76,17 @@ const MOVEMENT_KEYS = [
   'arrowright',
 ] as const;
 
+const COLLISION_READY_POLL_MS = 50;
+const COLLISION_READY_SETTLE_MS = 100;
+const COLLISION_READY_TIMEOUT_MS = 20_000;
+
+type CollisionRuntimeStatus = 'loading' | 'ready' | 'stalled';
+
+interface CollisionRuntimeState {
+  generation: string;
+  status: CollisionRuntimeStatus;
+}
+
 function moveQuality(
   current: RenderQuality,
   direction: -1 | 1,
@@ -103,6 +115,66 @@ function LoadingFallback() {
   );
 }
 
+function CollisionReadinessOverlay({
+  status,
+}: {
+  status: Exclude<CollisionRuntimeStatus, 'ready'>;
+}) {
+  const stalled = status === 'stalled';
+
+  return (
+    <div className="pointer-events-auto absolute inset-0 z-[120] flex items-center justify-center bg-slate-950/72 p-5 text-white backdrop-blur-md">
+      <div
+        role={stalled ? 'alert' : 'status'}
+        aria-live="polite"
+        className="w-full max-w-sm rounded-3xl border border-white/10 bg-slate-950/92 p-6 text-center shadow-2xl"
+      >
+        <div
+          className={`mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border ${
+            stalled
+              ? 'border-amber-300/30 bg-amber-300/10'
+              : 'border-sky-300/30 bg-sky-300/10'
+          }`}
+        >
+          <div
+            className={`h-6 w-6 rounded-full border-2 ${
+              stalled
+                ? 'border-amber-200/35 border-t-amber-200'
+                : 'animate-spin border-sky-200/25 border-t-sky-200'
+            }`}
+          />
+        </div>
+        <div
+          className={`mt-4 text-[10px] font-black uppercase tracking-[0.24em] ${
+            stalled ? 'text-amber-200' : 'text-sky-200'
+          }`}
+        >
+          {stalled ? 'Collision world unavailable' : 'Preparing collision world'}
+        </div>
+        <h2 className="mt-2 text-xl font-bold text-white">
+          {stalled
+            ? 'The physics runtime did not become ready.'
+            : 'Building the authoritative vessel runtime.'}
+        </h2>
+        <p className="mt-3 text-sm leading-6 text-slate-400">
+          {stalled
+            ? 'The simulator has kept vessel movement locked so it cannot pass through terrain or navigation obstacles.'
+            : 'Rapier terrain, vessel contacts, and obstacle colliders must be ready before controls or mission time can advance.'}
+        </p>
+        {stalled && (
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-5 w-full rounded-xl bg-amber-300 px-4 py-3 text-sm font-bold text-slate-950 transition hover:bg-amber-200"
+          >
+            Reload simulator
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function isEditableTarget(target: EventTarget | null) {
   return (
     target instanceof HTMLInputElement ||
@@ -128,6 +200,17 @@ export default function Simulator() {
   const resetVesselTrigger = useSimStore(
     (state) => state.resetVesselTrigger,
   );
+  const runtimeGeneration = `${activeBoat}-${resetVesselTrigger}`;
+  const [collisionRuntime, setCollisionRuntime] =
+    useState<CollisionRuntimeState>({
+      generation: '',
+      status: 'loading',
+    });
+  const collisionStatus =
+    collisionRuntime.generation === runtimeGeneration
+      ? collisionRuntime.status
+      : 'loading';
+  const collisionRuntimeReady = collisionStatus === 'ready';
   const debugEnabled = useDebugMode();
   const benchmarkMode = useBenchmarkMode();
   const automationMode = useAutomationMode();
@@ -157,6 +240,51 @@ export default function Simulator() {
   }, []);
 
   useEffect(() => {
+    if (webglStatus !== 'ready') return undefined;
+
+    let cancelled = false;
+    const startedAt = performance.now();
+    const acceptReadyAt = startedAt + COLLISION_READY_SETTLE_MS;
+
+    setCollisionRuntime({
+      generation: runtimeGeneration,
+      status: 'loading',
+    });
+
+    const interval = window.setInterval(() => {
+      if (cancelled) return;
+
+      const ready = sharedPhysics.collisionReady === 1;
+
+      if (ready && performance.now() >= acceptReadyAt) {
+        setCollisionRuntime({
+          generation: runtimeGeneration,
+          status: 'ready',
+        });
+        window.clearInterval(interval);
+        return;
+      }
+
+      if (performance.now() - startedAt >= COLLISION_READY_TIMEOUT_MS) {
+        setCollisionRuntime({
+          generation: runtimeGeneration,
+          status: 'stalled',
+        });
+        window.clearInterval(interval);
+      }
+    }, COLLISION_READY_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [runtimeGeneration, webglStatus]);
+
+  useEffect(() => {
+    if (!collisionRuntimeReady) clearKeys();
+  }, [clearKeys, collisionRuntimeReady]);
+
+  useEffect(() => {
     if (automationMode) {
       useSimStore.getState().resumeSession();
     }
@@ -173,7 +301,12 @@ export default function Simulator() {
       }
 
       const phase = useSimStore.getState().sessionPhase;
-      if (isDown && phase !== 'running') return;
+      if (
+        isDown &&
+        (phase !== 'running' || sharedPhysics.collisionReady !== 1)
+      ) {
+        return;
+      }
       event.preventDefault();
       setKey(key, isDown);
     };
@@ -182,6 +315,7 @@ export default function Simulator() {
       const key = event.key.toLowerCase();
 
       if (key === 'escape' && !event.repeat) {
+        if (sharedPhysics.collisionReady !== 1) return;
         event.preventDefault();
         useSimStore.getState().togglePause();
         return;
@@ -190,7 +324,10 @@ export default function Simulator() {
       if (isEditableTarget(event.target)) return;
 
       if (key === 'c' && !event.repeat) {
-        if (useSimStore.getState().sessionPhase === 'running') {
+        if (
+          sharedPhysics.collisionReady === 1 &&
+          useSimStore.getState().sessionPhase === 'running'
+        ) {
           event.preventDefault();
           useSimStore.getState().cycleCameraMode();
         }
@@ -198,7 +335,10 @@ export default function Simulator() {
       }
 
       if (key === 'home' && !event.repeat) {
-        if (useSimStore.getState().sessionPhase === 'running') {
+        if (
+          sharedPhysics.collisionReady === 1 &&
+          useSimStore.getState().sessionPhase === 'running'
+        ) {
           event.preventDefault();
           useSimStore.getState().resetVessel();
         }
@@ -224,6 +364,13 @@ export default function Simulator() {
   }, [clearKeys, setKey]);
 
   const simulationRunning = automationMode || sessionPhase === 'running';
+  const frameLoop = !collisionRuntimeReady
+    ? 'never'
+    : simulationRunning
+      ? 'always'
+      : sessionPhase === 'paused'
+        ? 'never'
+        : 'demand';
   const showHud = automationMode || (sessionPhase !== 'menu' && hudVisible);
   const showSessionOverlay =
     scenarioRunStatus === 'inactive' || scenarioRunStatus === 'active';
@@ -246,7 +393,7 @@ export default function Simulator() {
       <Canvas
         camera={{ position: [0, 15, -25], fov: 60, near: 0.1, far: 3000 }}
         dpr={DPR_BY_QUALITY[renderQuality]}
-        frameloop={simulationRunning ? 'always' : 'demand'}
+        frameloop={frameLoop}
         shadows={renderQuality !== 'low' ? 'basic' : false}
         gl={{
           antialias: renderQuality !== 'low',
@@ -271,7 +418,7 @@ export default function Simulator() {
 
         <Suspense fallback={<LoadingFallback />}>
           <EnvironmentRig />
-          <Boat key={`${activeBoat}-${resetVesselTrigger}`} />
+          <Boat key={runtimeGeneration} />
           <ScenarioDirector enabled={!automationMode} />
           <FreeNavigationDirector enabled={!automationMode} />
           <ScenarioWaypoints enabled={!automationMode} />
@@ -310,6 +457,9 @@ export default function Simulator() {
         <OnboardingOverlay automationMode={automationMode} />
       </div>
 
+      {collisionStatus !== 'ready' && (
+        <CollisionReadinessOverlay status={collisionStatus} />
+      )}
       {webglStatus === 'lost' && <SimulatorRecoveryOverlay status="lost" />}
     </div>
   );
