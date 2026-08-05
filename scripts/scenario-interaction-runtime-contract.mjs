@@ -212,6 +212,11 @@ assert.match(
   'Visible gate posts must rotate to the same crossing plane used by gameplay.',
 );
 assert.match(
+  entitySource,
+  /active && entity\.type !== 'navigation-gate'/,
+  'Navigation gates must remain fixed instead of floating away from the crossing plane.',
+);
+assert.match(
   navigationSource,
   /scenarioInteractionProgress/,
   'Navigation UI must expose typed interaction progress.',
