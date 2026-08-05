@@ -12,6 +12,10 @@ import { useAutomationMode } from '@/hooks/useAutomationMode';
 import { useBenchmarkMode } from '@/hooks/useBenchmarkMode';
 import { useDebugMode } from '@/hooks/useDebugMode';
 import {
+  canAcceptVesselInput,
+  resolveSimulatorFrameLoop,
+} from '@/sim/core/SimulationRuntimeAuthority';
+import {
   type RenderQuality,
   sharedPhysics,
   useSimStore,
@@ -303,7 +307,10 @@ export default function Simulator() {
       const phase = useSimStore.getState().sessionPhase;
       if (
         isDown &&
-        (phase !== 'running' || sharedPhysics.collisionReady !== 1)
+        !canAcceptVesselInput(
+          sharedPhysics.collisionReady === 1,
+          phase,
+        )
       ) {
         return;
       }
@@ -325,8 +332,10 @@ export default function Simulator() {
 
       if (key === 'c' && !event.repeat) {
         if (
-          sharedPhysics.collisionReady === 1 &&
-          useSimStore.getState().sessionPhase === 'running'
+          canAcceptVesselInput(
+            sharedPhysics.collisionReady === 1,
+            useSimStore.getState().sessionPhase,
+          )
         ) {
           event.preventDefault();
           useSimStore.getState().cycleCameraMode();
@@ -336,8 +345,10 @@ export default function Simulator() {
 
       if (key === 'home' && !event.repeat) {
         if (
-          sharedPhysics.collisionReady === 1 &&
-          useSimStore.getState().sessionPhase === 'running'
+          canAcceptVesselInput(
+            sharedPhysics.collisionReady === 1,
+            useSimStore.getState().sessionPhase,
+          )
         ) {
           event.preventDefault();
           useSimStore.getState().resetVessel();
@@ -363,14 +374,11 @@ export default function Simulator() {
     };
   }, [clearKeys, setKey]);
 
-  const simulationRunning = automationMode || sessionPhase === 'running';
-  const frameLoop = !collisionRuntimeReady
-    ? 'never'
-    : simulationRunning
-      ? 'always'
-      : sessionPhase === 'paused'
-        ? 'never'
-        : 'demand';
+  const frameLoop = resolveSimulatorFrameLoop({
+    collisionRuntimeReady,
+    automationMode,
+    sessionPhase,
+  });
   const showHud = automationMode || (sessionPhase !== 'menu' && hudVisible);
   const showSessionOverlay =
     scenarioRunStatus === 'inactive' || scenarioRunStatus === 'active';
