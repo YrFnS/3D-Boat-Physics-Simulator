@@ -284,6 +284,15 @@ export default function Simulator() {
   }, [clearKeys, collisionRuntimeReady]);
 
   useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.simCollisionRuntimeStatus = collisionStatus;
+
+    return () => {
+      delete root.dataset.simCollisionRuntimeStatus;
+    };
+  }, [collisionStatus]);
+
+  useEffect(() => {
     if (automationMode) {
       useSimStore.getState().resumeSession();
     }
@@ -302,10 +311,7 @@ export default function Simulator() {
       const phase = useSimStore.getState().sessionPhase;
       if (
         isDown &&
-        !canAcceptVesselInput(
-          sharedPhysics.collisionReady === 1,
-          phase,
-        )
+        !canAcceptVesselInput(collisionRuntimeReady, phase)
       ) {
         return;
       }
@@ -317,7 +323,7 @@ export default function Simulator() {
       const key = event.key.toLowerCase();
 
       if (key === 'escape' && !event.repeat) {
-        if (sharedPhysics.collisionReady !== 1) return;
+        if (!collisionRuntimeReady) return;
         event.preventDefault();
         useSimStore.getState().togglePause();
         return;
@@ -328,7 +334,7 @@ export default function Simulator() {
       if (key === 'c' && !event.repeat) {
         if (
           canAcceptVesselInput(
-            sharedPhysics.collisionReady === 1,
+            collisionRuntimeReady,
             useSimStore.getState().sessionPhase,
           )
         ) {
@@ -341,7 +347,7 @@ export default function Simulator() {
       if (key === 'home' && !event.repeat) {
         if (
           canAcceptVesselInput(
-            sharedPhysics.collisionReady === 1,
+            collisionRuntimeReady,
             useSimStore.getState().sessionPhase,
           )
         ) {
@@ -367,7 +373,7 @@ export default function Simulator() {
       window.removeEventListener('keyup', keyUp);
       window.removeEventListener('blur', clearKeys);
     };
-  }, [clearKeys, setKey]);
+  }, [clearKeys, collisionRuntimeReady, setKey]);
 
   const frameLoop = resolveSimulatorFrameLoop({
     collisionRuntimeReady,
