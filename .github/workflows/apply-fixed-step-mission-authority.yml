@@ -1,0 +1,836 @@
+name: Apply fixed-step mission authority
+
+on:
+  push:
+    branches:
+      - agent/simulator-stabilization
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fixed-step-mission-authority
+  cancel-in-progress: false
+
+env:
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  migrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Apply fixed-step mission and static-menu authority
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          def read(path: str) -> str:
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path: str, content: str) -> None:
+              target = Path(path)
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_text(content, encoding='utf-8')
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              source = read(path)
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(
+                      f'{path}: expected exactly one target, found {count}: {old[:160]!r}'
+                  )
+              write(path, source.replace(old, new, 1))
+
+          def replace_section(
+              path: str,
+              start_marker: str,
+              end_marker: str,
+              replacement: str,
+          ) -> None:
+              source = read(path)
+              start = source.find(start_marker)
+              if start < 0:
+                  raise SystemExit(f'{path}: start marker not found: {start_marker!r}')
+              end = source.find(end_marker, start)
+              if end < 0:
+                  raise SystemExit(f'{path}: end marker not found: {end_marker!r}')
+              write(path, source[:start] + replacement + source[end:])
+
+          mission_runtime = dedent(r'''
+            export interface MissionRuntimeStatisticsStep {
+              runId: number;
+              vesselGeneration: number;
+              enabled: boolean;
+              deltaSeconds: number;
+              boatX: number;
+              boatZ: number;
+              speedKnots: number;
+            }
+
+            export interface MissionRuntimeStatisticsSnapshot {
+              runId: number;
+              vesselGeneration: number;
+              elapsedSeconds: number;
+              distanceTravelledM: number;
+              maximumSpeedKnots: number;
+              fixedStepCount: number;
+            }
+
+            export const DEFAULT_MAXIMUM_MISSION_SAMPLE_DISTANCE_M = 60;
+
+            function normalizeIdentity(value: number) {
+              return Number.isFinite(value) ? Math.trunc(value) : -1;
+            }
+
+            /**
+             * Fixed-step authority for scored mission time and travelled distance.
+             *
+             * The tracker is shared across vessel remounts. A new scenario run
+             * resets every statistic, while a vessel recovery generation only
+             * reanchors the position sample so a teleport cannot become distance.
+             * Disabled steps also reanchor without advancing mission time, which
+             * keeps free-navigation and non-running frames out of scored results.
+             */
+            export class MissionRuntimeStatistics {
+              private readonly state: MissionRuntimeStatisticsSnapshot = {
+                runId: -1,
+                vesselGeneration: -1,
+                elapsedSeconds: 0,
+                distanceTravelledM: 0,
+                maximumSpeedKnots: 0,
+                fixedStepCount: 0,
+              };
+              private previousBoatX = 0;
+              private previousBoatZ = 0;
+              private hasPreviousPosition = false;
+              readonly maximumSampleDistanceM: number;
+
+              constructor(
+                maximumSampleDistanceM =
+                  DEFAULT_MAXIMUM_MISSION_SAMPLE_DISTANCE_M,
+              ) {
+                this.maximumSampleDistanceM =
+                  Number.isFinite(maximumSampleDistanceM) &&
+                  maximumSampleDistanceM > 0
+                    ? maximumSampleDistanceM
+                    : DEFAULT_MAXIMUM_MISSION_SAMPLE_DISTANCE_M;
+              }
+
+              get snapshot(): Readonly<MissionRuntimeStatisticsSnapshot> {
+                return this.state;
+              }
+
+              reset(
+                runId = -1,
+                vesselGeneration = -1,
+                boatX = Number.NaN,
+                boatZ = Number.NaN,
+              ) {
+                this.state.runId = normalizeIdentity(runId);
+                this.state.vesselGeneration =
+                  normalizeIdentity(vesselGeneration);
+                this.state.elapsedSeconds = 0;
+                this.state.distanceTravelledM = 0;
+                this.state.maximumSpeedKnots = 0;
+                this.state.fixedStepCount = 0;
+                this.reanchor(boatX, boatZ);
+                return this.state;
+              }
+
+              advance(
+                step: MissionRuntimeStatisticsStep,
+              ): Readonly<MissionRuntimeStatisticsSnapshot> {
+                const runId = normalizeIdentity(step.runId);
+                const vesselGeneration = normalizeIdentity(
+                  step.vesselGeneration,
+                );
+
+                if (this.state.runId !== runId) {
+                  this.reset(
+                    runId,
+                    vesselGeneration,
+                    step.boatX,
+                    step.boatZ,
+                  );
+                } else if (
+                  this.state.vesselGeneration !== vesselGeneration
+                ) {
+                  this.state.vesselGeneration = vesselGeneration;
+                  this.reanchor(step.boatX, step.boatZ);
+                }
+
+                const deltaSeconds = Number.isFinite(step.deltaSeconds)
+                  ? Math.max(0, step.deltaSeconds)
+                  : 0;
+                if (!step.enabled || deltaSeconds <= 0) {
+                  this.reanchor(step.boatX, step.boatZ);
+                  return this.state;
+                }
+
+                this.state.elapsedSeconds += deltaSeconds;
+                this.state.fixedStepCount += 1;
+                if (Number.isFinite(step.speedKnots)) {
+                  this.state.maximumSpeedKnots = Math.max(
+                    this.state.maximumSpeedKnots,
+                    Math.abs(step.speedKnots),
+                  );
+                }
+
+                if (
+                  Number.isFinite(step.boatX) &&
+                  Number.isFinite(step.boatZ)
+                ) {
+                  if (this.hasPreviousPosition) {
+                    const sampleDistanceM = Math.hypot(
+                      step.boatX - this.previousBoatX,
+                      step.boatZ - this.previousBoatZ,
+                    );
+                    if (
+                      Number.isFinite(sampleDistanceM) &&
+                      sampleDistanceM <= this.maximumSampleDistanceM
+                    ) {
+                      this.state.distanceTravelledM += sampleDistanceM;
+                    }
+                  }
+                  this.previousBoatX = step.boatX;
+                  this.previousBoatZ = step.boatZ;
+                  this.hasPreviousPosition = true;
+                } else {
+                  this.hasPreviousPosition = false;
+                }
+
+                return this.state;
+              }
+
+              private reanchor(boatX: number, boatZ: number) {
+                if (Number.isFinite(boatX) && Number.isFinite(boatZ)) {
+                  this.previousBoatX = boatX;
+                  this.previousBoatZ = boatZ;
+                  this.hasPreviousPosition = true;
+                } else {
+                  this.hasPreviousPosition = false;
+                }
+              }
+            }
+
+            /** Shared authority survives Boat remounts caused by recovery. */
+            export const sharedMissionRuntimeStatistics =
+              new MissionRuntimeStatistics();
+          ''').lstrip()
+          write(
+              'sim/scenarios/MissionRuntimeStatistics.ts',
+              mission_runtime,
+          )
+
+          mission_contract = dedent(r'''
+            import assert from 'node:assert/strict';
+            import fs from 'node:fs/promises';
+            import {
+              MissionRuntimeStatistics,
+            } from '../sim/scenarios/MissionRuntimeStatistics.ts';
+
+            const EPSILON = 1e-9;
+            const STEP_SECONDS = 1 / 60;
+
+            function approximatelyEqual(actual, expected, message) {
+              assert.ok(
+                Math.abs(actual - expected) <= EPSILON,
+                `${message}: expected ${expected}, received ${actual}`,
+              );
+            }
+
+            function capture(tracker) {
+              return { ...tracker.snapshot };
+            }
+
+            const tracker = new MissionRuntimeStatistics(5);
+            tracker.advance({
+              runId: 1,
+              vesselGeneration: 10,
+              enabled: true,
+              deltaSeconds: 0,
+              boatX: 0,
+              boatZ: 0,
+              speedKnots: 0,
+            });
+
+            for (let step = 1; step <= 60; step += 1) {
+              tracker.advance({
+                runId: 1,
+                vesselGeneration: 10,
+                enabled: true,
+                deltaSeconds: STEP_SECONDS,
+                boatX: step / 60,
+                boatZ: 0,
+                speedKnots: step === 40 ? 14 : 8,
+              });
+            }
+
+            let snapshot = capture(tracker);
+            approximatelyEqual(snapshot.elapsedSeconds, 1, 'fixed-step elapsed time');
+            approximatelyEqual(snapshot.distanceTravelledM, 1, 'fixed-step distance');
+            assert.equal(snapshot.maximumSpeedKnots, 14);
+            assert.equal(snapshot.fixedStepCount, 60);
+
+            const beforeDisabled = capture(tracker);
+            tracker.advance({
+              runId: 1,
+              vesselGeneration: 10,
+              enabled: false,
+              deltaSeconds: 4,
+              boatX: 25,
+              boatZ: -12,
+              speedKnots: 40,
+            });
+            snapshot = capture(tracker);
+            assert.deepEqual(
+              snapshot,
+              beforeDisabled,
+              'Disabled/menu/free-navigation frames must not alter scored statistics.',
+            );
+
+            tracker.advance({
+              runId: 1,
+              vesselGeneration: 10,
+              enabled: true,
+              deltaSeconds: STEP_SECONDS,
+              boatX: 25 + 1 / 60,
+              boatZ: -12,
+              speedKnots: 7,
+            });
+            snapshot = capture(tracker);
+            approximatelyEqual(
+              snapshot.elapsedSeconds,
+              beforeDisabled.elapsedSeconds + STEP_SECONDS,
+              'resumed elapsed time',
+            );
+            approximatelyEqual(
+              snapshot.distanceTravelledM,
+              beforeDisabled.distanceTravelledM + 1 / 60,
+              'disabled interval must reanchor distance',
+            );
+
+            const beforeRecovery = capture(tracker);
+            tracker.advance({
+              runId: 1,
+              vesselGeneration: 11,
+              enabled: true,
+              deltaSeconds: STEP_SECONDS,
+              boatX: -120,
+              boatZ: 80,
+              speedKnots: 6,
+            });
+            snapshot = capture(tracker);
+            approximatelyEqual(
+              snapshot.distanceTravelledM,
+              beforeRecovery.distanceTravelledM,
+              'vessel recovery teleport must not add distance',
+            );
+            approximatelyEqual(
+              snapshot.elapsedSeconds,
+              beforeRecovery.elapsedSeconds + STEP_SECONDS,
+              'vessel recovery must not reset mission time',
+            );
+
+            tracker.advance({
+              runId: 1,
+              vesselGeneration: 11,
+              enabled: true,
+              deltaSeconds: STEP_SECONDS,
+              boatX: -119,
+              boatZ: 80,
+              speedKnots: 6,
+            });
+            snapshot = capture(tracker);
+            approximatelyEqual(
+              snapshot.distanceTravelledM,
+              beforeRecovery.distanceTravelledM + 1,
+              'post-recovery movement must resume distance accumulation',
+            );
+
+            const beforeOutlier = capture(tracker);
+            tracker.advance({
+              runId: 1,
+              vesselGeneration: 11,
+              enabled: true,
+              deltaSeconds: STEP_SECONDS,
+              boatX: 500,
+              boatZ: 500,
+              speedKnots: 6,
+            });
+            snapshot = capture(tracker);
+            approximatelyEqual(
+              snapshot.distanceTravelledM,
+              beforeOutlier.distanceTravelledM,
+              'an unannounced outlier sample must be rejected',
+            );
+
+            tracker.advance({
+              runId: 2,
+              vesselGeneration: 12,
+              enabled: true,
+              deltaSeconds: STEP_SECONDS,
+              boatX: 0,
+              boatZ: 0,
+              speedKnots: 5,
+            });
+            snapshot = capture(tracker);
+            assert.equal(snapshot.runId, 2);
+            assert.equal(snapshot.vesselGeneration, 12);
+            approximatelyEqual(snapshot.elapsedSeconds, STEP_SECONDS, 'new-run elapsed time');
+            approximatelyEqual(snapshot.distanceTravelledM, 0, 'new-run distance reset');
+            assert.equal(snapshot.maximumSpeedKnots, 5);
+            assert.equal(snapshot.fixedStepCount, 1);
+
+            const boatSource = await fs.readFile(
+              new URL('../components/Boat.tsx', import.meta.url),
+              'utf8',
+            );
+            const directorSource = await fs.readFile(
+              new URL('../components/ScenarioDirector.tsx', import.meta.url),
+              'utf8',
+            );
+
+            assert.match(
+              boatSource,
+              /sharedMissionRuntimeStatistics\.advance\(\{/,
+              'Boat fixed steps must advance the shared mission authority.',
+            );
+            assert.match(
+              boatSource,
+              /useNavigationPlanner\.getState\(\)\.mode === 'mission'/,
+              'Only mission navigation may advance scored statistics.',
+            );
+            assert.match(
+              directorSource,
+              /sharedMissionRuntimeStatistics\.snapshot/,
+              'ScenarioDirector must read fixed-step mission statistics.',
+            );
+            assert.doesNotMatch(
+              directorSource,
+              /statistics\.elapsedSeconds \+= frameDelta/,
+              'ScenarioDirector must not accumulate elapsed time from render delta.',
+            );
+            assert.doesNotMatch(
+              directorSource,
+              /previousBoat[ZX]/,
+              'ScenarioDirector must not integrate travelled distance from render samples.',
+            );
+
+            console.log('Mission runtime statistics contract passed.');
+          ''').lstrip()
+          write(
+              'scripts/mission-runtime-statistics-contract.mjs',
+              mission_contract,
+          )
+
+          # Central running-state authority and explicit static menu semantics.
+          replace_once(
+              'sim/core/SimulationRuntimeAuthority.ts',
+              "  if (sessionPhase === 'paused') return 'never';\n  return 'demand';\n}\n\n/** Vessel controls and recovery actions require both a running session and the\n",
+              "  if (sessionPhase === 'paused') return 'never';\n\n  // The launch menu is intentionally a demand-rendered static preview. UI or\n  // scenario changes may invalidate one frame, but authoritative clocks and\n  // physics are independently gated and cannot advance in that frame.\n  return 'demand';\n}\n\nexport function canAdvanceAuthoritativeSimulation(\n  sessionPhase: RuntimeSessionPhase,\n) {\n  return sessionPhase === 'running';\n}\n\n/** Vessel controls and recovery actions require both a running session and the\n",
+          )
+
+          replace_once(
+              'scripts/runtime-authority-contract.mjs',
+              "  canAcceptVesselInput,\n  resolveSimulatorFrameLoop,\n",
+              "  canAcceptVesselInput,\n  canAdvanceAuthoritativeSimulation,\n  resolveSimulatorFrameLoop,\n",
+          )
+          replace_once(
+              'scripts/runtime-authority-contract.mjs',
+              "for (const testCase of frameLoopCases) {\n  assert.equal(\n    resolveSimulatorFrameLoop(testCase.input),\n    testCase.expected,\n    testCase.label,\n  );\n}\n\nassert.equal(\n",
+              "for (const testCase of frameLoopCases) {\n  assert.equal(\n    resolveSimulatorFrameLoop(testCase.input),\n    testCase.expected,\n    testCase.label,\n  );\n}\n\nassert.equal(canAdvanceAuthoritativeSimulation('running'), true);\nassert.equal(canAdvanceAuthoritativeSimulation('paused'), false);\nassert.equal(canAdvanceAuthoritativeSimulation('menu'), false);\n\nassert.equal(\n",
+          )
+          replace_once(
+              'scripts/runtime-authority-contract.mjs',
+              "assert.match(\n  releaseValidationSource,\n  /waitForDataset\\(page, 'simWebglContextMonitorReady', '1'\\)/,\n  'Release validation must wait for the recovery listener before dispatching context loss.',\n);\n\nconsole.log('Runtime authority contract passed.');\n",
+              "assert.match(\n  releaseValidationSource,\n  /waitForDataset\\(page, 'simWebglContextMonitorReady', '1'\\)/,\n  'Release validation must wait for the recovery listener before dispatching context loss.',\n);\n\nconst staticPreviewSources = await Promise.all(\n  [\n    '../components/Boat.tsx',\n    '../components/EnvironmentRig.tsx',\n    '../components/WeatherEffects.tsx',\n    '../components/HurricaneClouds.tsx',\n    '../components/Tornado.tsx',\n    '../components/WakeField.tsx',\n  ].map(async (sourcePath) => ({\n    sourcePath,\n    source: await fs.readFile(new URL(sourcePath, import.meta.url), 'utf8'),\n  })),\n);\nfor (const { sourcePath, source } of staticPreviewSources) {\n  assert.match(\n    source,\n    /canAdvanceAuthoritativeSimulation/,\n    `${sourcePath} must gate time-driven work behind running-state authority.`,\n  );\n}\nfor (const { sourcePath, source } of staticPreviewSources.filter(({ sourcePath }) =>\n  /HurricaneClouds|Tornado|WakeField/.test(sourcePath),\n)) {\n  assert.doesNotMatch(\n    source,\n    /state\\.clock\\.elapsedTime/,\n    `${sourcePath} must not animate from browser wall-clock time.`,\n  );\n}\n\nconsole.log('Runtime authority contract passed.');\n",
+          )
+
+          # Boat: stop simulation outside running state and publish fixed-step mission stats.
+          replace_once(
+              'components/Boat.tsx',
+              "import { FixedStepRunner } from '@/sim/core/FixedStepRunner';\n",
+              "import { FixedStepRunner } from '@/sim/core/FixedStepRunner';\nimport { canAdvanceAuthoritativeSimulation } from '@/sim/core/SimulationRuntimeAuthority';\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "import { RapierCollisionWorld } from '@/sim/collision/RapierCollisionWorld';\n",
+              "import { RapierCollisionWorld } from '@/sim/collision/RapierCollisionWorld';\nimport { sharedMissionRuntimeStatistics } from '@/sim/scenarios/MissionRuntimeStatistics';\nimport { useNavigationPlanner } from '@/store/useNavigationPlanner';\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "      engineThrust,\n      activeBoat,\n      setTelemetry,\n",
+              "      engineThrust,\n      activeBoat,\n      sessionPhase,\n      scenarioRunStatus,\n      scenarioRunId,\n      resetVesselTrigger,\n      setTelemetry,\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "    const headingDeg = worldDirectionToHeadingDegrees(\n      forwardDir.x,\n      forwardDir.z,\n    );\n\n    const calibrationResult = calibration?.recordStep(time, {\n",
+              "    const headingDeg = worldDirectionToHeadingDegrees(\n      forwardDir.x,\n      forwardDir.z,\n    );\n\n    if (!calibration) {\n      sharedMissionRuntimeStatistics.advance({\n        runId: scenarioRunId,\n        vesselGeneration: resetVesselTrigger,\n        enabled:\n          canAdvanceAuthoritativeSimulation(sessionPhase) &&\n          scenarioRunStatus === 'active' &&\n          useNavigationPlanner.getState().mode === 'mission',\n        deltaSeconds: dt,\n        boatX: body.position.x,\n        boatZ: body.position.z,\n        speedKnots,\n      });\n    }\n\n    const calibrationResult = calibration?.recordStep(time, {\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "  useFrame((state, delta) => {\n    const boat = boatRef.current;\n    if (!boat) return;\n\n    const calibration = calibrationRunner.current;\n    let stepResult;\n",
+              "  useFrame((state, delta) => {\n    const boat = boatRef.current;\n    if (!boat) return;\n\n    const runtimeState = useSimStore.getState();\n    const simulationRunning = canAdvanceAuthoritativeSimulation(\n      runtimeState.sessionPhase,\n    );\n    const calibration = calibrationRunner.current;\n    let stepResult;\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "    } else if (calibration) {\n      const stepSeconds = fixedStepRunner.current.stepSeconds;\n",
+              "    } else if (calibration) {\n      const stepSeconds = fixedStepRunner.current.stepSeconds;\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "      stepResult = {\n        steps,\n        alpha: 1,\n        simulationTimeSeconds: calibrationSimulationTime.current,\n        droppedTimeSeconds: 0,\n      };\n    } else {\n      stepResult = fixedStepRunner.current.advance(\n",
+              "      stepResult = {\n        steps,\n        alpha: 1,\n        simulationTimeSeconds: calibrationSimulationTime.current,\n        droppedTimeSeconds: 0,\n      };\n    } else if (!simulationRunning) {\n      stepResult = {\n        steps: 0,\n        alpha: 1,\n        simulationTimeSeconds:\n          fixedStepRunner.current.simulationTimeSeconds,\n        droppedTimeSeconds: fixedStepRunner.current.droppedTimeSeconds,\n      };\n    } else {\n      stepResult = fixedStepRunner.current.advance(\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "    const renderDelta = Math.min(delta, 0.1);\n    const { windSpeed, windDir, activeBoat } = useSimStore.getState();\n",
+              "    const renderDelta = simulationRunning\n      ? Math.min(delta, 0.1)\n      : 0;\n    const { windSpeed, windDir, activeBoat } = runtimeState;\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "    if (!calibration) {\n      audio.updateFrame(\n",
+              "    if (!calibration && simulationRunning) {\n      audio.updateFrame(\n",
+          )
+
+          # Environment: menu demand frames produce a static scenario preview.
+          replace_once(
+              'components/EnvironmentRig.tsx',
+              "import {\n  WHIRLPOOL_BASIN_CENTER_X_M,\n",
+              "import { canAdvanceAuthoritativeSimulation } from '@/sim/core/SimulationRuntimeAuthority';\nimport {\n  WHIRLPOOL_BASIN_CENTER_X_M,\n",
+          )
+          replace_once(
+              'components/EnvironmentRig.tsx',
+              "  useFrame((state, delta) => {\n    const safeDelta = Math.min(delta, 0.1);\n    const { camera } = state;\n    const store = useSimStore.getState();\n\n    let timeDifference = store.targetTime - sharedPhysics.worldTime;\n",
+              "  useFrame((state, delta) => {\n    const authoritativeDelta = canAdvanceAuthoritativeSimulation(\n      useSimStore.getState().sessionPhase,\n    )\n      ? Math.min(delta, 0.1)\n      : 0;\n    const { camera } = state;\n    const store = useSimStore.getState();\n    const simulationRunning = canAdvanceAuthoritativeSimulation(\n      store.sessionPhase,\n    );\n\n    if (!simulationRunning) {\n      sharedPhysics.worldTime = store.targetTime;\n      sharedPhysics.season = store.targetSeason;\n    } else {\n      let timeDifference = store.targetTime - sharedPhysics.worldTime;\n",
+          )
+          replace_once(
+              'components/EnvironmentRig.tsx',
+              "    if (sharedPhysics.season < 0) sharedPhysics.season += 1;\n    if (sharedPhysics.season >= 1) sharedPhysics.season -= 1;\n\n    // The hazard clock advances only while frame callbacks are authorized.\n",
+              "      if (sharedPhysics.season < 0) sharedPhysics.season += 1;\n      if (sharedPhysics.season >= 1) sharedPhysics.season -= 1;\n    }\n\n    // The world clock advances only during a running session. Menu demand\n    // frames can update a static scenario preview without moving hazards.\n",
+          )
+          environment_source = read('components/EnvironmentRig.tsx')
+          environment_source = environment_source.replace(
+              'safeDelta',
+              'authoritativeDelta',
+          )
+          write('components/EnvironmentRig.tsx', environment_source)
+
+          # Weather: freeze precipitation/lightning clocks and mute paused/menu audio.
+          replace_once(
+              'components/WeatherEffects.tsx',
+              "import { setWorldXZFromHeading } from '@/sim/world/WorldDirection';\n",
+              "import { canAdvanceAuthoritativeSimulation } from '@/sim/core/SimulationRuntimeAuthority';\nimport { setWorldXZFromHeading } from '@/sim/world/WorldDirection';\n",
+          )
+          replace_once(
+              'components/WeatherEffects.tsx',
+              "export default function WeatherEffects() {\n  const audioContextRef = useRef<AudioContext | null>(null);\n",
+              "export default function WeatherEffects() {\n  const sessionPhase = useSimStore((state) => state.sessionPhase);\n  const audioContextRef = useRef<AudioContext | null>(null);\n",
+          )
+          replace_once(
+              'components/WeatherEffects.tsx',
+              "  useFrame((state, delta) => {\n    const safeDelta = Math.min(delta, 0.1);\n    const { windSpeed, windDir, renderQuality } = useSimStore.getState();\n",
+              "  useEffect(() => {\n    if (sessionPhase === 'running') return;\n\n    const context = audioContextRef.current;\n    if (!context || context.state === 'closed') return;\n    const now = context.currentTime;\n    windGainRef.current?.gain.cancelScheduledValues(now);\n    windGainRef.current?.gain.setTargetAtTime(0, now, 0.05);\n    rumbleGainRef.current?.gain.cancelScheduledValues(now);\n    rumbleGainRef.current?.gain.setTargetAtTime(0, now, 0.05);\n\n    if (sessionPhase === 'menu') {\n      lightningFlashRef.current = 0;\n      sharedPhysics.lightningFlash = 0;\n    }\n  }, [sessionPhase]);\n\n  useFrame((state, delta) => {\n    const store = useSimStore.getState();\n    const simulationRunning = canAdvanceAuthoritativeSimulation(\n      store.sessionPhase,\n    );\n    const simulationDelta = simulationRunning\n      ? Math.min(delta, 0.1)\n      : 0;\n    const { windSpeed, windDir, renderQuality } = store;\n",
+          )
+          weather_source = read('components/WeatherEffects.tsx')
+          weather_source = weather_source.replace('safeDelta', 'simulationDelta')
+          weather_source = weather_source.replace(
+              "        MathUtils.clamp(stormIntensity * 0.7, 0, 0.7),\n",
+              "        simulationRunning\n          ? MathUtils.clamp(stormIntensity * 0.7, 0, 0.7)\n          : 0,\n",
+              1,
+          )
+          write('components/WeatherEffects.tsx', weather_source)
+
+          # Hurricane clouds use frozen simulation render time in static previews.
+          replace_once(
+              'components/HurricaneClouds.tsx',
+              "import { useFrame } from '@react-three/fiber';\n",
+              "import { useFrame } from '@react-three/fiber';\nimport { canAdvanceAuthoritativeSimulation } from '@/sim/core/SimulationRuntimeAuthority';\n",
+          )
+          hurricane_frame = dedent(r'''
+              useFrame((state, delta) => {
+                const store = useSimStore.getState();
+                const simulationRunning = canAdvanceAuthoritativeSimulation(
+                  store.sessionPhase,
+                );
+                const simulationDelta = simulationRunning
+                  ? Math.min(delta, 0.1)
+                  : 0;
+                const targetOpacity =
+                  MathUtils.clamp((store.windSpeed - 28) / 17, 0, 1) * 0.98;
+
+                opacityRef.current = simulationRunning
+                  ? MathUtils.damp(
+                      opacityRef.current,
+                      targetOpacity,
+                      2.1,
+                      simulationDelta,
+                    )
+                  : targetOpacity;
+
+                const mesh = meshRef.current;
+                if (mesh) {
+                  mesh.visible = opacityRef.current > 0.01;
+                  mesh.position.set(
+                    state.camera.position.x,
+                    0,
+                    state.camera.position.z,
+                  );
+                }
+
+                const material = materialRef.current;
+                if (!simulationRunning) {
+                  updateAccumulatorRef.current = 0;
+                  if (material) {
+                    material.uniforms.uTime.value = sharedPhysics.renderTime;
+                    material.uniforms.uOpacity.value = opacityRef.current;
+                    material.uniforms.uLightning.value =
+                      sharedPhysics.lightningFlash;
+                  }
+                  return;
+                }
+
+                if (!mesh?.visible) return;
+
+                updateAccumulatorRef.current += simulationDelta;
+                const updateInterval = 1 / config.updateHz;
+                if (updateAccumulatorRef.current < updateInterval) return;
+                updateAccumulatorRef.current %= updateInterval;
+
+                if (material) {
+                  material.uniforms.uTime.value = sharedPhysics.renderTime;
+                  material.uniforms.uOpacity.value = opacityRef.current;
+                  material.uniforms.uLightning.value =
+                    sharedPhysics.lightningFlash;
+                }
+              });
+
+          ''')
+          replace_section(
+              'components/HurricaneClouds.tsx',
+              '  useFrame((state, delta) => {\n',
+              '  return (\n',
+              hurricane_frame,
+          )
+
+          # Tornado uses the same static-preview rule and simulation render clock.
+          replace_once(
+              'components/Tornado.tsx',
+              "import { useFrame } from '@react-three/fiber';\n",
+              "import { useFrame } from '@react-three/fiber';\nimport { canAdvanceAuthoritativeSimulation } from '@/sim/core/SimulationRuntimeAuthority';\n",
+          )
+          tornado_frame = dedent(r'''
+              useFrame((state, delta) => {
+                const store = useSimStore.getState();
+                const simulationRunning = canAdvanceAuthoritativeSimulation(
+                  store.sessionPhase,
+                );
+                const simulationDelta = simulationRunning
+                  ? Math.min(delta, 0.1)
+                  : 0;
+                const stormStrength = MathUtils.clamp(
+                  (store.windSpeed - 24) / 18,
+                  0,
+                  1,
+                );
+                const deltaX =
+                  state.camera.position.x - sharedPhysics.tornadoPos.x;
+                const deltaZ =
+                  state.camera.position.z - sharedPhysics.tornadoPos.z;
+                const distance = Math.hypot(deltaX, deltaZ);
+                const distanceFade =
+                  1 -
+                  MathUtils.smoothstep(
+                    distance,
+                    config.maxDistance * 0.65,
+                    config.maxDistance,
+                  );
+                const targetOpacity = stormStrength * distanceFade * 0.9;
+
+                opacityRef.current = simulationRunning
+                  ? MathUtils.damp(
+                      opacityRef.current,
+                      targetOpacity,
+                      2.4,
+                      simulationDelta,
+                    )
+                  : targetOpacity;
+
+                const group = groupRef.current;
+                if (group) {
+                  group.position.set(
+                    sharedPhysics.tornadoPos.x,
+                    -2,
+                    sharedPhysics.tornadoPos.z,
+                  );
+                  group.visible =
+                    opacityRef.current > 0.01 &&
+                    distance < config.maxDistance;
+                }
+
+                const material = materialRef.current;
+                if (!simulationRunning) {
+                  updateAccumulatorRef.current = 0;
+                  if (material) {
+                    material.uniforms.uTime.value = sharedPhysics.renderTime;
+                    material.uniforms.uOpacity.value = opacityRef.current;
+                  }
+                  return;
+                }
+
+                if (!group?.visible) return;
+
+                updateAccumulatorRef.current += simulationDelta;
+                const updateInterval = 1 / config.updateHz;
+                if (updateAccumulatorRef.current < updateInterval) return;
+                updateAccumulatorRef.current %= updateInterval;
+
+                if (material) {
+                  material.uniforms.uTime.value = sharedPhysics.renderTime;
+                  material.uniforms.uOpacity.value = opacityRef.current;
+                }
+              });
+
+          ''')
+          replace_section(
+              'components/Tornado.tsx',
+              '  useFrame((state, delta) => {\n',
+              '  return (\n',
+              tornado_frame,
+          )
+
+          # Wake texture updates only during running simulation and uses fixed time.
+          replace_once(
+              'components/WakeField.tsx',
+              "import { useFrame, useThree } from '@react-three/fiber';\n",
+              "import { useFrame, useThree } from '@react-three/fiber';\nimport { canAdvanceAuthoritativeSimulation } from '@/sim/core/SimulationRuntimeAuthority';\n",
+          )
+          replace_once(
+              'components/WakeField.tsx',
+              "  useFrame((state, delta) => {\n    const safeDelta = Math.min(delta, 0.1);\n",
+              "  useFrame((_, delta) => {\n    const sessionPhase = useSimStore.getState().sessionPhase;\n    if (!canAdvanceAuthoritativeSimulation(sessionPhase)) {\n      updateAccumulatorRef.current = 0;\n      if (sessionPhase === 'menu') {\n        initializedRef.current = false;\n        sharedWakeField.texture = null;\n      }\n      return;\n    }\n\n    const safeDelta = Math.min(delta, 0.1);\n",
+          )
+          replace_once(
+              'components/WakeField.tsx',
+              "    uniforms.uTime.value = state.clock.elapsedTime;\n",
+              "    uniforms.uTime.value = sharedPhysics.renderTime;\n",
+          )
+
+          # ScenarioDirector consumes the fixed-step tracker instead of render delta.
+          replace_once(
+              'components/ScenarioDirector.tsx',
+              "import {\n  getScenarioDefinition,\n",
+              "import { sharedMissionRuntimeStatistics } from '@/sim/scenarios/MissionRuntimeStatistics';\nimport {\n  getScenarioDefinition,\n",
+          )
+          replace_once(
+              'components/ScenarioDirector.tsx',
+              "interface RuntimeStatistics {\n  elapsedSeconds: number;\n  maximumSpeedKnots: number;\n  distanceTravelledM: number;\n  previousBoatX: number;\n  previousBoatZ: number;\n  collisionSequenceAtStart: number;\n}\n",
+              "interface RuntimeStatistics {\n  lastProcessedElapsedSeconds: number;\n  collisionSequenceAtStart: number;\n}\n",
+          )
+          replace_once(
+              'components/ScenarioDirector.tsx',
+              "const NAVIGATION_UPDATE_INTERVAL_SECONDS = 0.1;\nconst MAX_OPERATIONAL_RADIUS_M = 1_500;\nconst MAX_VALID_SAMPLE_DISTANCE_M = 60;\n",
+              "const NAVIGATION_UPDATE_INTERVAL_SECONDS = 0.1;\nconst MAX_OPERATIONAL_RADIUS_M = 1_500;\n",
+          )
+          replace_once(
+              'components/ScenarioDirector.tsx',
+              "  const runtime = useRef<RuntimeStatistics>({\n    elapsedSeconds: 0,\n    maximumSpeedKnots: 0,\n    distanceTravelledM: 0,\n    previousBoatX: 0,\n    previousBoatZ: 0,\n    collisionSequenceAtStart: 0,\n  });\n\n  useEffect(() => {\n    runtime.current = {\n      elapsedSeconds: 0,\n      maximumSpeedKnots: 0,\n      distanceTravelledM: 0,\n      previousBoatX: sharedPhysics.boatPos.x,\n      previousBoatZ: sharedPhysics.boatPos.z,\n      collisionSequenceAtStart: sharedPhysics.collisionSequence,\n    };\n",
+              "  const runtime = useRef<RuntimeStatistics>({\n    lastProcessedElapsedSeconds: 0,\n    collisionSequenceAtStart: 0,\n  });\n\n  useEffect(() => {\n    runtime.current = {\n      lastProcessedElapsedSeconds: 0,\n      collisionSequenceAtStart: sharedPhysics.collisionSequence,\n    };\n",
+          )
+          replace_once(
+              'components/ScenarioDirector.tsx',
+              "    const frameDelta = Math.min(Math.max(delta, 0), 0.1);\n    const statistics = runtime.current;\n    statistics.elapsedSeconds += frameDelta;\n    statistics.maximumSpeedKnots = Math.max(\n      statistics.maximumSpeedKnots,\n      Math.abs(store.speedKnots),\n    );\n\n    const boatX = sharedPhysics.boatPos.x;\n    const boatZ = sharedPhysics.boatPos.z;\n    const sampleDistance = Math.hypot(\n      boatX - statistics.previousBoatX,\n      boatZ - statistics.previousBoatZ,\n    );\n    if (\n      Number.isFinite(sampleDistance) &&\n      sampleDistance <= MAX_VALID_SAMPLE_DISTANCE_M\n    ) {\n      statistics.distanceTravelledM += sampleDistance;\n    }\n    statistics.previousBoatX = boatX;\n    statistics.previousBoatZ = boatZ;\n\n    updateAccumulator.current += frameDelta;\n",
+              "    const missionStatistics =\n      sharedMissionRuntimeStatistics.snapshot;\n    if (missionStatistics.runId !== scenarioRunId) return;\n\n    const statistics = runtime.current;\n    const fixedStepAdvance = Math.max(\n      0,\n      missionStatistics.elapsedSeconds -\n        statistics.lastProcessedElapsedSeconds,\n    );\n    statistics.lastProcessedElapsedSeconds =\n      missionStatistics.elapsedSeconds;\n\n    const boatX = sharedPhysics.boatPos.x;\n    const boatZ = sharedPhysics.boatPos.z;\n\n    updateAccumulator.current += fixedStepAdvance;\n",
+          )
+          director_source = read('components/ScenarioDirector.tsx')
+          director_source = director_source.replace(
+              '  useFrame((_, delta) => {',
+              '  useFrame(() => {',
+              1,
+          )
+          director_source = director_source.replace(
+              'elapsedSeconds: statistics.elapsedSeconds',
+              'elapsedSeconds: missionStatistics.elapsedSeconds',
+          )
+          director_source = director_source.replace(
+              'maximumSpeedKnots: statistics.maximumSpeedKnots',
+              'maximumSpeedKnots: missionStatistics.maximumSpeedKnots',
+          )
+          director_source = director_source.replace(
+              'distanceTravelledM: statistics.distanceTravelledM',
+              'distanceTravelledM: missionStatistics.distanceTravelledM',
+          )
+          director_source = director_source.replace(
+              'statistics.elapsedSeconds >= 0.75',
+              'missionStatistics.elapsedSeconds >= 0.75',
+          )
+          director_source = director_source.replace(
+              'statistics.elapsedSeconds > scenario.mission.timeLimitSeconds',
+              'missionStatistics.elapsedSeconds >\n      scenario.mission.timeLimitSeconds',
+          )
+          write('components/ScenarioDirector.tsx', director_source)
+
+          # Browser smoke verifies pause freeze, resume, and recovery continuity.
+          replace_once(
+              'scripts/product-experience-smoke.mjs',
+              "      checks.vesselReset =\n        afterReset.scenarioRunStatus === 'active' &&\n        afterReset.scenarioResult === '';\n\n      await page.keyboard.press('Escape');\n      await waitForDataset(page, 'simSessionPhase', 'paused');\n      await page.getByRole('heading', { name: 'Storm Passage' }).waitFor();\n      checks.pause = true;\n\n      await page.getByRole('button', { name: /Resume passage/i }).click();\n      await waitForDataset(page, 'simSessionPhase', 'running');\n      checks.resume = true;\n",
+              "      checks.vesselReset =\n        afterReset.scenarioRunStatus === 'active' &&\n        afterReset.scenarioResult === '';\n      checks.missionClockSurvivesRecovery =\n        afterReset.scenarioElapsedSeconds >=\n        launched.scenarioElapsedSeconds - 0.12;\n\n      const beforePause = await readExperienceState(page);\n      await page.keyboard.press('Escape');\n      await waitForDataset(page, 'simSessionPhase', 'paused');\n      await page.getByRole('heading', { name: 'Storm Passage' }).waitFor();\n      await page.waitForTimeout(500);\n      const duringPause = await readExperienceState(page);\n      checks.pause = true;\n      checks.pauseFreezesMissionClock =\n        Math.abs(\n          duringPause.scenarioElapsedSeconds -\n            beforePause.scenarioElapsedSeconds,\n        ) <= 0.12;\n\n      await page.getByRole('button', { name: /Resume passage/i }).click();\n      await waitForDataset(page, 'simSessionPhase', 'running');\n      await page.waitForFunction(\n        (pausedElapsed) =>\n          Number(\n            document.documentElement.dataset.simScenarioElapsedSeconds ?? '0',\n          ) >=\n          pausedElapsed + 0.15,\n        duringPause.scenarioElapsedSeconds,\n        { timeout: 60_000 },\n      );\n      checks.resume = true;\n      checks.resumeAdvancesMissionClock = true;\n",
+          )
+
+          # Register permanent validation and plan completion.
+          replace_once(
+              'package.json',
+              '    "test:collision-lifecycle": "node --experimental-strip-types --no-warnings scripts/collision-contact-lifecycle-contract.mjs",\n',
+              '    "test:collision-lifecycle": "node --experimental-strip-types --no-warnings scripts/collision-contact-lifecycle-contract.mjs",\n    "test:mission-runtime": "node --experimental-strip-types --no-warnings scripts/mission-runtime-statistics-contract.mjs",\n',
+          )
+          replace_once(
+              'package.json',
+              'npm run test:collision-lifecycle && node --experimental-strip-types',
+              'npm run test:collision-lifecycle && npm run test:mission-runtime && node --experimental-strip-types',
+          )
+          replace_once(
+              'SIMULATOR_STABILIZATION_PLAN.md',
+              '- [ ] Separate menu-only visual animation from authoritative simulation time.\n',
+              '- [x] Keep the menu intentionally static: demand renders may refresh a preview, but vessel, world, weather, hazard, wake, and decorative clocks remain frozen.\n',
+          )
+          replace_once(
+              'SIMULATOR_STABILIZATION_PLAN.md',
+              '- [ ] Drive mission time and travelled distance from fixed simulation steps.\n',
+              '- [x] Drive mission time, travelled distance, and maximum speed from fixed simulation steps, preserving time across recovery while rejecting teleport distance.\n',
+          )
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate source graph
+        run: npm run validate
+
+      - name: Commit validated migration and remove one-shot workflow
+        shell: bash
+        run: |
+          rm .github/workflows/apply-fixed-step-mission-authority.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: move mission stats to fixed-step authority"
+          git push origin HEAD:agent/simulator-stabilization
