@@ -36,6 +36,7 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
 
 - [x] Drive mission time, travelled distance, and maximum speed from fixed simulation steps, preserving time across recovery while rejecting teleport distance.
 - [x] Lock standard mission presets, require an explicit assisted-mode transition for custom conditions, and exclude assisted attempts from standard records.
+- [x] Keep assisted scores informational and track assisted attempts separately without replacing standard best score, best time, best hull health, or standard attempt totals.
 - [ ] Replace generic radius completion with typed gate, relay, cargo, and rescue interactions.
 - [ ] Remove unexplained normal-operation hull wear.
 - [ ] Rebalance field repair and account for repair use in scoring.
