@@ -13,8 +13,9 @@
     "validate": "npm run test:physics && npm run lint && npm run typecheck && npm run build && npm run audit",
     "clean": "node -e \"require('node:fs').rmSync('.next',{recursive:true,force:true})\"",
     "calibrate:physics": "node --experimental-strip-types --no-warnings scripts/physics-calibration.mjs",
+    "test:runtime-authority": "node --experimental-strip-types --no-warnings scripts/runtime-authority-contract.mjs",
     "test:physical-calibration": "node --experimental-strip-types --no-warnings scripts/physical-calibration-contract.mjs && node --experimental-strip-types --no-warnings scripts/external-reference-contract.mjs && node --experimental-strip-types --no-warnings scripts/reference-configuration-contract.mjs && node --experimental-strip-types --no-warnings scripts/reference-loading-case-contract.mjs",
-    "test:physics": "node --experimental-strip-types --no-warnings scripts/physics-correctness.mjs && node --no-warnings scripts/collision-authority.mjs && npm run test:physical-calibration && node --experimental-strip-types --no-warnings scripts/reference-vessel-validation.mjs && node --experimental-strip-types --no-warnings scripts/hydrostatic-stability-validation.mjs",
+    "test:physics": "npm run test:runtime-authority && node --experimental-strip-types --no-warnings scripts/physics-correctness.mjs && node --no-warnings scripts/collision-authority.mjs && npm run test:physical-calibration && node --experimental-strip-types --no-warnings scripts/reference-vessel-validation.mjs && node --experimental-strip-types --no-warnings scripts/hydrostatic-stability-validation.mjs",
     "report:references": "node --experimental-strip-types --no-warnings scripts/reference-vessel-validation.mjs",
     "report:hydrostatics": "node --experimental-strip-types --no-warnings scripts/hydrostatic-stability-validation.mjs"
   },
