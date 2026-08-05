@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Quaternion, Vector3 } from 'three';
 import { queueNextSixDofBodySpawn } from '@/sim/core/SixDofBody';
+import { normalizeHeadingDegrees } from '@/sim/world/WorldDirection';
 import {
   DEFAULT_SCENARIO_ID,
   getScenarioDefinition,
@@ -375,9 +376,11 @@ export const useSimStore = create<SimState>((set, get) => ({
   instantRepairTrigger: 0,
 
   setWindSpeed: (windSpeed) => set({ windSpeed }),
-  setWindDir: (windDir) => set({ windDir }),
+  setWindDir: (windDir) =>
+    set({ windDir: normalizeHeadingDegrees(windDir) }),
   setCurrentSpeed: (currentSpeed) => set({ currentSpeed }),
-  setCurrentDir: (currentDir) => set({ currentDir }),
+  setCurrentDir: (currentDir) =>
+    set({ currentDir: normalizeHeadingDegrees(currentDir) }),
   setEngineThrust: (engineThrust) =>
     set({ engineThrust: Math.max(-1, Math.min(1, engineThrust)) }),
   setActiveBoat: (activeBoat) => {

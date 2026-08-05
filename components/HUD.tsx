@@ -215,7 +215,7 @@ function ForceControls(props: ForceControlsProps) {
         onChange={props.setWindSpeed}
       />
       <RangeControl
-        label="Wind direction"
+        label="Wind heading (toward)"
         valueLabel={`${props.windDir.toFixed(0)}°`}
         value={props.windDir}
         min={0}
@@ -236,7 +236,7 @@ function ForceControls(props: ForceControlsProps) {
         onChange={props.setCurrentSpeed}
       />
       <RangeControl
-        label="Current direction"
+        label="Current heading (toward)"
         valueLabel={`${props.currentDir.toFixed(0)}°`}
         value={props.currentDir}
         min={0}

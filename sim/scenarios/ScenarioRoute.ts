@@ -1,4 +1,5 @@
 import { getTerrainHeight } from '@/lib/terrain';
+import { worldDirectionToHeadingDegrees } from '@/sim/world/WorldDirection';
 import {
   distanceToWhirlpoolBasinCenterM,
   WHIRLPOOL_ROUTE_CLEARANCE_RADIUS_M,
@@ -117,10 +118,6 @@ function resolveWaypoint(
   };
 }
 
-function normalizeBearing(degrees: number) {
-  return ((degrees % 360) + 360) % 360;
-}
-
 export function getResolvedScenarioRoute(
   scenarioId: ScenarioId,
 ): readonly ResolvedScenarioWaypoint[] {
@@ -179,13 +176,9 @@ export function getResolvedScenarioCheckpoints(
       headingTarget === waypoint
         ? route[Math.max(0, waypointIndex - 1)] ?? { x: 0, z: 0 }
         : waypoint;
-    const headingDeg = normalizeBearing(
-      (Math.atan2(
-        headingTarget.x - headingSource.x,
-        -(headingTarget.z - headingSource.z),
-      ) *
-        180) /
-        Math.PI,
+    const headingDeg = worldDirectionToHeadingDegrees(
+      headingTarget.x - headingSource.x,
+      headingTarget.z - headingSource.z,
     );
 
     return [

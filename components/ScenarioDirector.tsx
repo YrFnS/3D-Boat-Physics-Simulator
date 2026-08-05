@@ -4,6 +4,10 @@ import { useFrame } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import { MathUtils } from 'three';
 import {
+  normalizeSignedHeadingDeltaDegrees,
+  worldDirectionToHeadingDegrees,
+} from '@/sim/world/WorldDirection';
+import {
   getScenarioDefinition,
   type ScenarioDefinition,
 } from '@/sim/scenarios/ScenarioCatalog';
@@ -38,14 +42,6 @@ type MissionTestMode = 'complete' | 'fail' | 'checkpoint' | null;
 const NAVIGATION_UPDATE_INTERVAL_SECONDS = 0.1;
 const MAX_OPERATIONAL_RADIUS_M = 1_500;
 const MAX_VALID_SAMPLE_DISTANCE_M = 60;
-
-function normalizeBearing(degrees: number) {
-  return ((degrees % 360) + 360) % 360;
-}
-
-function normalizeSignedBearing(degrees: number) {
-  return ((degrees + 540) % 360) - 180;
-}
 
 function readMissionTestMode(): MissionTestMode {
   if (typeof window === 'undefined') return null;
@@ -179,10 +175,8 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
     const deltaX = waypoint.x - boatX;
     const deltaZ = waypoint.z - boatZ;
     const distanceM = Math.hypot(deltaX, deltaZ);
-    const bearingDeg = normalizeBearing(
-      MathUtils.radToDeg(Math.atan2(deltaX, -deltaZ)),
-    );
-    const relativeBearingDeg = normalizeSignedBearing(
+    const bearingDeg = worldDirectionToHeadingDegrees(deltaX, deltaZ);
+    const relativeBearingDeg = normalizeSignedHeadingDeltaDegrees(
       bearingDeg - store.heading,
     );
     const previousWaypoint =

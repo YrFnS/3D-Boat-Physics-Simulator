@@ -24,6 +24,10 @@ import { FloodingModel } from '@/sim/vessels/FloodingModel';
 import { displacementBalanceErrorRatio } from '@/sim/vessels/HydrostaticsMath';
 import { EnvironmentalForces } from '@/sim/vessels/EnvironmentalForces';
 import {
+  setWorldVectorFromHeading,
+  worldDirectionToHeadingDegrees,
+} from '@/sim/world/WorldDirection';
+import {
   normalizedSurgeSpeed,
   planingSpeedRatio,
   waterRelativeSurgeSpeed,
@@ -102,6 +106,8 @@ export default function Boat() {
       thrustDirection: new Vector3(),
       apparentWind: new Vector3(),
       apparentWindDir: new Vector3(),
+      flagApparentWindLocal: new Vector3(),
+      inverseBoatQuaternion: new Quaternion(),
       windForce: new Vector3(),
       gravityForce: new Vector3(),
       localPropeller: new Vector3(),
@@ -402,15 +408,12 @@ export default function Boat() {
       windVelocity.set(0, 0, 0);
       baseCurrentVelocity.set(0, 0, 0);
     } else {
-      const windRad = MathUtils.degToRad(windDir);
-      windVelocity
-        .set(Math.sin(windRad), 0, Math.cos(windRad))
-        .multiplyScalar(windSpeed);
-
-      const currentRad = MathUtils.degToRad(currentDir);
-      baseCurrentVelocity
-        .set(Math.sin(currentRad), 0, Math.cos(currentRad))
-        .multiplyScalar(currentSpeed);
+      setWorldVectorFromHeading(windVelocity, windDir, windSpeed);
+      setWorldVectorFromHeading(
+        baseCurrentVelocity,
+        currentDir,
+        currentSpeed,
+      );
     }
 
     // Recreate the localized ice field used by the ocean shader.
@@ -1036,11 +1039,10 @@ export default function Boat() {
     // --- Update Telemetry UI & Health Degradation ---
     // 1 knot = 0.514444 m/s
     const speedKnots = speed2D / 0.514444;
-    let headingDeg =
-      MathUtils.radToDeg(
-        Math.atan2(forwardDir.x, -forwardDir.z),
-      ) % 360;
-    if (headingDeg < 0) headingDeg += 360;
+    const headingDeg = worldDirectionToHeadingDegrees(
+      forwardDir.x,
+      forwardDir.z,
+    );
 
     const calibrationResult = calibration?.recordStep(time, {
       body,
@@ -1320,26 +1322,32 @@ export default function Boat() {
       forwardDir.set(0, 0, -1);
     }
 
-    const renderWindRadians = MathUtils.degToRad(windDir);
+    setWorldVectorFromHeading(
+      scratch.windVelocity,
+      windDir,
+      windSpeed,
+    );
     const apparentWind = scratch.apparentWind
-      .set(
-        Math.sin(renderWindRadians),
-        0,
-        Math.cos(renderWindRadians),
-      )
-      .multiplyScalar(windSpeed)
+      .copy(scratch.windVelocity)
       .sub(physicsBody.current.linearVelocity);
     const speed2D = Math.hypot(physicsBody.current.linearVelocity.x, physicsBody.current.linearVelocity.z);
     const submergedRatio = lastSubmergedRatio.current;
     const pos = boat.position;
 
     // --- Update Flag (Apparent Wind) ---
-    if (flagRef.current) {
-      if (apparentWind.lengthSq() > 0.1) {
-        // Flag points away from apparent wind
-        const targetAngle = Math.atan2(apparentWind.x, apparentWind.z);
-        // Local rotation needs to account for boat heading
-        flagRef.current.rotation.y = targetAngle - boat.rotation.y;
+    if (flagRef.current && apparentWind.lengthSq() > 0.1) {
+      const localAirflow = scratch.flagApparentWindLocal
+        .copy(apparentWind)
+        .applyQuaternion(
+          scratch.inverseBoatQuaternion.copy(boat.quaternion).invert(),
+        );
+      localAirflow.y = 0;
+      if (localAirflow.lengthSq() > 1e-8) {
+        // The flag mesh extends along local +Z and trails with the airflow.
+        flagRef.current.rotation.y = Math.atan2(
+          localAirflow.x,
+          localAirflow.z,
+        );
       }
     }
     

@@ -65,8 +65,10 @@ export interface ScenarioDefinition {
   difficulty: ScenarioDifficulty;
   recommendedBoat: BoatType;
   windSpeed: number;
+  /** Compass heading the wind travels toward: 0° north (-Z), 90° east (+X). */
   windDir: number;
   currentSpeed: number;
+  /** Compass heading the current travels toward: 0° north (-Z), 90° east (+X). */
   currentDir: number;
   targetTime: number;
   targetSeason: number;
