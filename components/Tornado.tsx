@@ -1,6 +1,7 @@
 'use client';
 
 import { useFrame } from '@react-three/fiber';
+import { canAdvanceAuthoritativeSimulation } from '@/sim/core/SimulationRuntimeAuthority';
 import { useMemo, useRef } from 'react';
 import { DoubleSide, Group, MathUtils, ShaderMaterial } from 'three';
 import {
@@ -238,56 +239,77 @@ export default function Tornado() {
     [config.shaderDetail],
   );
 
-  useFrame((state, delta) => {
-    const safeDelta = Math.min(delta, 0.1);
-    const store = useSimStore.getState();
-    const stormStrength = MathUtils.clamp(
-      (store.windSpeed - 24) / 18,
-      0,
-      1,
+
+useFrame((state, delta) => {
+  const store = useSimStore.getState();
+  const simulationRunning = canAdvanceAuthoritativeSimulation(
+    store.sessionPhase,
+  );
+  const simulationDelta = simulationRunning
+    ? Math.min(delta, 0.1)
+    : 0;
+  const stormStrength = MathUtils.clamp(
+    (store.windSpeed - 24) / 18,
+    0,
+    1,
+  );
+  const deltaX =
+    state.camera.position.x - sharedPhysics.tornadoPos.x;
+  const deltaZ =
+    state.camera.position.z - sharedPhysics.tornadoPos.z;
+  const distance = Math.hypot(deltaX, deltaZ);
+  const distanceFade =
+    1 -
+    MathUtils.smoothstep(
+      distance,
+      config.maxDistance * 0.65,
+      config.maxDistance,
     );
-    const deltaX = state.camera.position.x - sharedPhysics.tornadoPos.x;
-    const deltaZ = state.camera.position.z - sharedPhysics.tornadoPos.z;
-    const distance = Math.hypot(deltaX, deltaZ);
-    const distanceFade =
-      1 -
-      MathUtils.smoothstep(
-        distance,
-        config.maxDistance * 0.65,
-        config.maxDistance,
-      );
-    const targetOpacity = stormStrength * distanceFade * 0.9;
+  const targetOpacity = stormStrength * distanceFade * 0.9;
 
-    opacityRef.current = MathUtils.damp(
-      opacityRef.current,
-      targetOpacity,
-      2.4,
-      safeDelta,
+  opacityRef.current = simulationRunning
+    ? MathUtils.damp(
+        opacityRef.current,
+        targetOpacity,
+        2.4,
+        simulationDelta,
+      )
+    : targetOpacity;
+
+  const group = groupRef.current;
+  if (group) {
+    group.position.set(
+      sharedPhysics.tornadoPos.x,
+      -2,
+      sharedPhysics.tornadoPos.z,
     );
+    group.visible =
+      opacityRef.current > 0.01 &&
+      distance < config.maxDistance;
+  }
 
-    const group = groupRef.current;
-    if (group) {
-      group.position.set(
-        sharedPhysics.tornadoPos.x,
-        -2,
-        sharedPhysics.tornadoPos.z,
-      );
-      group.visible = opacityRef.current > 0.01 && distance < config.maxDistance;
-    }
-
-    if (!group?.visible) return;
-
-    updateAccumulatorRef.current += safeDelta;
-    const updateInterval = 1 / config.updateHz;
-    if (updateAccumulatorRef.current < updateInterval) return;
-    updateAccumulatorRef.current %= updateInterval;
-
-    const material = materialRef.current;
+  const material = materialRef.current;
+  if (!simulationRunning) {
+    updateAccumulatorRef.current = 0;
     if (material) {
-      material.uniforms.uTime.value = state.clock.elapsedTime;
+      material.uniforms.uTime.value = sharedPhysics.renderTime;
       material.uniforms.uOpacity.value = opacityRef.current;
     }
-  });
+    return;
+  }
+
+  if (!group?.visible) return;
+
+  updateAccumulatorRef.current += simulationDelta;
+  const updateInterval = 1 / config.updateHz;
+  if (updateAccumulatorRef.current < updateInterval) return;
+  updateAccumulatorRef.current %= updateInterval;
+
+  if (material) {
+    material.uniforms.uTime.value = sharedPhysics.renderTime;
+    material.uniforms.uOpacity.value = opacityRef.current;
+  }
+});
 
   return (
     <group ref={groupRef}>

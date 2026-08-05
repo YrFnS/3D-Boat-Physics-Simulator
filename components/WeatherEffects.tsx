@@ -18,6 +18,7 @@ import {
   sharedPhysics,
   useSimStore,
 } from '@/store/useSimStore';
+import { canAdvanceAuthoritativeSimulation } from '@/sim/core/SimulationRuntimeAuthority';
 import { setWorldXZFromHeading } from '@/sim/world/WorldDirection';
 
 const MAX_RAIN = 12_000;
@@ -197,6 +198,7 @@ function createRainGeometry() {
 }
 
 export default function WeatherEffects() {
+  const sessionPhase = useSimStore((state) => state.sessionPhase);
   const audioContextRef = useRef<AudioContext | null>(null);
   const windGainRef = useRef<GainNode | null>(null);
   const windFilterRef = useRef<BiquadFilterNode | null>(null);
@@ -331,9 +333,32 @@ export default function WeatherEffects() {
     };
   }, []);
 
+  useEffect(() => {
+    if (sessionPhase === 'running') return;
+
+    const context = audioContextRef.current;
+    if (!context || context.state === 'closed') return;
+    const now = context.currentTime;
+    windGainRef.current?.gain.cancelScheduledValues(now);
+    windGainRef.current?.gain.setTargetAtTime(0, now, 0.05);
+    rumbleGainRef.current?.gain.cancelScheduledValues(now);
+    rumbleGainRef.current?.gain.setTargetAtTime(0, now, 0.05);
+
+    if (sessionPhase === 'menu') {
+      lightningFlashRef.current = 0;
+      sharedPhysics.lightningFlash = 0;
+    }
+  }, [sessionPhase]);
+
   useFrame((state, delta) => {
-    const safeDelta = Math.min(delta, 0.1);
-    const { windSpeed, windDir, renderQuality } = useSimStore.getState();
+    const store = useSimStore.getState();
+    const simulationRunning = canAdvanceAuthoritativeSimulation(
+      store.sessionPhase,
+    );
+    const simulationDelta = simulationRunning
+      ? Math.min(delta, 0.1)
+      : 0;
+    const { windSpeed, windDir, renderQuality } = store;
     const stormIntensity = MathUtils.clamp((windSpeed - 15) / 35, 0, 1);
     const winter = MathUtils.clamp(
       1 - Math.abs(sharedPhysics.season - 0.75) * 4,
@@ -346,7 +371,7 @@ export default function WeatherEffects() {
       stormIntensity,
       snowBlend * MathUtils.clamp(windSpeed / 22, 0.18, 0.72),
     );
-    precipitationTimeRef.current += safeDelta;
+    precipitationTimeRef.current += simulationDelta;
     setWorldXZFromHeading(
       precipitationWindRef.current,
       windDir,
@@ -362,7 +387,7 @@ export default function WeatherEffects() {
 
     const strikesPerSecond =
       MathUtils.lerp(0.02, 0.9, stormIntensity) * stormIntensity;
-    const strikeProbability = 1 - Math.exp(-strikesPerSecond * safeDelta);
+    const strikeProbability = 1 - Math.exp(-strikesPerSecond * simulationDelta);
 
     if (
       stormIntensity > 0.1 &&
@@ -389,7 +414,7 @@ export default function WeatherEffects() {
 
     lightningFlashRef.current = Math.max(
       0,
-      lightningFlashRef.current - safeDelta * 3,
+      lightningFlashRef.current - simulationDelta * 3,
     );
     sharedPhysics.lightningFlash = lightningFlashRef.current;
 
@@ -406,7 +431,9 @@ export default function WeatherEffects() {
     ) {
       const now = context.currentTime;
       windGain.gain.setTargetAtTime(
-        MathUtils.clamp(stormIntensity * 0.7, 0, 0.7),
+        simulationRunning
+          ? MathUtils.clamp(stormIntensity * 0.7, 0, 0.7)
+          : 0,
         now,
         0.5,
       );

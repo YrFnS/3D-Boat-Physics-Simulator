@@ -23,7 +23,17 @@ export function resolveSimulatorFrameLoop({
   if (!collisionRuntimeReady) return 'never';
   if (automationMode || sessionPhase === 'running') return 'always';
   if (sessionPhase === 'paused') return 'never';
+
+  // The launch menu is intentionally a demand-rendered static preview. UI or
+  // scenario changes may invalidate one frame, but authoritative clocks and
+  // physics are independently gated and cannot advance in that frame.
   return 'demand';
+}
+
+export function canAdvanceAuthoritativeSimulation(
+  sessionPhase: RuntimeSessionPhase,
+) {
+  return sessionPhase === 'running';
 }
 
 /** Vessel controls and recovery actions require both a running session and the

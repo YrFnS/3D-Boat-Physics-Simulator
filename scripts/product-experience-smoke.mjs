@@ -311,15 +311,36 @@ allPassed =
       checks.vesselReset =
         afterReset.scenarioRunStatus === 'active' &&
         afterReset.scenarioResult === '';
+      checks.missionClockSurvivesRecovery =
+        afterReset.scenarioElapsedSeconds >=
+        launched.scenarioElapsedSeconds - 0.12;
 
+      const beforePause = await readExperienceState(page);
       await page.keyboard.press('Escape');
       await waitForDataset(page, 'simSessionPhase', 'paused');
       await page.getByRole('heading', { name: 'Storm Passage' }).waitFor();
+      await page.waitForTimeout(500);
+      const duringPause = await readExperienceState(page);
       checks.pause = true;
+      checks.pauseFreezesMissionClock =
+        Math.abs(
+          duringPause.scenarioElapsedSeconds -
+            beforePause.scenarioElapsedSeconds,
+        ) <= 0.12;
 
       await page.getByRole('button', { name: /Resume passage/i }).click();
       await waitForDataset(page, 'simSessionPhase', 'running');
+      await page.waitForFunction(
+        (pausedElapsed) =>
+          Number(
+            document.documentElement.dataset.simScenarioElapsedSeconds ?? '0',
+          ) >=
+          pausedElapsed + 0.15,
+        duringPause.scenarioElapsedSeconds,
+        { timeout: 60_000 },
+      );
       checks.resume = true;
+      checks.resumeAdvancesMissionClock = true;
 
       await page.keyboard.press('Escape');
       await waitForDataset(page, 'simSessionPhase', 'paused');

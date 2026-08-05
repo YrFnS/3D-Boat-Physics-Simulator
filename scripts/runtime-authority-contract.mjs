@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {
   canAcceptVesselInput,
+  canAdvanceAuthoritativeSimulation,
   resolveSimulatorFrameLoop,
 } from '../sim/core/SimulationRuntimeAuthority.ts';
 
@@ -70,6 +71,10 @@ for (const testCase of frameLoopCases) {
   );
 }
 
+assert.equal(canAdvanceAuthoritativeSimulation('running'), true);
+assert.equal(canAdvanceAuthoritativeSimulation('paused'), false);
+assert.equal(canAdvanceAuthoritativeSimulation('menu'), false);
+
 assert.equal(
   canAcceptVesselInput(true, 'running'),
   true,
@@ -109,5 +114,35 @@ assert.match(
   /waitForDataset\(page, 'simWebglContextMonitorReady', '1'\)/,
   'Release validation must wait for the recovery listener before dispatching context loss.',
 );
+
+const staticPreviewSources = await Promise.all(
+  [
+    '../components/Boat.tsx',
+    '../components/EnvironmentRig.tsx',
+    '../components/WeatherEffects.tsx',
+    '../components/HurricaneClouds.tsx',
+    '../components/Tornado.tsx',
+    '../components/WakeField.tsx',
+  ].map(async (sourcePath) => ({
+    sourcePath,
+    source: await fs.readFile(new URL(sourcePath, import.meta.url), 'utf8'),
+  })),
+);
+for (const { sourcePath, source } of staticPreviewSources) {
+  assert.match(
+    source,
+    /canAdvanceAuthoritativeSimulation/,
+    `${sourcePath} must gate time-driven work behind running-state authority.`,
+  );
+}
+for (const { sourcePath, source } of staticPreviewSources.filter(({ sourcePath }) =>
+  /HurricaneClouds|Tornado|WakeField/.test(sourcePath),
+)) {
+  assert.doesNotMatch(
+    source,
+    /state\.clock\.elapsedTime/,
+    `${sourcePath} must not animate from browser wall-clock time.`,
+  );
+}
 
 console.log('Runtime authority contract passed.');

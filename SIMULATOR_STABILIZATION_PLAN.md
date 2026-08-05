@@ -16,7 +16,7 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
 - [x] Keep the render loop stopped while the authoritative collision runtime is unavailable.
 - [x] Block launch, controls, mission time, and reset recovery until the matching Rapier world is ready.
 - [x] Present a visible recovery path when collision initialization stalls.
-- [ ] Separate menu-only visual animation from authoritative simulation time.
+- [x] Keep the menu intentionally static: demand renders may refresh a preview, but vessel, world, weather, hazard, wake, and decorative clocks remain frozen.
 
 ## P0C — World consistency
 
@@ -34,7 +34,7 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
 
 ## P1 — Mission and damage fairness
 
-- [ ] Drive mission time and travelled distance from fixed simulation steps.
+- [x] Drive mission time, travelled distance, and maximum speed from fixed simulation steps, preserving time across recovery while rejecting teleport distance.
 - [ ] Lock scenario environment presets during scored missions or mark modified runs as assisted.
 - [ ] Replace generic radius completion with typed gate, relay, cargo, and rescue interactions.
 - [ ] Remove unexplained normal-operation hull wear.

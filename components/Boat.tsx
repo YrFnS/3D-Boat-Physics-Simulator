@@ -9,6 +9,7 @@ import { sampleOceanSurface } from './Ocean';
 import { useBoatAudio } from './boat/useBoatAudio';
 import { useBoatVisualDamage } from './boat/useBoatVisualDamage';
 import { FixedStepRunner } from '@/sim/core/FixedStepRunner';
+import { canAdvanceAuthoritativeSimulation } from '@/sim/core/SimulationRuntimeAuthority';
 import { SixDofBody } from '@/sim/core/SixDofBody';
 import { SeededRandom } from '@/sim/core/SeededRandom';
 import { getVesselConfig } from '@/sim/vessels/VesselConfig';
@@ -33,6 +34,8 @@ import {
   waterRelativeSurgeSpeed,
 } from '@/sim/vessels/PhysicsCorrectness';
 import { RapierCollisionWorld } from '@/sim/collision/RapierCollisionWorld';
+import { sharedMissionRuntimeStatistics } from '@/sim/scenarios/MissionRuntimeStatistics';
+import { useNavigationPlanner } from '@/store/useNavigationPlanner';
 import {
   parseCalibrationRequest,
   sampleFlatCalibrationWater,
@@ -303,6 +306,10 @@ export default function Boat() {
       currentDir,
       engineThrust,
       activeBoat,
+      sessionPhase,
+      scenarioRunStatus,
+      scenarioRunId,
+      resetVesselTrigger,
       setTelemetry,
       setFloodingTelemetry,
     } = useSimStore.getState();
@@ -1049,6 +1056,21 @@ export default function Boat() {
       forwardDir.z,
     );
 
+    if (!calibration) {
+      sharedMissionRuntimeStatistics.advance({
+        runId: scenarioRunId,
+        vesselGeneration: resetVesselTrigger,
+        enabled:
+          canAdvanceAuthoritativeSimulation(sessionPhase) &&
+          scenarioRunStatus === 'active' &&
+          useNavigationPlanner.getState().mode === 'mission',
+        deltaSeconds: dt,
+        boatX: body.position.x,
+        boatZ: body.position.z,
+        speedKnots,
+      });
+    }
+
     const calibrationResult = calibration?.recordStep(time, {
       body,
       submergedRatio,
@@ -1252,6 +1274,10 @@ export default function Boat() {
     const boat = boatRef.current;
     if (!boat) return;
 
+    const runtimeState = useSimStore.getState();
+    const simulationRunning = canAdvanceAuthoritativeSimulation(
+      runtimeState.sessionPhase,
+    );
     const calibration = calibrationRunner.current;
     let stepResult;
 
@@ -1287,6 +1313,14 @@ export default function Boat() {
         simulationTimeSeconds: calibrationSimulationTime.current,
         droppedTimeSeconds: 0,
       };
+    } else if (!simulationRunning) {
+      stepResult = {
+        steps: 0,
+        alpha: 1,
+        simulationTimeSeconds:
+          fixedStepRunner.current.simulationTimeSeconds,
+        droppedTimeSeconds: fixedStepRunner.current.droppedTimeSeconds,
+      };
     } else {
       stepResult = fixedStepRunner.current.advance(
         delta,
@@ -1314,8 +1348,10 @@ export default function Boat() {
       stepResult.alpha,
     );
 
-    const renderDelta = Math.min(delta, 0.1);
-    const { windSpeed, windDir, activeBoat } = useSimStore.getState();
+    const renderDelta = simulationRunning
+      ? Math.min(delta, 0.1)
+      : 0;
+    const { windSpeed, windDir, activeBoat } = runtimeState;
     const isSpeedboat = activeBoat === 'speedboat';
     const forwardDir = scratch.forwardDir
       .set(0, 0, -1)
@@ -1370,7 +1406,7 @@ export default function Boat() {
 
     // Wake Particle system has been removed in favor of the shader-based Analytical Kelvin Wake
     
-    if (!calibration) {
+    if (!calibration && simulationRunning) {
       audio.updateFrame(
         pos,
         forwardDir,

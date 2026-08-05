@@ -1,6 +1,7 @@
 'use client';
 
 import { useFrame } from '@react-three/fiber';
+import { canAdvanceAuthoritativeSimulation } from '@/sim/core/SimulationRuntimeAuthority';
 import { useMemo, useRef } from 'react';
 import { BackSide, MathUtils, Mesh, ShaderMaterial } from 'three';
 import {
@@ -220,43 +221,63 @@ export default function HurricaneClouds() {
     [config.octaves],
   );
 
-  useFrame((state, delta) => {
-    const safeDelta = Math.min(delta, 0.1);
-    const windSpeed = useSimStore.getState().windSpeed;
-    const targetOpacity =
-      MathUtils.clamp((windSpeed - 28) / 17, 0, 1) * 0.98;
 
-    opacityRef.current = MathUtils.damp(
-      opacityRef.current,
-      targetOpacity,
-      2.1,
-      safeDelta,
+useFrame((state, delta) => {
+  const store = useSimStore.getState();
+  const simulationRunning = canAdvanceAuthoritativeSimulation(
+    store.sessionPhase,
+  );
+  const simulationDelta = simulationRunning
+    ? Math.min(delta, 0.1)
+    : 0;
+  const targetOpacity =
+    MathUtils.clamp((store.windSpeed - 28) / 17, 0, 1) * 0.98;
+
+  opacityRef.current = simulationRunning
+    ? MathUtils.damp(
+        opacityRef.current,
+        targetOpacity,
+        2.1,
+        simulationDelta,
+      )
+    : targetOpacity;
+
+  const mesh = meshRef.current;
+  if (mesh) {
+    mesh.visible = opacityRef.current > 0.01;
+    mesh.position.set(
+      state.camera.position.x,
+      0,
+      state.camera.position.z,
     );
+  }
 
-    const mesh = meshRef.current;
-    if (mesh) {
-      mesh.visible = opacityRef.current > 0.01;
-      mesh.position.set(
-        state.camera.position.x,
-        0,
-        state.camera.position.z,
-      );
-    }
-
-    if (!mesh?.visible) return;
-
-    updateAccumulatorRef.current += safeDelta;
-    const updateInterval = 1 / config.updateHz;
-    if (updateAccumulatorRef.current < updateInterval) return;
-    updateAccumulatorRef.current %= updateInterval;
-
-    const material = materialRef.current;
+  const material = materialRef.current;
+  if (!simulationRunning) {
+    updateAccumulatorRef.current = 0;
     if (material) {
-      material.uniforms.uTime.value = state.clock.elapsedTime;
+      material.uniforms.uTime.value = sharedPhysics.renderTime;
       material.uniforms.uOpacity.value = opacityRef.current;
-      material.uniforms.uLightning.value = sharedPhysics.lightningFlash;
+      material.uniforms.uLightning.value =
+        sharedPhysics.lightningFlash;
     }
-  });
+    return;
+  }
+
+  if (!mesh?.visible) return;
+
+  updateAccumulatorRef.current += simulationDelta;
+  const updateInterval = 1 / config.updateHz;
+  if (updateAccumulatorRef.current < updateInterval) return;
+  updateAccumulatorRef.current %= updateInterval;
+
+  if (material) {
+    material.uniforms.uTime.value = sharedPhysics.renderTime;
+    material.uniforms.uOpacity.value = opacityRef.current;
+    material.uniforms.uLightning.value =
+      sharedPhysics.lightningFlash;
+  }
+});
 
   return (
     <mesh ref={meshRef} frustumCulled={false}>
