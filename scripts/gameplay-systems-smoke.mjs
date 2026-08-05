@@ -31,6 +31,10 @@ async function waitForDataset(page, key, value) {
   );
 }
 
+async function waitForCollisionRuntimeReady(page) {
+  await waitForDataset(page, 'simCollisionRuntimeStatus', 'ready');
+}
+
 async function waitForNumericDataset(page, key, predicateName, value = 0) {
   await page.waitForFunction(
     ({ datasetKey, check, expected }) => {
@@ -68,12 +72,14 @@ async function waitForBriefing(page) {
   await waitForCanvasReady(page);
   await waitForDataset(page, 'simSessionPhase', 'menu');
   await page.getByRole('heading', { name: 'Choose your passage.' }).waitFor();
+  await waitForCollisionRuntimeReady(page);
 }
 
 async function launchOpenWater(page) {
   await page.getByRole('button', { name: /Begin passage/i }).click();
   await waitForDataset(page, 'simSessionPhase', 'running');
   await waitForDataset(page, 'simScenarioRunStatus', 'active');
+  await waitForCollisionRuntimeReady(page);
   await page.locator('[aria-label="Marine navigation chart"]').waitFor();
 }
 
@@ -282,6 +288,7 @@ allPassed =
         resetAtLaunch,
         { timeout: 60_000 },
       );
+      await waitForCollisionRuntimeReady(page);
       await waitForNumericDataset(page, 'simScenarioSpawnZ', 'not-zero');
       const checkpoint = await readRuntime(page);
       checks.checkpointActivated =
@@ -303,6 +310,7 @@ allPassed =
         beforeManualRecovery,
         { timeout: 60_000 },
       );
+      await waitForCollisionRuntimeReady(page);
       const afterRecovery = await readRuntime(page);
       checks.manualRecoveryUsesCheckpoint =
         afterRecovery.checkpointId === checkpoint.checkpointId &&
