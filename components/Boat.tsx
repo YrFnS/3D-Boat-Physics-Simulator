@@ -25,11 +25,14 @@ import { FloodingModel } from '@/sim/vessels/FloodingModel';
 import { displacementBalanceErrorRatio } from '@/sim/vessels/HydrostaticsMath';
 import { EnvironmentalForces } from '@/sim/vessels/EnvironmentalForces';
 import {
+  applyVesselDamage,
+  type VesselDamageEvent,
+} from '@/sim/vessels/VesselDamagePolicy';
+import {
   setWorldVectorFromHeading,
   worldDirectionToHeadingDegrees,
 } from '@/sim/world/WorldDirection';
 import {
-  normalizedSurgeSpeed,
   planingSpeedRatio,
   waterRelativeSurgeSpeed,
 } from '@/sim/vessels/PhysicsCorrectness';
@@ -137,6 +140,20 @@ export default function Boat() {
   const engineHealth = useRef(100);
   const engineTemperature = useRef(20);
   const rudderHealth = useRef(100);
+
+  const applyDamage = (event: VesselDamageEvent) => {
+    const nextHealth = applyVesselDamage(
+      {
+        hullHealth: hullHealth.current,
+        engineHealth: engineHealth.current,
+        rudderHealth: rudderHealth.current,
+      },
+      event,
+    );
+    hullHealth.current = nextHealth.hullHealth;
+    engineHealth.current = nextHealth.engineHealth;
+    rudderHealth.current = nextHealth.rudderHealth;
+  };
   
   // Read active boat reactively to trigger re-renders
   const activeBoat = useSimStore((state) => state.activeBoat);
@@ -504,10 +521,6 @@ export default function Boat() {
       waterVelocity,
       forwardDir,
     );
-    const surgeSpeedRatio = normalizedSurgeSpeed(
-      vRelForward,
-      vessel.planingReferenceSpeedMps,
-    );
     const activePlaningSpeedRatio = planingSpeedRatio(
       vRelForward,
       vessel.planingReferenceSpeedMps,
@@ -523,18 +536,12 @@ export default function Boat() {
       time > 2 &&
       hydrostaticResult.maximumSlamSeverity > 0
     ) {
-      hullHealth.current = Math.max(
-        0,
-        hullHealth.current - hydrostaticResult.slamHullDamage,
-      );
-      engineHealth.current = Math.max(
-        0,
-        engineHealth.current - hydrostaticResult.slamEngineDamage,
-      );
-      rudderHealth.current = Math.max(
-        0,
-        rudderHealth.current - hydrostaticResult.slamRudderDamage,
-      );
+      applyDamage({
+        source: 'slamming',
+        hullDamage: hydrostaticResult.slamHullDamage,
+        engineDamage: hydrostaticResult.slamEngineDamage,
+        rudderDamage: hydrostaticResult.slamRudderDamage,
+      });
       if (hydrostaticResult.slamCompartmentId) {
         floodingModel.current.registerBreach(
           vessel,
@@ -852,14 +859,11 @@ export default function Boat() {
         whirlpoolPosition: sharedPhysics.whirlpoolPos,
         random: simulationRandom.current,
       });
-      hullHealth.current = Math.max(
-        0,
-        hullHealth.current - environmentalDamage.hullDamage,
-      );
-      engineHealth.current = Math.max(
-        0,
-        engineHealth.current - environmentalDamage.engineDamage,
-      );
+      applyDamage({
+        source: 'environmental-impact',
+        hullDamage: environmentalDamage.hullDamage,
+        engineDamage: environmentalDamage.engineDamage,
+      });
       if (
         environmentalDamage.hullDamage > 0 &&
         environmentalDamage.iceContactSpeedMps > 3.5
@@ -960,17 +964,12 @@ export default function Boat() {
           24,
           severity * 3.6 + normalizedImpulse * 0.42,
         );
-        hullHealth.current = Math.max(0, hullHealth.current - damage);
-        if (severity > 2.5) {
-          engineHealth.current = Math.max(
-            0,
-            engineHealth.current - damage * 0.22,
-          );
-          rudderHealth.current = Math.max(
-            0,
-            rudderHealth.current - damage * 0.32,
-          );
-        }
+        applyDamage({
+          source: 'terrain-impact',
+          hullDamage: damage,
+          engineDamage: severity > 2.5 ? damage * 0.22 : 0,
+          rudderDamage: severity > 2.5 ? damage * 0.32 : 0,
+        });
         floodingModel.current.registerBreach(
           vessel,
           vRelForward >= 0
@@ -998,26 +997,23 @@ export default function Boat() {
           28,
           severity * 1.75 + normalizedImpulse * 0.28,
         );
-        hullHealth.current = Math.max(0, hullHealth.current - damage);
-        if (severity > 4 && headOnFactor > 0.35) {
-          engineHealth.current = Math.max(
-            0,
-            engineHealth.current -
-              damage * 0.18 * headOnFactor,
-          );
-        }
         const glancingFactor = 1 - headOnFactor;
         const glancingRudderStrike =
           severity > 2.1 &&
           glancingFactor > 0.3 &&
           normalizedImpulse > 1;
-        if (severity > 2.5 || glancingRudderStrike) {
-          rudderHealth.current = Math.max(
-            0,
-            rudderHealth.current -
-              damage * 0.2 * (1 - headOnFactor * 0.35),
-          );
-        }
+        applyDamage({
+          source: 'obstacle-impact',
+          hullDamage: damage,
+          engineDamage:
+            severity > 4 && headOnFactor > 0.35
+              ? damage * 0.18 * headOnFactor
+              : 0,
+          rudderDamage:
+            severity > 2.5 || glancingRudderStrike
+              ? damage * 0.2 * (1 - headOnFactor * 0.35)
+              : 0,
+        });
         const impactCompartment =
           headOnFactor > 0.45
             ? 'bow'
@@ -1150,7 +1146,10 @@ export default function Boat() {
     // Engine Health: Degrades slightly if temperature is over 90C
     if (engineTemperature.current > 90) {
        const overheatDamage = (engineTemperature.current - 90) * 0.05;
-       engineHealth.current = Math.max(0, engineHealth.current - overheatDamage * dt);
+       applyDamage({
+         source: 'engine-overheat',
+         engineDamage: overheatDamage * dt,
+       });
     }
 
     // Water in the machinery space now drives engine flooding directly.
@@ -1163,30 +1162,16 @@ export default function Boat() {
         16,
         floodingResult.engineCompartmentFloodingRatio,
       );
-      engineHealth.current = Math.max(
-        0,
-        engineHealth.current - floodingDamagePerSecond * dt,
-      );
+      applyDamage({
+        source: 'machinery-flooding',
+        engineDamage: floodingDamagePerSecond * dt,
+      });
     }
     
-    // Hull Health: Degrades very slowly from sustained planing (previously Phase 1)
-    if (activePlaningSpeedRatio > 0.8) {
-       hullHealth.current = Math.max(
-         0,
-         hullHealth.current - activePlaningSpeedRatio * 0.1 * dt,
-       );
-    }
-
-    // Rudder Health: Degrades when turning sharply at high speeds
-    const rudderLoadRatio =
-      appliedRudderForceN / Math.max(1, vessel.rudder.maximumForceN);
-    if (rudderLoadRatio > 0.45 && surgeSpeedRatio > 0.5) {
-      rudderHealth.current = Math.max(
-        0,
-        rudderHealth.current -
-          (rudderLoadRatio - 0.45) * 2.4 * dt,
-      );
-    }
+    // Designed planing and ordinary steering loads are normal
+    // operating states, not health-loss events. Structural damage is applied
+    // only through the explicit impact, slamming, hazard, flooding, and
+    // overheating paths above.
     
     // --- Phase 5: Active Repair / Bilge Mechanics ---
     if (activePump) {

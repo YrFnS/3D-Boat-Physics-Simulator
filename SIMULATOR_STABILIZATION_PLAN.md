@@ -41,7 +41,8 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
 - [x] Replace generic entity-radius completion with forward gate crossings, timed relay holds, and type-specific cargo/rescue pickup and delivery zones.
 - [x] Use the same resolved inbound heading and gate width for rendered posts and crossing detection, with regressions for reverse crossings and crossings outside the posts.
 - [x] Reset partial interaction state on recovery and expose task progress and speed/hold guidance in the navigation HUD.
-- [ ] Remove unexplained normal-operation hull wear.
+- [x] Remove passive hull wear from sustained planing and passive rudder wear from ordinary hydrodynamic steering loads.
+- [x] Route slamming, terrain, obstacle, environmental, overheating, and machinery-flooding health loss through one explicit typed damage policy with permanent regressions.
 - [ ] Rebalance field repair and account for repair use in scoring.
 
 ## P2 — Architecture and performance
