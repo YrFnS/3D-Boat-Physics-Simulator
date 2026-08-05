@@ -1,0 +1,230 @@
+name: Finalize scored environment authority
+
+on:
+  push:
+    branches:
+      - agent/simulator-stabilization
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scored-environment-authority
+  cancel-in-progress: false
+
+env:
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out latest stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Apply corrected migration
+        id: migrate
+        continue-on-error: true
+        shell: bash
+        run: |
+          git fetch origin agent/simulator-stabilization
+          git reset --hard origin/agent/simulator-stabilization
+
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          workflow_path = Path(
+              '.github/workflows/apply-scored-environment-authority.yml'
+          )
+          workflow = workflow_path.read_text(encoding='utf-8')
+          outer_start = "          python - <<'PY'\n"
+          outer_end = "\n          PY\n\n      - name: Set up Node.js"
+          start = workflow.find(outer_start)
+          end = workflow.find(outer_end, start + len(outer_start))
+          if start < 0 or end < 0:
+              raise SystemExit('Could not extract the staged migration script.')
+
+          embedded = workflow[start + len(outer_start):end]
+          script = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in embedded.splitlines()
+          ) + '\n'
+
+          block_start_marker = "for path in ['store/useSimStore.ts']:\n"
+          block_end_marker = (
+              "replace_once(\n"
+              "    'store/useSimStore.ts',\n"
+              "    \"  returnToMenu: () =>\\n"
+          )
+          block_start = script.find(block_start_marker)
+          block_end = script.find(block_end_marker, block_start)
+          if block_start < 0 or block_end < 0:
+              raise SystemExit('Could not locate the repeated preset migration block.')
+
+          replacement = dedent(r'''
+            preset_block = (
+                "      windSpeed: scenario.windSpeed,\n"
+                "      windDir: scenario.windDir,\n"
+                "      currentSpeed: scenario.currentSpeed,\n"
+                "      currentDir: scenario.currentDir,\n"
+                "      targetTime: scenario.targetTime,\n"
+                "      targetSeason: scenario.targetSeason,\n"
+            )
+            preset_replacement = (
+                "      ...scenarioEnvironmentFromDefinition(scenario),\n"
+            )
+            store_source = read('store/useSimStore.ts')
+            preset_count = store_source.count(preset_block)
+            if preset_count != 3:
+                raise SystemExit(
+                    'store/useSimStore.ts: expected three standard preset blocks, '
+                    f'found {preset_count}'
+                )
+            store_source = store_source.replace(
+                preset_block,
+                preset_replacement,
+            )
+
+            hydrated_preset_block = (
+                "        windSpeed: scenario.windSpeed,\n"
+                "        windDir: scenario.windDir,\n"
+                "        currentSpeed: scenario.currentSpeed,\n"
+                "        currentDir: scenario.currentDir,\n"
+                "        targetTime: scenario.targetTime,\n"
+                "        targetSeason: scenario.targetSeason,\n"
+            )
+            hydrated_preset_replacement = (
+                "        ...scenarioEnvironmentFromDefinition(scenario),\n"
+            )
+            hydrated_count = store_source.count(hydrated_preset_block)
+            if hydrated_count != 1:
+                raise SystemExit(
+                    'store/useSimStore.ts: expected one hydrated preset block, '
+                    f'found {hydrated_count}'
+                )
+            write(
+                'store/useSimStore.ts',
+                store_source.replace(
+                    hydrated_preset_block,
+                    hydrated_preset_replacement,
+                    1,
+                ),
+            )
+          ''').lstrip()
+          script = script[:block_start] + replacement + script[block_end:]
+          Path('/tmp/scored-environment-migration.py').write_text(
+              script,
+              encoding='utf-8',
+          )
+          PY
+
+          set +e
+          python /tmp/scored-environment-migration.py > /tmp/migration.log 2>&1
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            cat /tmp/migration.log
+            exit "$status"
+          fi
+
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('store/useScenarioHistory.ts')
+          source = path.read_text(encoding='utf-8')
+          old = (
+              'export interface ScenarioHistoryRecord\n'
+              '  extends ScenarioHistoryPolicyRecord<BoatType> {}\n'
+          )
+          new = (
+              'export type ScenarioHistoryRecord =\n'
+              '  ScenarioHistoryPolicyRecord<BoatType>;\n'
+          )
+          if source.count(old) != 1:
+              raise SystemExit(
+                  'Could not locate the ScenarioHistoryRecord interface generated by the migration.'
+              )
+          path.write_text(source.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Set up Node.js
+        if: steps.migrate.outcome == 'success'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.migrate.outcome == 'success'
+        run: npm ci
+
+      - name: Validate source, policy, browser build, and dependencies
+        id: validate
+        if: steps.migrate.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          npm run validate > /tmp/validation.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/validation.log
+          exit "$status"
+
+      - name: Commit complete scored-environment authority
+        if: >-
+          steps.migrate.outcome == 'success' &&
+          steps.validate.outcome == 'success'
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply-scored-environment-authority.yml
+          rm -f .github/workflows/finalize-scored-environment-authority.yml
+          rm -f .github/workflows/repair-run-scored-environment-authority.yml
+          rm -f .github/workflows/recover-scored-environment-authority.yml
+          rm -f SCORING_ENVIRONMENT_MIGRATION_TRIGGER.txt
+          rm -f SCORING_ENVIRONMENT_MIGRATION_DIAGNOSTIC.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: protect standard scenario environment records"
+          git push origin HEAD:agent/simulator-stabilization
+
+      - name: Commit final diagnostic
+        if: >-
+          steps.migrate.outcome != 'success' ||
+          steps.validate.outcome == 'failure'
+        shell: bash
+        run: |
+          git reset --hard origin/agent/simulator-stabilization
+          {
+            echo '# Scored environment authority final diagnostic'
+            echo
+            if [ -f /tmp/migration.log ]; then
+              echo '## Migration output'
+              echo '```text'
+              cat /tmp/migration.log
+              echo '```'
+            fi
+            if [ -f /tmp/validation.log ]; then
+              echo
+              echo '## Validation output'
+              echo '```text'
+              cat /tmp/validation.log
+              echo '```'
+            fi
+          } > SCORING_ENVIRONMENT_MIGRATION_DIAGNOSTIC.md
+          rm -f .github/workflows/finalize-scored-environment-authority.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "test: record scored environment final failure"
+          git push origin HEAD:agent/simulator-stabilization
