@@ -350,7 +350,7 @@ allPassed =
         completed.historyBestScore > 0 &&
         Number.isFinite(completed.historyBestTimeSeconds);
       checks.resultShowsRecords =
-        (await page.getByText('Scenario record:', { exact: false }).count()) === 1 &&
+        (await page.getByText('Standard record:', { exact: false }).count()) === 1 &&
         (await page.getByText('Personal best', { exact: true }).count()) === 1;
 
       await page.getByRole('button', { name: 'Briefing', exact: true }).click();
