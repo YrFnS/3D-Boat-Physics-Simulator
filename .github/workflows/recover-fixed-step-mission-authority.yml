@@ -1,0 +1,142 @@
+name: Recover fixed-step mission authority
+
+on:
+  push:
+    branches:
+      - agent/simulator-stabilization
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fixed-step-mission-authority
+  cancel-in-progress: false
+
+env:
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  recover:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Extract and run the staged migration
+        id: migrate
+        continue-on-error: true
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path(
+              '.github/workflows/apply-fixed-step-mission-authority.yml'
+          ).read_text(encoding='utf-8')
+          start_marker = "          python - <<'PY'\n"
+          end_marker = "\n          PY\n\n      - name: Set up Node.js"
+          start = workflow.find(start_marker)
+          end = workflow.find(end_marker, start + len(start_marker))
+          if start < 0 or end < 0:
+              raise SystemExit('Could not extract the staged Python migration.')
+
+          embedded = workflow[start + len(start_marker):end]
+          script_lines = [
+              line[10:] if line.startswith('          ') else line
+              for line in embedded.splitlines()
+          ]
+          Path('/tmp/fixed-step-migration.py').write_text(
+              '\n'.join(script_lines) + '\n',
+              encoding='utf-8',
+          )
+          PY
+
+          set +e
+          python /tmp/fixed-step-migration.py > /tmp/migration.log 2>&1
+          status=$?
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -ne 0 ]; then
+            cat /tmp/migration.log
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        if: steps.migrate.outcome == 'success'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.migrate.outcome == 'success'
+        run: npm ci
+
+      - name: Validate migrated source graph
+        id: validate
+        if: steps.migrate.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          npm run validate > /tmp/validation.log 2>&1
+          status=$?
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          cat /tmp/validation.log
+          exit "$status"
+
+      - name: Commit validated migration
+        if: >-
+          steps.migrate.outcome == 'success' &&
+          steps.validate.outcome == 'success'
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply-fixed-step-mission-authority.yml
+          rm -f .github/workflows/recover-fixed-step-mission-authority.yml
+          rm -f MIGRATION_DIAGNOSTIC.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: move mission stats to fixed-step authority"
+          git push origin HEAD:agent/simulator-stabilization
+
+      - name: Commit actionable migration diagnostic
+        if: >-
+          steps.migrate.outcome != 'success' ||
+          steps.validate.outcome == 'failure'
+        shell: bash
+        run: |
+          git reset --hard HEAD
+          {
+            echo '# Fixed-step mission authority migration diagnostic'
+            echo
+            echo 'The staged migration did not publish source changes.'
+            echo
+            if [ -f /tmp/migration.log ]; then
+              echo '## Migration output'
+              echo '```text'
+              cat /tmp/migration.log
+              echo '```'
+            fi
+            if [ -f /tmp/validation.log ]; then
+              echo
+              echo '## Validation output'
+              echo '```text'
+              cat /tmp/validation.log
+              echo '```'
+            fi
+          } > MIGRATION_DIAGNOSTIC.txt
+          rm -f .github/workflows/recover-fixed-step-mission-authority.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "test: record mission authority migration failure"
+          git push origin HEAD:agent/simulator-stabilization
