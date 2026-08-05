@@ -1,0 +1,84 @@
+name: Fix scored environment layout
+
+on:
+  push:
+    branches:
+      - agent/simulator-stabilization
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scored-environment-layout-fix
+  cancel-in-progress: false
+
+env:
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  patch-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out latest stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Keep navigation clear of environment controls
+        shell: bash
+        run: |
+          git fetch origin agent/simulator-stabilization
+          git reset --hard origin/agent/simulator-stabilization
+
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              source = target.read_text(encoding='utf-8')
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(
+                      f'{path}: expected exactly one target, found {count}: {old!r}'
+                  )
+              target.write_text(source.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'components/NavigationHUD.tsx',
+              'md:left-auto md:right-4 md:top-28 md:w-72 md:p-4',
+              'md:left-auto md:right-[13.5rem] md:top-28 md:w-72 md:p-4',
+          )
+          replace_once(
+              'scripts/gameplay-systems-smoke.mjs',
+              "page.getByText('Scenario record:', { exact: false })",
+              "page.getByText('Standard record:', { exact: false })",
+          )
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate source and production build
+        run: npm run validate
+
+      - name: Commit validated layout fix and remove one-shot files
+        shell: bash
+        run: |
+          rm -f .github/workflows/fix-scored-environment-layout.yml
+          rm -f SCORED_ENVIRONMENT_LAYOUT_TRIGGER.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: keep scored environment controls accessible"
+          git push origin HEAD:agent/simulator-stabilization
