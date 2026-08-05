@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import {
   canAcceptVesselInput,
   resolveSimulatorFrameLoop,
@@ -88,6 +89,25 @@ assert.equal(
   canAcceptVesselInput(true, 'menu'),
   false,
   'The launch menu must reject vessel controls.',
+);
+
+const recoveryMonitorSource = await fs.readFile(
+  new URL('../components/SimulatorRecovery.tsx', import.meta.url),
+  'utf8',
+);
+const releaseValidationSource = await fs.readFile(
+  new URL('./release-validation.mjs', import.meta.url),
+  'utf8',
+);
+assert.match(
+  recoveryMonitorSource,
+  /simWebglContextMonitorReady = '1'/,
+  'The application must expose when its WebGL recovery listener is attached.',
+);
+assert.match(
+  releaseValidationSource,
+  /waitForDataset\(page, 'simWebglContextMonitorReady', '1'\)/,
+  'Release validation must wait for the recovery listener before dispatching context loss.',
 );
 
 console.log('Runtime authority contract passed.');

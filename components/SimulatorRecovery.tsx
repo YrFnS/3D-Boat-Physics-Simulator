@@ -40,10 +40,12 @@ export function WebGLContextMonitor({
 
     canvas.addEventListener('webglcontextlost', handleLost);
     canvas.addEventListener('webglcontextrestored', handleRestored);
+    document.documentElement.dataset.simWebglContextMonitorReady = '1';
 
     return () => {
       canvas.removeEventListener('webglcontextlost', handleLost);
       canvas.removeEventListener('webglcontextrestored', handleRestored);
+      delete document.documentElement.dataset.simWebglContextMonitorReady;
     };
   }, [canvas, onStatusChange]);
 

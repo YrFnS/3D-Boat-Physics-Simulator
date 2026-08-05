@@ -1025,6 +1025,7 @@ async function runRecoveryFlows() {
       });
       await page.waitForSelector('canvas', { timeout: 60_000 });
       await waitForCanvasReady(page);
+      await waitForDataset(page, 'simWebglContextMonitorReady', '1');
       await page.evaluate(() => {
         const canvas = document.querySelector('canvas');
         canvas?.dispatchEvent(
