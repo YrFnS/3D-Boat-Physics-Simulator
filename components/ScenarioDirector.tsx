@@ -9,6 +9,11 @@ import {
 } from '@/sim/world/WorldDirection';
 import { sharedMissionRuntimeStatistics } from '@/sim/scenarios/MissionRuntimeStatistics';
 import {
+  createIdleScenarioInteractionTelemetry,
+  ScenarioInteractionRuntime,
+  type ScenarioInteractionEvaluation,
+} from '@/sim/scenarios/ScenarioInteractionRuntime';
+import {
   getScenarioDefinition,
   type ScenarioDefinition,
 } from '@/sim/scenarios/ScenarioCatalog';
@@ -98,6 +103,7 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
   const missionTestMode = useRef<MissionTestMode>(readMissionTestMode());
   const missionTestRunId = useRef(-1);
   const updateAccumulator = useRef(0);
+  const interactionRuntime = useRef(new ScenarioInteractionRuntime());
   const runtime = useRef<RuntimeStatistics>({
     lastProcessedElapsedSeconds: 0,
     collisionSequenceAtStart: 0,
@@ -109,6 +115,10 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
       collisionSequenceAtStart: sharedPhysics.collisionSequence,
     };
     updateAccumulator.current = 0;
+    interactionRuntime.current.reset(
+      scenarioRunId,
+      useSimStore.getState().resetVesselTrigger,
+    );
   }, [scenarioRunId]);
 
   useFrame(() => {
@@ -145,7 +155,8 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
     ) {
       return;
     }
-    updateAccumulator.current %= NAVIGATION_UPDATE_INTERVAL_SECONDS;
+    const interactionDeltaSeconds = updateAccumulator.current;
+    updateAccumulator.current = 0;
 
     const waypointIndex = MathUtils.clamp(
       store.activeWaypointIndex,
@@ -239,6 +250,9 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
       useScenarioHistory
         .getState()
         .recordResult(activeScenario, latestStore.activeBoat, result);
+      latestStore.setScenarioInteraction(
+        createIdleScenarioInteractionTelemetry(),
+      );
       latestStore.finishScenario(result);
     };
 
@@ -309,29 +323,52 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
       (entity) => entity.waypointId === waypoint.id,
     );
     const completedBefore = new Set(store.completedScenarioEntityIds);
-    const newlyCompleted = entitiesAtWaypoint.filter((entity) => {
-      if (completedBefore.has(entity.id)) return false;
-      if (
-        entity.requiresEntityId &&
-        !completedBefore.has(entity.requiresEntityId)
-      ) {
-        return false;
+    const newlyCompleted = [];
+    const interactionEvaluations = new Map<
+      string,
+      ScenarioInteractionEvaluation
+    >();
+
+    for (const entity of entitiesAtWaypoint) {
+      if (completedBefore.has(entity.id)) continue;
+      const prerequisiteMet =
+        !entity.requiresEntityId ||
+        completedBefore.has(entity.requiresEntityId);
+      const evaluation = interactionRuntime.current.evaluate(entity, {
+        runId: scenarioRunId,
+        vesselGeneration: store.resetVesselTrigger,
+        boatX,
+        boatZ,
+        speedKnots: store.speedKnots,
+        deltaSeconds: interactionDeltaSeconds,
+        prerequisiteMet,
+        alreadyCompleted: false,
+      });
+      interactionEvaluations.set(entity.id, evaluation);
+      if (evaluation.completed) {
+        newlyCompleted.push(entity);
+        completedBefore.add(entity.id);
       }
-      return Math.hypot(entity.x - boatX, entity.z - boatZ) <= entity.radiusM;
-    });
+    }
 
     if (newlyCompleted.length > 0) {
       store.completeScenarioEntities(
         newlyCompleted.map((entity) => entity.id),
         newlyCompleted.map((entity) => entity.completionMessage).join(' '),
       );
-      for (const entity of newlyCompleted) completedBefore.add(entity.id);
     }
 
     const pendingRequiredEntity = entitiesAtWaypoint.find(
       (entity) => entity.required && !completedBefore.has(entity.id),
     );
-    if (pendingRequiredEntity) return;
+    if (pendingRequiredEntity) {
+      store.setScenarioInteraction(
+        interactionEvaluations.get(pendingRequiredEntity.id) ??
+          createIdleScenarioInteractionTelemetry(),
+      );
+      return;
+    }
+    store.setScenarioInteraction(createIdleScenarioInteractionTelemetry());
 
     if (distanceM > waypoint.radiusM) return;
 

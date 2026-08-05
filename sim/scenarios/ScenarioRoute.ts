@@ -26,7 +26,9 @@ export interface ResolvedScenarioWaypoint
 
 export interface ResolvedScenarioEntity
   extends ScenarioEntityDefinition,
-    ResolvedNavigablePosition {}
+    ResolvedNavigablePosition {
+  headingDeg: number;
+}
 
 export interface ResolvedScenarioCheckpoint
   extends ScenarioCheckpointDefinition {
@@ -130,6 +132,26 @@ export function getResolvedScenarioRoute(
   return route;
 }
 
+function resolveInboundRouteHeading(
+  route: readonly ResolvedScenarioWaypoint[],
+  waypointId: string,
+) {
+  const waypointIndex = route.findIndex(
+    (waypoint) => waypoint.id === waypointId,
+  );
+  if (waypointIndex < 0) return 0;
+
+  const target = route[waypointIndex];
+  const source =
+    waypointIndex === 0
+      ? { x: 0, z: 0 }
+      : route[waypointIndex - 1];
+  return worldDirectionToHeadingDegrees(
+    target.x - source.x,
+    target.z - source.z,
+  );
+}
+
 export function getResolvedScenarioEntities(
   scenarioId: ScenarioId,
 ): readonly ResolvedScenarioEntity[] {
@@ -148,6 +170,7 @@ export function getResolvedScenarioEntities(
     return {
       ...entity,
       ...resolveNavigablePosition(sourceX, sourceZ, 100 + index),
+      headingDeg: resolveInboundRouteHeading(route, entity.waypointId),
     };
   });
 

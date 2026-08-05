@@ -16,6 +16,10 @@ import {
   scenarioEnvironmentFromDefinition,
   type ScenarioRunMode,
 } from '@/sim/scenarios/ScoredScenarioAuthority';
+import type {
+  ScenarioInteractionStatus,
+  ScenarioInteractionTelemetry,
+} from '@/sim/scenarios/ScenarioInteractionRuntime';
 
 export type BoatType = 'trawler' | 'speedboat';
 export type RenderQuality = 'low' | 'medium' | 'high' | 'ultra';
@@ -137,6 +141,10 @@ function createScenarioGameplayState(
     scenarioRunStatus,
     scenarioRunMode: 'standard' as ScenarioRunMode,
     scenarioAssistanceReason: '',
+    scenarioInteractionEntityId: null as string | null,
+    scenarioInteractionStatus: 'idle' as ScenarioInteractionStatus,
+    scenarioInteractionProgress: 0,
+    scenarioInteractionMessage: '',
     activeWaypointIndex: 0,
     scenarioElapsedSeconds: 0,
     scenarioProgress: 0,
@@ -247,6 +255,10 @@ export interface SimState {
   scenarioRunId: number;
   scenarioRunMode: ScenarioRunMode;
   scenarioAssistanceReason: string;
+  scenarioInteractionEntityId: string | null;
+  scenarioInteractionStatus: ScenarioInteractionStatus;
+  scenarioInteractionProgress: number;
+  scenarioInteractionMessage: string;
   activeWaypointIndex: number;
   scenarioElapsedSeconds: number;
   scenarioProgress: number;
@@ -330,6 +342,9 @@ export interface SimState {
   ) => void;
   setScenarioNavigation: (
     telemetry: ScenarioNavigationTelemetry,
+  ) => void;
+  setScenarioInteraction: (
+    telemetry: ScenarioInteractionTelemetry,
   ) => void;
   setActiveWaypointIndex: (index: number) => void;
   completeScenarioEntities: (
@@ -668,6 +683,16 @@ export const useSimStore = create<SimState>((set, get) => ({
       navigationBoatX: telemetry.boatX,
       navigationBoatZ: telemetry.boatZ,
     }),
+  setScenarioInteraction: (telemetry) =>
+    set({
+      scenarioInteractionEntityId: telemetry.entityId,
+      scenarioInteractionStatus: telemetry.status,
+      scenarioInteractionProgress: Math.max(
+        0,
+        Math.min(1, telemetry.progress),
+      ),
+      scenarioInteractionMessage: telemetry.message,
+    }),
   setActiveWaypointIndex: (activeWaypointIndex) =>
     set({ activeWaypointIndex }),
   completeScenarioEntities: (entityIds, scenarioEventMessage) =>
@@ -713,6 +738,10 @@ export const useSimStore = create<SimState>((set, get) => ({
           ? state.scenarioResetCount + 1
           : state.scenarioResetCount,
       scenarioEventMessage: `Vessel recovered at ${state.scenarioCheckpointLabel}.`,
+      scenarioInteractionEntityId: null,
+      scenarioInteractionStatus: 'idle',
+      scenarioInteractionProgress: 0,
+      scenarioInteractionMessage: '',
       ...resetTelemetry(),
     });
   },

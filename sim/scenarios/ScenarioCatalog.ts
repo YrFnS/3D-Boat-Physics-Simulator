@@ -25,6 +25,13 @@ export type ScenarioEntityType =
   | 'rescue-delivery'
   | 'storm-beacon';
 
+export interface ScenarioEntityInteractionDefinition {
+  holdSeconds?: number;
+  maxSpeedKnots?: number;
+  gateHalfWidthM?: number;
+  gateApproachDistanceM?: number;
+}
+
 export interface ScenarioEntityDefinition {
   id: string;
   label: string;
@@ -37,6 +44,7 @@ export interface ScenarioEntityDefinition {
   requiresEntityId?: string;
   offsetX?: number;
   offsetZ?: number;
+  interaction?: ScenarioEntityInteractionDefinition;
 }
 
 export interface ScenarioCheckpointDefinition {
@@ -201,9 +209,11 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
           type: 'cargo-pickup',
           waypointId: 'channel-entry',
           radiusM: 12,
-          guidance: 'Approach the floating supply platform to load the crate.',
+          guidance:
+            'Enter the loading zone below 3 knots and hold position to secure the crate.',
           completionMessage: 'Supply crate secured aboard.',
           required: true,
+          interaction: { holdSeconds: 1.5, maxSpeedKnots: 3 },
           offsetX: 5,
           offsetZ: -2,
         },
@@ -223,10 +233,12 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
           type: 'cargo-delivery',
           waypointId: 'berth',
           radiusM: 11,
-          guidance: 'Enter the delivery zone slowly to unload the supply crate.',
+          guidance:
+            'Enter below 2.5 knots and hold position while the crate is unloaded.',
           completionMessage: 'Supply crate delivered to the berth.',
           required: true,
           requiresEntityId: 'harbor-supply-pickup',
+          interaction: { holdSeconds: 2, maxSpeedKnots: 2.5 },
           offsetX: -3,
           offsetZ: 1,
         },
@@ -316,9 +328,11 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
           type: 'storm-beacon',
           waypointId: 'cross-sea',
           radiusM: 24,
-          guidance: 'Hold near the relay long enough to trigger the automatic handoff.',
+          guidance:
+            'Remain in the relay zone below 6 knots for five seconds.',
           completionMessage: 'Emergency relay activated.',
           required: true,
+          interaction: { holdSeconds: 5, maxSpeedKnots: 6 },
         },
         {
           id: 'storm-lee-gate',
@@ -404,9 +418,11 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
           type: 'rescue-pickup',
           waypointId: 'rescue-sector',
           radiusM: 18,
-          guidance: 'Approach the survivor pod carefully for automatic recovery.',
+          guidance:
+            'Enter below 3.5 knots and hold beside the survivor pod for recovery.',
           completionMessage: 'Survivor pod recovered.',
           required: true,
+          interaction: { holdSeconds: 2.5, maxSpeedKnots: 3.5 },
           offsetX: -4,
           offsetZ: 3,
         },
@@ -416,10 +432,12 @@ export const SCENARIOS: readonly ScenarioDefinition[] = [
           type: 'rescue-delivery',
           waypointId: 'safe-water',
           radiusM: 22,
-          guidance: 'Enter the safe-water zone below the arrival-speed limit.',
+          guidance:
+            'Enter below 5 knots and hold position for the rescue-team transfer.',
           completionMessage: 'Survivor pod transferred to the rescue team.',
           required: true,
           requiresEntityId: 'winter-survivor-pickup',
+          interaction: { holdSeconds: 2, maxSpeedKnots: 5 },
         },
       ],
       checkpoints: [

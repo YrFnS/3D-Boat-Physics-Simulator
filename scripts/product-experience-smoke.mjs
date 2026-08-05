@@ -39,6 +39,16 @@ function readExperienceState(page) {
       scenarioAssistanceReason:
         dataset.simScenarioAssistanceReason ?? '',
       scenarioResultRunMode: dataset.simScenarioResultRunMode ?? '',
+      scenarioInteractionEntityId:
+        dataset.simScenarioInteractionEntityId ?? '',
+      scenarioInteractionStatus:
+        dataset.simScenarioInteractionStatus ?? '',
+      scenarioInteractionProgress: Number(
+        dataset.simScenarioInteractionProgress ?? '0',
+      ),
+      scenarioInteractionMessage:
+        dataset.simScenarioInteractionMessage ?? '',
+      scenarioEntityCount: Number(dataset.simScenarioEntityCount ?? '0'),
       windSpeed: Number(dataset.simWindSpeed ?? '0'),
       assistedHistoryAttempts: Number(
         dataset.simScenarioHistoryAssistedAttempts ?? '0',
@@ -439,6 +449,47 @@ allPassed =
         (await page.getByRole('button', { name: 'Throttle reverse' }).count()) > 0 &&
         (await page.getByRole('button', { name: 'Steer left' }).count()) > 0 &&
         (await page.getByRole('button', { name: 'Steer right' }).count()) > 0;
+    },
+  )) && allPassed;
+
+allPassed =
+  (await runFlow(
+    'typed-interaction-guidance-flow',
+    {
+      viewport: { width: 1280, height: 820 },
+      deviceScaleFactor: 1,
+      isMobile: false,
+      hasTouch: false,
+    },
+    async ({ page, checks }) => {
+      await page
+        .locator('button')
+        .filter({ hasText: 'Harbor Training' })
+        .first()
+        .click();
+      await waitForDataset(page, 'simScenario', 'harbor-training');
+      await page.getByRole('button', { name: /Begin passage/i }).click();
+      await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForCollisionRuntimeReady(page);
+      await waitForNavigationReady(page);
+      await waitForDataset(
+        page,
+        'simScenarioInteractionEntityId',
+        'harbor-supply-pickup',
+      );
+      await waitForDataset(page, 'simScenarioInteractionStatus', 'approach');
+
+      const interaction = await readExperienceState(page);
+      checks.typedPickupActive =
+        interaction.scenarioInteractionEntityId ===
+          'harbor-supply-pickup' &&
+        interaction.scenarioInteractionStatus === 'approach' &&
+        interaction.scenarioEntityCount === 0;
+      checks.noGenericRadiusCompletion =
+        interaction.scenarioInteractionProgress === 0;
+      checks.typedGuidanceVisible =
+        interaction.scenarioInteractionMessage.includes('loading zone') &&
+        (await page.getByText(/loading zone/i).count()) > 0;
     },
   )) && allPassed;
 

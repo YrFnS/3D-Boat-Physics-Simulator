@@ -38,7 +38,8 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
 - [x] Lock standard mission presets, require an explicit assisted-mode transition for custom conditions, and exclude assisted attempts from standard records.
 - [x] Keep assisted scores informational and track assisted attempts separately without replacing standard best score, best time, best hull health, or standard attempt totals.
 - [x] Keep the desktop navigation chart clear of scored-environment controls so the assisted-mode transition remains physically accessible.
-- [ ] Replace generic radius completion with typed gate, relay, cargo, and rescue interactions.
+- [x] Replace generic entity-radius completion with forward gate crossings, timed relay holds, and type-specific cargo/rescue pickup and delivery zones.
+- [x] Reset partial interaction state on recovery and expose task progress and speed/hold guidance in the navigation HUD.
 - [ ] Remove unexplained normal-operation hull wear.
 - [ ] Rebalance field repair and account for repair use in scoring.
 

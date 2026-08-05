@@ -66,6 +66,10 @@ export default function NavigationHUD() {
       speedKnots: store.speedKnots,
       completedScenarioEntityIds: store.completedScenarioEntityIds,
       scenarioEventMessage: store.scenarioEventMessage,
+      scenarioInteractionEntityId: store.scenarioInteractionEntityId,
+      scenarioInteractionStatus: store.scenarioInteractionStatus,
+      scenarioInteractionProgress: store.scenarioInteractionProgress,
+      scenarioInteractionMessage: store.scenarioInteractionMessage,
       scenarioCheckpointLabel: store.scenarioCheckpointLabel,
     })),
   );
@@ -117,6 +121,12 @@ export default function NavigationHUD() {
       !completedEntitySet.has(entity.id) &&
       (!entity.requiresEntityId ||
         completedEntitySet.has(entity.requiresEntityId)),
+  );
+  const interactionActive = Boolean(
+    !freeMode &&
+      activeEntity &&
+      state.scenarioInteractionEntityId === activeEntity.id &&
+      state.scenarioInteractionStatus !== 'idle',
   );
   const requiredEntities = entities.filter((entity) => entity.required);
   const completedRequiredEntities = requiredEntities.filter((entity) =>
@@ -250,7 +260,9 @@ export default function NavigationHUD() {
           : 'Follow the amber bearing to the active plotted mark.'
     : slowingRequired
       ? `Reduce speed below ${finalSpeedLimit?.toFixed(1)} knots to complete the final gate.`
-      : activeEntity?.guidance ?? activeWaypoint?.guidance ?? '';
+      : interactionActive && state.scenarioInteractionMessage
+        ? state.scenarioInteractionMessage
+        : activeEntity?.guidance ?? activeWaypoint?.guidance ?? '';
 
   return (
     <section
@@ -560,6 +572,31 @@ export default function NavigationHUD() {
             <div className="mt-0.5 truncate text-slate-200">
               {state.scenarioCheckpointLabel}
             </div>
+          </div>
+        </div>
+      )}
+
+      {!freeMode && interactionActive && (
+        <div className="mt-2 rounded-lg border border-amber-300/20 bg-amber-300/[0.06] px-2 py-2 md:mt-3 md:px-3">
+          <div className="flex items-center justify-between gap-2 text-[7px] font-bold uppercase tracking-wider text-amber-200 md:text-[9px]">
+            <span>
+              {state.scenarioInteractionStatus === 'too-fast'
+                ? 'Reduce speed'
+                : state.scenarioInteractionStatus === 'holding'
+                  ? 'Hold position'
+                  : 'Task interaction'}
+            </span>
+            <span>
+              {Math.round(state.scenarioInteractionProgress * 100)}%
+            </span>
+          </div>
+          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-amber-500 to-emerald-400 transition-[width] duration-200"
+              style={{
+                width: `${state.scenarioInteractionProgress * 100}%`,
+              }}
+            />
           </div>
         </div>
       )}

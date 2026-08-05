@@ -67,6 +67,15 @@ function writeDataset(state: SimState) {
   dataset.simScenarioEntityCount = String(
     state.completedScenarioEntityIds.length,
   );
+  dataset.simScenarioInteractionEntityId =
+    state.scenarioInteractionEntityId ?? '';
+  dataset.simScenarioInteractionStatus =
+    state.scenarioInteractionStatus;
+  dataset.simScenarioInteractionProgress = String(
+    state.scenarioInteractionProgress,
+  );
+  dataset.simScenarioInteractionMessage =
+    state.scenarioInteractionMessage;
   dataset.simScenarioCheckpointId = state.scenarioCheckpointId ?? '';
   dataset.simScenarioCheckpointLabel = state.scenarioCheckpointLabel;
   dataset.simScenarioCheckpointWaypointIndex = String(
