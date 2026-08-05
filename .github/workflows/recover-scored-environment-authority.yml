@@ -1,0 +1,163 @@
+name: Recover scored environment authority
+
+on:
+  push:
+    branches:
+      - agent/simulator-stabilization
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scored-environment-authority
+  cancel-in-progress: false
+
+env:
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  recover:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out latest stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Refresh branch and apply migration when needed
+        id: migrate
+        continue-on-error: true
+        shell: bash
+        run: |
+          git fetch origin agent/simulator-stabilization
+          git reset --hard origin/agent/simulator-stabilization
+
+          if [ -f sim/scenarios/ScoredScenarioAuthority.ts ]; then
+            echo "source_already_present=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow_path = Path(
+              '.github/workflows/apply-scored-environment-authority.yml'
+          )
+          if not workflow_path.exists():
+              raise SystemExit(
+                  'The staged migration workflow is missing and the source authority was not published.'
+              )
+
+          workflow = workflow_path.read_text(encoding='utf-8')
+          start_marker = "          python - <<'PY'\n"
+          end_marker = "\n          PY\n\n      - name: Set up Node.js"
+          start = workflow.find(start_marker)
+          end = workflow.find(end_marker, start + len(start_marker))
+          if start < 0 or end < 0:
+              raise SystemExit('Could not extract the staged Python migration.')
+
+          embedded = workflow[start + len(start_marker):end]
+          script_lines = [
+              line[10:] if line.startswith('          ') else line
+              for line in embedded.splitlines()
+          ]
+          Path('/tmp/scored-environment-migration.py').write_text(
+              '\n'.join(script_lines) + '\n',
+              encoding='utf-8',
+          )
+          PY
+
+          set +e
+          python /tmp/scored-environment-migration.py > /tmp/migration.log 2>&1
+          status=$?
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -ne 0 ]; then
+            cat /tmp/migration.log
+            exit "$status"
+          fi
+
+      - name: Set up Node.js
+        if: steps.migrate.outcome == 'success'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.migrate.outcome == 'success'
+        run: npm ci
+
+      - name: Validate source, policy, browser build, and dependencies
+        id: validate
+        if: steps.migrate.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          npm run validate > /tmp/validation.log 2>&1
+          status=$?
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          cat /tmp/validation.log
+          exit "$status"
+
+      - name: Commit validated source and clean temporary files
+        if: >-
+          steps.migrate.outcome == 'success' &&
+          steps.validate.outcome == 'success'
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply-scored-environment-authority.yml
+          rm -f .github/workflows/recover-scored-environment-authority.yml
+          rm -f SCORING_ENVIRONMENT_MIGRATION_TRIGGER.txt
+          rm -f SCORING_ENVIRONMENT_MIGRATION_DIAGNOSTIC.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "No source or cleanup changes remain to commit."
+            exit 0
+          fi
+          git commit -m "fix: protect standard scenario environment records"
+          git push origin HEAD:agent/simulator-stabilization
+
+      - name: Publish actionable diagnostic
+        if: >-
+          steps.migrate.outcome != 'success' ||
+          steps.validate.outcome == 'failure'
+        shell: bash
+        run: |
+          git reset --hard origin/agent/simulator-stabilization
+          {
+            echo '# Scored environment authority migration diagnostic'
+            echo
+            echo 'The guarded migration did not publish source changes.'
+            echo
+            if [ -f /tmp/migration.log ]; then
+              echo '## Migration output'
+              echo '```text'
+              cat /tmp/migration.log
+              echo '```'
+            fi
+            if [ -f /tmp/validation.log ]; then
+              echo
+              echo '## Validation output'
+              echo '```text'
+              cat /tmp/validation.log
+              echo '```'
+            fi
+          } > SCORING_ENVIRONMENT_MIGRATION_DIAGNOSTIC.md
+          rm -f .github/workflows/recover-scored-environment-authority.yml
+          rm -f SCORING_ENVIRONMENT_MIGRATION_TRIGGER.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "test: record scored environment migration failure"
+          git push origin HEAD:agent/simulator-stabilization
