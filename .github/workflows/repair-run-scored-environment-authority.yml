@@ -1,0 +1,227 @@
+name: Repair and run scored environment authority
+
+on:
+  push:
+    branches:
+      - agent/simulator-stabilization
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scored-environment-authority
+  cancel-in-progress: false
+
+env:
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  repair-run:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out latest stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Repair repeated preset migration and apply source changes
+        id: migrate
+        continue-on-error: true
+        shell: bash
+        run: |
+          git fetch origin agent/simulator-stabilization
+          git reset --hard origin/agent/simulator-stabilization
+
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          workflow_path = Path(
+              '.github/workflows/apply-scored-environment-authority.yml'
+          )
+          if not workflow_path.exists():
+              raise SystemExit('The staged scored-environment workflow is missing.')
+
+          workflow = workflow_path.read_text(encoding='utf-8')
+          start_marker = "          for path in ['store/useSimStore.ts']:\n"
+          end_marker = "          replace_once(\n              'store/useSimStore.ts',\n              \"  returnToMenu: () =>\\n"
+          start = workflow.find(start_marker)
+          end = workflow.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit('Could not locate the repeated preset replacement block.')
+
+          replacement = dedent(r'''
+                    preset_block = (
+                        "      windSpeed: scenario.windSpeed,\n"
+                        "      windDir: scenario.windDir,\n"
+                        "      currentSpeed: scenario.currentSpeed,\n"
+                        "      currentDir: scenario.currentDir,\n"
+                        "      targetTime: scenario.targetTime,\n"
+                        "      targetSeason: scenario.targetSeason,\n"
+                    )
+                    preset_replacement = (
+                        "      ...scenarioEnvironmentFromDefinition(scenario),\n"
+                    )
+                    store_source = read('store/useSimStore.ts')
+                    preset_count = store_source.count(preset_block)
+                    if preset_count != 3:
+                        raise SystemExit(
+                            'store/useSimStore.ts: expected three standard preset blocks, '
+                            f'found {preset_count}'
+                        )
+                    store_source = store_source.replace(
+                        preset_block,
+                        preset_replacement,
+                    )
+
+                    hydrated_preset_block = (
+                        "        windSpeed: scenario.windSpeed,\n"
+                        "        windDir: scenario.windDir,\n"
+                        "        currentSpeed: scenario.currentSpeed,\n"
+                        "        currentDir: scenario.currentDir,\n"
+                        "        targetTime: scenario.targetTime,\n"
+                        "        targetSeason: scenario.targetSeason,\n"
+                    )
+                    hydrated_preset_replacement = (
+                        "        ...scenarioEnvironmentFromDefinition(scenario),\n"
+                    )
+                    hydrated_count = store_source.count(hydrated_preset_block)
+                    if hydrated_count != 1:
+                        raise SystemExit(
+                            'store/useSimStore.ts: expected one hydrated preset block, '
+                            f'found {hydrated_count}'
+                        )
+                    write(
+                        'store/useSimStore.ts',
+                        store_source.replace(
+                            hydrated_preset_block,
+                            hydrated_preset_replacement,
+                            1,
+                        ),
+                    )
+          ''').lstrip()
+          replacement = ''.join(
+              f'          {line}\n' if line else '\n'
+              for line in replacement.splitlines()
+          )
+          workflow = workflow[:start] + replacement + workflow[end:]
+
+          cleanup_old = (
+              '          rm .github/workflows/apply-scored-environment-authority.yml\n'
+          )
+          cleanup_new = (
+              '          rm .github/workflows/apply-scored-environment-authority.yml\n'
+              '          rm -f .github/workflows/repair-run-scored-environment-authority.yml\n'
+              '          rm -f SCORING_ENVIRONMENT_MIGRATION_TRIGGER.txt\n'
+              '          rm -f SCORING_ENVIRONMENT_MIGRATION_DIAGNOSTIC.md\n'
+          )
+          if workflow.count(cleanup_old) != 1:
+              raise SystemExit('Could not locate the staged workflow cleanup command.')
+          workflow_path.write_text(
+              workflow.replace(cleanup_old, cleanup_new, 1),
+              encoding='utf-8',
+          )
+
+          start_marker = "          python - <<'PY'\n"
+          end_marker = "\n          PY\n\n      - name: Set up Node.js"
+          workflow = workflow_path.read_text(encoding='utf-8')
+          start = workflow.find(start_marker)
+          end = workflow.find(end_marker, start + len(start_marker))
+          if start < 0 or end < 0:
+              raise SystemExit('Could not extract the repaired migration script.')
+          embedded = workflow[start + len(start_marker):end]
+          script_lines = [
+              line[10:] if line.startswith('          ') else line
+              for line in embedded.splitlines()
+          ]
+          Path('/tmp/scored-environment-migration.py').write_text(
+              '\n'.join(script_lines) + '\n',
+              encoding='utf-8',
+          )
+          PY
+
+          set +e
+          python /tmp/scored-environment-migration.py > /tmp/migration.log 2>&1
+          status=$?
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          cat /tmp/migration.log
+          exit "$status"
+
+      - name: Set up Node.js
+        if: steps.migrate.outcome == 'success'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.migrate.outcome == 'success'
+        run: npm ci
+
+      - name: Validate authority, UI, production build, and dependencies
+        id: validate
+        if: steps.migrate.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          npm run validate > /tmp/validation.log 2>&1
+          status=$?
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          cat /tmp/validation.log
+          exit "$status"
+
+      - name: Commit validated source and remove migration machinery
+        if: >-
+          steps.migrate.outcome == 'success' &&
+          steps.validate.outcome == 'success'
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply-scored-environment-authority.yml
+          rm -f .github/workflows/repair-run-scored-environment-authority.yml
+          rm -f SCORING_ENVIRONMENT_MIGRATION_TRIGGER.txt
+          rm -f SCORING_ENVIRONMENT_MIGRATION_DIAGNOSTIC.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: protect standard scenario environment records"
+          git push origin HEAD:agent/simulator-stabilization
+
+      - name: Commit validation diagnostic
+        if: >-
+          steps.migrate.outcome != 'success' ||
+          steps.validate.outcome == 'failure'
+        shell: bash
+        run: |
+          git reset --hard origin/agent/simulator-stabilization
+          {
+            echo '# Scored environment authority repair diagnostic'
+            echo
+            if [ -f /tmp/migration.log ]; then
+              echo '## Migration output'
+              echo '```text'
+              cat /tmp/migration.log
+              echo '```'
+            fi
+            if [ -f /tmp/validation.log ]; then
+              echo
+              echo '## Validation output'
+              echo '```text'
+              cat /tmp/validation.log
+              echo '```'
+            fi
+          } > SCORING_ENVIRONMENT_MIGRATION_DIAGNOSTIC.md
+          rm -f .github/workflows/repair-run-scored-environment-authority.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "test: record scored environment repair failure"
+          git push origin HEAD:agent/simulator-stabilization
