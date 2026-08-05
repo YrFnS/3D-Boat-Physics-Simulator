@@ -1,5 +1,8 @@
 import { getTerrainHeight } from '@/lib/terrain';
-import { sharedPhysics } from '@/store/useSimStore';
+import {
+  distanceToWhirlpoolBasinCenterM,
+  WHIRLPOOL_ROUTE_CLEARANCE_RADIUS_M,
+} from '@/sim/world/WorldEnvironment';
 import {
   getScenarioDefinition,
   type ScenarioCheckpointDefinition,
@@ -36,7 +39,6 @@ const WATER_DEPTH_THRESHOLD_M = -1.4;
 const SEARCH_STEP_M = 18;
 const SEARCH_RINGS = 14;
 const SEARCH_SAMPLES_PER_RING = 20;
-const MIN_WHIRLPOOL_DISTANCE_M = 230;
 const routeCache = new Map<ScenarioId, readonly ResolvedScenarioWaypoint[]>();
 const entityCache = new Map<ScenarioId, readonly ResolvedScenarioEntity[]>();
 const checkpointCache = new Map<
@@ -46,15 +48,12 @@ const checkpointCache = new Map<
 
 export function isNavigableWater(x: number, z: number) {
   const terrainHeight = getTerrainHeight(x, z);
-  const whirlpoolDistance = Math.hypot(
-    x - sharedPhysics.whirlpoolPos.x,
-    z - sharedPhysics.whirlpoolPos.z,
-  );
+  const whirlpoolBasinDistance = distanceToWhirlpoolBasinCenterM(x, z);
 
   return (
     Number.isFinite(terrainHeight) &&
     terrainHeight <= WATER_DEPTH_THRESHOLD_M &&
-    whirlpoolDistance >= MIN_WHIRLPOOL_DISTANCE_M
+    whirlpoolBasinDistance >= WHIRLPOOL_ROUTE_CLEARANCE_RADIUS_M
   );
 }
 
