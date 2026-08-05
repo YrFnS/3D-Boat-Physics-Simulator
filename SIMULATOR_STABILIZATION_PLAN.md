@@ -8,6 +8,7 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
 - [x] Open one draft pull request back into `integration/all-branches-20260804`.
 - [x] Require CI, product experience, visual smoke, physics calibration, and release validation on the exact stabilization head.
 - [x] Treat previous Phase 4 release evidence as historical rather than evidence for this branch.
+- [x] Synchronize the WebGL context-loss probe with explicit recovery-listener readiness so release validation cannot race application initialization.
 
 ## P0B — Runtime authority
 
