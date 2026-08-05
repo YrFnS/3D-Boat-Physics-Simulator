@@ -919,20 +919,25 @@ export default function Boat() {
         collisionSummary.maxPenetrationM,
       );
 
-      if (collisionSummary.contactCount > 0) {
-        sharedPhysics.collisionSequence += collisionSummary.contactCount;
+      // Gameplay and mission scoring count external contact starts.
+      // Raw manifold points remain available on the collision summary for
+      // calibration and impact diagnostics, but cannot multiply one sustained
+      // grounding into a collision every fixed step.
+      if (collisionSummary.contactStartCount > 0) {
+        sharedPhysics.collisionSequence +=
+          collisionSummary.contactStartCount;
       }
-      if (collisionSummary.terrainContactCount > 0) {
+      if (collisionSummary.terrainContactStartCount > 0) {
         sharedPhysics.terrainCollisionSequence +=
-          collisionSummary.terrainContactCount;
+          collisionSummary.terrainContactStartCount;
       }
-      if (collisionSummary.obstacleContactCount > 0) {
+      if (collisionSummary.obstacleContactStartCount > 0) {
         sharedPhysics.obstacleCollisionSequence +=
-          collisionSummary.obstacleContactCount;
+          collisionSummary.obstacleContactStartCount;
       }
-      if (collisionSummary.debugProbeContactCount > 0) {
+      if (collisionSummary.debugProbeContactStartCount > 0) {
         sharedPhysics.debugProbeCollisionSequence +=
-          collisionSummary.debugProbeContactCount;
+          collisionSummary.debugProbeContactStartCount;
       }
 
       const terrainImpact = collisionSummary.maxTerrainImpactSpeedMps;

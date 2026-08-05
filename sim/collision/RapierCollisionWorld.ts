@@ -4,6 +4,10 @@ import { getTerrainHeight } from '@/lib/terrain';
 import { MAX_OBSTACLES } from '@/store/useSimStore';
 import type { SixDofBody } from '@/sim/core/SixDofBody';
 import type { VesselConfig } from '@/sim/vessels/VesselConfig';
+import {
+  CollisionContactLifecycle,
+  type CollisionContactPairObservation,
+} from './CollisionContactLifecycle';
 
 const TERRAIN_SIZE_M = 3_000;
 const TERRAIN_SEGMENTS = 96;
@@ -36,11 +40,20 @@ function initializeRapier() {
 }
 
 export interface RapierContactSummary {
+  /** Raw active manifold-point count for diagnostics and calibration only. */
   contactCount: number;
   terrainContactCount: number;
   obstacleContactCount: number;
   debugProbeContactCount: number;
   fixtureContactCount: number;
+  activeContactPairCount: number;
+  activeExternalContactCount: number;
+  contactStartCount: number;
+  terrainContactStartCount: number;
+  obstacleContactStartCount: number;
+  debugProbeContactStartCount: number;
+  fixtureContactStartCount: number;
+  contactEndCount: number;
   fixtureKind: CollisionFixtureKind | null;
   maxObstacleHeadOnFactor: number;
   maxPenetrationM: number;
@@ -58,6 +71,14 @@ function createEmptySummary(): RapierContactSummary {
     obstacleContactCount: 0,
     debugProbeContactCount: 0,
     fixtureContactCount: 0,
+    activeContactPairCount: 0,
+    activeExternalContactCount: 0,
+    contactStartCount: 0,
+    terrainContactStartCount: 0,
+    obstacleContactStartCount: 0,
+    debugProbeContactStartCount: 0,
+    fixtureContactStartCount: 0,
+    contactEndCount: 0,
     fixtureKind: null,
     maxObstacleHeadOnFactor: 0,
     maxPenetrationM: 0,
@@ -130,6 +151,7 @@ export class RapierCollisionWorld {
   private readonly obstacleRadii = new Float32Array(MAX_OBSTACLES);
   private readonly vesselColliders: RAPIER.Collider[] = [];
   private readonly vesselColliderHandles = new Set<number>();
+  private readonly contactLifecycle = new CollisionContactLifecycle();
 
   private vesselBody: RAPIER.RigidBody | null = null;
   private vesselType: VesselConfig['type'] | null = null;
@@ -182,6 +204,7 @@ export class RapierCollisionWorld {
   }
 
   dispose() {
+    this.contactLifecycle.reset();
     this.world.free();
   }
 
@@ -319,6 +342,7 @@ export class RapierCollisionWorld {
 
     const summary = createEmptySummary();
     const visitedPairs = new Set<string>();
+    const activeContactPairs: CollisionContactPairObservation[] = [];
 
     for (const vesselCollider of this.vesselColliders) {
       this.world.contactPairsWith(vesselCollider, (otherCollider) => {
@@ -336,6 +360,18 @@ export class RapierCollisionWorld {
         if (visitedPairs.has(pairKey)) return;
         visitedPairs.add(pairKey);
 
+        const isCalibrationFixture =
+          otherCollider.handle === this.calibrationFixtureCollider?.handle;
+        const fixtureIsTerrain =
+          isCalibrationFixture &&
+          this.calibrationFixtureKind === 'shoreline';
+        const isTerrain =
+          otherCollider.handle === this.terrainCollider.handle ||
+          fixtureIsTerrain;
+        const isDebugProbe =
+          otherCollider.handle === this.debugProbeCollider?.handle;
+        let pairHasContact = false;
+
         this.world.contactPair(
           vesselCollider,
           otherCollider,
@@ -344,16 +380,7 @@ export class RapierCollisionWorld {
             const solverContactCount = manifold.numSolverContacts();
             if (geometricContactCount <= 0 && solverContactCount <= 0) return;
 
-            const isCalibrationFixture =
-              otherCollider.handle === this.calibrationFixtureCollider?.handle;
-            const fixtureIsTerrain =
-              isCalibrationFixture &&
-              this.calibrationFixtureKind === 'shoreline';
-            const isTerrain =
-              otherCollider.handle === this.terrainCollider.handle ||
-              fixtureIsTerrain;
-            const isDebugProbe =
-              otherCollider.handle === this.debugProbeCollider?.handle;
+            pairHasContact = true;
 
             const rawNormal = manifold.normal();
             this.normal.set(rawNormal.x, rawNormal.y, rawNormal.z);
@@ -502,8 +529,37 @@ export class RapierCollisionWorld {
             }
           },
         );
+
+        if (pairHasContact) {
+          activeContactPairs.push({
+            pairKey,
+            externalKey: `collider:${otherCollider.handle}`,
+            kind: isTerrain ? 'terrain' : 'obstacle',
+            fixture: isCalibrationFixture,
+            debugProbe: isDebugProbe,
+          });
+        }
       });
     }
+
+    const lifecycleSummary = this.contactLifecycle.advance(
+      activeContactPairs,
+      deltaSeconds,
+    );
+    summary.activeContactPairCount =
+      lifecycleSummary.activeContactPairCount;
+    summary.activeExternalContactCount =
+      lifecycleSummary.activeExternalContactCount;
+    summary.contactStartCount = lifecycleSummary.contactStartCount;
+    summary.terrainContactStartCount =
+      lifecycleSummary.terrainContactStartCount;
+    summary.obstacleContactStartCount =
+      lifecycleSummary.obstacleContactStartCount;
+    summary.debugProbeContactStartCount =
+      lifecycleSummary.debugProbeContactStartCount;
+    summary.fixtureContactStartCount =
+      lifecycleSummary.fixtureContactStartCount;
+    summary.contactEndCount = lifecycleSummary.contactEndCount;
 
     const solvedTranslation = vesselBody.translation();
     const solvedRotation = vesselBody.rotation();
@@ -542,6 +598,7 @@ export class RapierCollisionWorld {
     }
     this.removeDebugProbe();
     this.removeCalibrationFixture();
+    this.contactLifecycle.reset();
 
     this.vesselType = vessel.type;
     body.getCenterOfMassLocal(this.centerOfMassLocal);
