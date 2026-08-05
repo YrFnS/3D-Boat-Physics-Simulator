@@ -66,8 +66,13 @@ const environmentSource = await fs.readFile(
 );
 assert.match(
   environmentSource,
-  /hazardTimeRef\.current \+= safeDelta/,
-  'Hazard movement must use a pause-aware accumulated world clock.',
+  /canAdvanceAuthoritativeSimulation/,
+  'Hazard movement must be gated by running-session authority.',
+);
+assert.match(
+  environmentSource,
+  /hazardTimeRef\.current \+= authoritativeDelta/,
+  'Hazard movement must use the running-only accumulated world delta.',
 );
 assert.doesNotMatch(
   environmentSource,
