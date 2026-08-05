@@ -250,11 +250,6 @@ export default function Simulator() {
     const startedAt = performance.now();
     const acceptReadyAt = startedAt + COLLISION_READY_SETTLE_MS;
 
-    setCollisionRuntime({
-      generation: runtimeGeneration,
-      status: 'loading',
-    });
-
     const interval = window.setInterval(() => {
       if (cancelled) return;
 
