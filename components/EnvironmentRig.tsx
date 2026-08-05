@@ -14,6 +14,11 @@ import {
   ShaderMaterial,
 } from 'three';
 import {
+  WHIRLPOOL_BASIN_CENTER_X_M,
+  WHIRLPOOL_BASIN_CENTER_Z_M,
+  WHIRLPOOL_ORBIT_RADIUS_M,
+} from '@/sim/world/WorldEnvironment';
+import {
   type RenderQuality,
   sharedPhysics,
   useSimStore,
@@ -78,6 +83,7 @@ export default function EnvironmentRig() {
   const skyMaterialRef = useRef<ShaderMaterial | null>(null);
   const starsMaterialRef = useRef<TransparentMaterial | null>(null);
   const shadowAccumulatorRef = useRef(1);
+  const hazardTimeRef = useRef(0);
   const shadowWasEnabledRef = useRef(false);
   const configuredShadowRef = useRef<DirectionalLight | null>(null);
   const renderQuality = useSimStore((state) => state.renderQuality);
@@ -143,7 +149,12 @@ export default function EnvironmentRig() {
     if (sharedPhysics.season < 0) sharedPhysics.season += 1;
     if (sharedPhysics.season >= 1) sharedPhysics.season -= 1;
 
-    const elapsed = state.clock.elapsedTime;
+    // The hazard clock advances only while frame callbacks are authorized.
+    // Paused sessions use frameloop="never", so a long pause cannot teleport
+    // the tornado or whirlpool when rendering resumes. The clock belongs to the
+    // world rig and therefore survives vessel recovery/remount generations.
+    hazardTimeRef.current += safeDelta;
+    const elapsed = hazardTimeRef.current;
     const tornadoStrength = clamp((store.windSpeed - 24) / 18, 0, 1);
 
     if (tornadoStrength > 0.001) {
@@ -157,9 +168,11 @@ export default function EnvironmentRig() {
     }
 
     sharedPhysics.whirlpoolPos.set(
-      -400 + Math.sin(elapsed * 0.01) * 20,
+      WHIRLPOOL_BASIN_CENTER_X_M +
+        Math.sin(elapsed * 0.01) * WHIRLPOOL_ORBIT_RADIUS_M,
       0,
-      -400 + Math.cos(elapsed * 0.01) * 20,
+      WHIRLPOOL_BASIN_CENTER_Z_M +
+        Math.cos(elapsed * 0.01) * WHIRLPOOL_ORBIT_RADIUS_M,
     );
 
     const summer = clamp(
