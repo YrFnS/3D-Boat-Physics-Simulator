@@ -26,10 +26,10 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
 
 ## P0D — Collision lifecycle and scoring
 
-- [ ] Replace per-step contact-point accumulation with collider-pair contact-start events.
-- [ ] Count one sustained grounding/contact as one gameplay collision.
-- [ ] Preserve separate impact telemetry for damage and diagnostics.
-- [ ] Add regressions for sustained contact, contact separation, and repeated impact.
+- [x] Replace per-step contact-point accumulation with compound-collider contact-start events grouped by external terrain or obstacle.
+- [x] Count one sustained grounding/contact as one gameplay collision, including brief solver dropouts and hull-piece handoffs.
+- [x] Preserve raw manifold counts, impact speed, impulse, penetration, and class telemetry independently for damage and diagnostics.
+- [x] Add regressions for sustained contact, release grace, compound-hull handoff, full separation, repeated impact, fixture classification, and vessel-generation reset.
 
 ## P1 — Mission and damage fairness
 
