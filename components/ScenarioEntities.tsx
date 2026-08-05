@@ -304,7 +304,9 @@ export default function ScenarioEntities({
           </group>
         );
 
-        return active ? (
+        // Gates are fixed navigation structures. Floating them would make the
+        // visible posts diverge from the authoritative crossing plane.
+        return active && entity.type !== 'navigation-gate' ? (
           <Float
             key={entity.id}
             speed={1.7}
