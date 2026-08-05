@@ -1,0 +1,332 @@
+name: Apply vessel damage policy
+
+on:
+  push:
+    branches:
+      - agent/simulator-stabilization
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vessel-damage-policy-migration
+  cancel-in-progress: false
+
+env:
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  migrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Apply explicit vessel damage policy
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          def read(path: str) -> str:
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path: str, content: str) -> None:
+              target = Path(path)
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_text(content, encoding='utf-8')
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              source = read(path)
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(
+                      f'{path}: expected exactly one target, found {count}: {old[:180]!r}'
+                  )
+              write(path, source.replace(old, new, 1))
+
+          damage_policy = dedent(r'''
+            export type VesselDamageSource =
+              | 'slamming'
+              | 'environmental-impact'
+              | 'terrain-impact'
+              | 'obstacle-impact'
+              | 'engine-overheat'
+              | 'machinery-flooding';
+
+            export interface VesselHealthState {
+              hullHealth: number;
+              engineHealth: number;
+              rudderHealth: number;
+            }
+
+            export interface VesselDamageEvent {
+              source: VesselDamageSource;
+              hullDamage?: number;
+              engineDamage?: number;
+              rudderDamage?: number;
+            }
+
+            export const VESSEL_DAMAGE_SOURCE_LABELS: Readonly<
+              Record<VesselDamageSource, string>
+            > = Object.freeze({
+              slamming: 'Hull slamming',
+              'environmental-impact': 'Environmental impact',
+              'terrain-impact': 'Grounding or terrain impact',
+              'obstacle-impact': 'Obstacle impact',
+              'engine-overheat': 'Engine overheating',
+              'machinery-flooding': 'Machinery-space flooding',
+            });
+
+            /**
+             * Normal operation is not a structural damage event. A vessel may
+             * plane at its designed speed or carry ordinary rudder load without
+             * silently losing health merely because time passed.
+             */
+            export const NORMAL_OPERATION_DAMAGE_POLICY = Object.freeze({
+              sustainedPlaningHullDamagePerSecond: 0,
+              hydrodynamicRudderWearPerSecond: 0,
+            });
+
+            function finiteNonNegative(value: number | undefined) {
+              return typeof value === 'number' && Number.isFinite(value)
+                ? Math.max(0, value)
+                : 0;
+            }
+
+            function clampHealth(value: number) {
+              if (!Number.isFinite(value)) return 0;
+              return Math.max(0, Math.min(100, value));
+            }
+
+            export function applyVesselDamage(
+              health: VesselHealthState,
+              event: VesselDamageEvent,
+            ): VesselHealthState {
+              return {
+                hullHealth: clampHealth(
+                  health.hullHealth - finiteNonNegative(event.hullDamage),
+                ),
+                engineHealth: clampHealth(
+                  health.engineHealth - finiteNonNegative(event.engineDamage),
+                ),
+                rudderHealth: clampHealth(
+                  health.rudderHealth - finiteNonNegative(event.rudderDamage),
+                ),
+              };
+            }
+          ''').lstrip()
+          write('sim/vessels/VesselDamagePolicy.ts', damage_policy)
+
+          contract = dedent(r'''
+            import assert from 'node:assert/strict';
+            import fs from 'node:fs/promises';
+            import {
+              applyVesselDamage,
+              NORMAL_OPERATION_DAMAGE_POLICY,
+              VESSEL_DAMAGE_SOURCE_LABELS,
+            } from '../sim/vessels/VesselDamagePolicy.ts';
+
+            const pristine = {
+              hullHealth: 100,
+              engineHealth: 100,
+              rudderHealth: 100,
+            };
+
+            assert.deepEqual(
+              applyVesselDamage(pristine, {
+                source: 'terrain-impact',
+                hullDamage: 12,
+                engineDamage: 3,
+                rudderDamage: 4,
+              }),
+              {
+                hullHealth: 88,
+                engineHealth: 97,
+                rudderHealth: 96,
+              },
+              'Explicit damage must affect only the declared health channels.',
+            );
+
+            assert.deepEqual(
+              applyVesselDamage(pristine, {
+                source: 'obstacle-impact',
+                hullDamage: 500,
+                engineDamage: Number.POSITIVE_INFINITY,
+                rudderDamage: -8,
+              }),
+              {
+                hullHealth: 0,
+                engineHealth: 100,
+                rudderHealth: 100,
+              },
+              'Damage must clamp health and ignore invalid or negative values.',
+            );
+
+            assert.equal(
+              NORMAL_OPERATION_DAMAGE_POLICY.sustainedPlaningHullDamagePerSecond,
+              0,
+            );
+            assert.equal(
+              NORMAL_OPERATION_DAMAGE_POLICY.hydrodynamicRudderWearPerSecond,
+              0,
+            );
+            assert.deepEqual(
+              Object.keys(VESSEL_DAMAGE_SOURCE_LABELS).sort(),
+              [
+                'engine-overheat',
+                'environmental-impact',
+                'machinery-flooding',
+                'obstacle-impact',
+                'slamming',
+                'terrain-impact',
+              ],
+              'Every allowed health-loss source must be explicit and named.',
+            );
+
+            const boatSource = await fs.readFile(
+              new URL('../components/Boat.tsx', import.meta.url),
+              'utf8',
+            );
+
+            assert.match(
+              boatSource,
+              /applyVesselDamage/,
+              'Boat health loss must route through the explicit damage policy.',
+            );
+            for (const source of Object.keys(VESSEL_DAMAGE_SOURCE_LABELS)) {
+              assert.match(
+                boatSource,
+                new RegExp(`source: '${source}'`),
+                `Boat must retain the explicit ${source} damage path.`,
+              );
+            }
+
+            assert.doesNotMatch(
+              boatSource,
+              /activePlaningSpeedRatio\s*>\s*0\.8[\s\S]{0,260}hullHealth\.current\s*-/,
+              'Designed planing operation must not passively consume hull health.',
+            );
+            assert.doesNotMatch(
+              boatSource,
+              /rudderLoadRatio/,
+              'Ordinary hydrodynamic rudder load must not passively consume rudder health.',
+            );
+            assert.doesNotMatch(
+              boatSource,
+              /normalizedSurgeSpeed/,
+              'The removed passive rudder-wear calculation must not remain dead code.',
+            );
+            assert.doesNotMatch(
+              boatSource,
+              /(?:hullHealth|engineHealth|rudderHealth)\.current\s*=\s*Math\.max\(\s*0,\s*(?:hullHealth|engineHealth|rudderHealth)\.current\s*-/,
+              'Direct health subtraction must not bypass the damage policy.',
+            );
+
+            console.log('Vessel damage policy contract passed.');
+          ''').lstrip()
+          write('scripts/vessel-damage-policy-contract.mjs', contract)
+
+          replace_once(
+              'components/Boat.tsx',
+              "import { EnvironmentalForces } from '@/sim/vessels/EnvironmentalForces';\n",
+              "import { EnvironmentalForces } from '@/sim/vessels/EnvironmentalForces';\nimport {\n  applyVesselDamage,\n  type VesselDamageEvent,\n} from '@/sim/vessels/VesselDamagePolicy';\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "import {\n  normalizedSurgeSpeed,\n  planingSpeedRatio,\n  waterRelativeSurgeSpeed,\n} from '@/sim/vessels/PhysicsCorrectness';\n",
+              "import {\n  planingSpeedRatio,\n  waterRelativeSurgeSpeed,\n} from '@/sim/vessels/PhysicsCorrectness';\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "  const rudderHealth = useRef(100);\n  \n  // Read active boat reactively to trigger re-renders\n",
+              "  const rudderHealth = useRef(100);\n\n  const applyDamage = (event: VesselDamageEvent) => {\n    const nextHealth = applyVesselDamage(\n      {\n        hullHealth: hullHealth.current,\n        engineHealth: engineHealth.current,\n        rudderHealth: rudderHealth.current,\n      },\n      event,\n    );\n    hullHealth.current = nextHealth.hullHealth;\n    engineHealth.current = nextHealth.engineHealth;\n    rudderHealth.current = nextHealth.rudderHealth;\n  };\n  \n  // Read active boat reactively to trigger re-renders\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "    const surgeSpeedRatio = normalizedSurgeSpeed(\n      vRelForward,\n      vessel.planingReferenceSpeedMps,\n    );\n",
+              "",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "      hullHealth.current = Math.max(\n        0,\n        hullHealth.current - hydrostaticResult.slamHullDamage,\n      );\n      engineHealth.current = Math.max(\n        0,\n        engineHealth.current - hydrostaticResult.slamEngineDamage,\n      );\n      rudderHealth.current = Math.max(\n        0,\n        rudderHealth.current - hydrostaticResult.slamRudderDamage,\n      );\n",
+              "      applyDamage({\n        source: 'slamming',\n        hullDamage: hydrostaticResult.slamHullDamage,\n        engineDamage: hydrostaticResult.slamEngineDamage,\n        rudderDamage: hydrostaticResult.slamRudderDamage,\n      });\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "      hullHealth.current = Math.max(\n        0,\n        hullHealth.current - environmentalDamage.hullDamage,\n      );\n      engineHealth.current = Math.max(\n        0,\n        engineHealth.current - environmentalDamage.engineDamage,\n      );\n",
+              "      applyDamage({\n        source: 'environmental-impact',\n        hullDamage: environmentalDamage.hullDamage,\n        engineDamage: environmentalDamage.engineDamage,\n      });\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "        hullHealth.current = Math.max(0, hullHealth.current - damage);\n        if (severity > 2.5) {\n          engineHealth.current = Math.max(\n            0,\n            engineHealth.current - damage * 0.22,\n          );\n          rudderHealth.current = Math.max(\n            0,\n            rudderHealth.current - damage * 0.32,\n          );\n        }\n",
+              "        applyDamage({\n          source: 'terrain-impact',\n          hullDamage: damage,\n          engineDamage: severity > 2.5 ? damage * 0.22 : 0,\n          rudderDamage: severity > 2.5 ? damage * 0.32 : 0,\n        });\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "        hullHealth.current = Math.max(0, hullHealth.current - damage);\n        if (severity > 4 && headOnFactor > 0.35) {\n          engineHealth.current = Math.max(\n            0,\n            engineHealth.current -\n              damage * 0.18 * headOnFactor,\n          );\n        }\n        const glancingFactor = 1 - headOnFactor;\n        const glancingRudderStrike =\n          severity > 2.1 &&\n          glancingFactor > 0.3 &&\n          normalizedImpulse > 1;\n        if (severity > 2.5 || glancingRudderStrike) {\n          rudderHealth.current = Math.max(\n            0,\n            rudderHealth.current -\n              damage * 0.2 * (1 - headOnFactor * 0.35),\n          );\n        }\n",
+              "        const glancingFactor = 1 - headOnFactor;\n        const glancingRudderStrike =\n          severity > 2.1 &&\n          glancingFactor > 0.3 &&\n          normalizedImpulse > 1;\n        applyDamage({\n          source: 'obstacle-impact',\n          hullDamage: damage,\n          engineDamage:\n            severity > 4 && headOnFactor > 0.35\n              ? damage * 0.18 * headOnFactor\n              : 0,\n          rudderDamage:\n            severity > 2.5 || glancingRudderStrike\n              ? damage * 0.2 * (1 - headOnFactor * 0.35)\n              : 0,\n        });\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "       engineHealth.current = Math.max(0, engineHealth.current - overheatDamage * dt);\n",
+              "       applyDamage({\n         source: 'engine-overheat',\n         engineDamage: overheatDamage * dt,\n       });\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "      engineHealth.current = Math.max(\n        0,\n        engineHealth.current - floodingDamagePerSecond * dt,\n      );\n",
+              "      applyDamage({\n        source: 'machinery-flooding',\n        engineDamage: floodingDamagePerSecond * dt,\n      });\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "    // Hull Health: Degrades very slowly from sustained planing (previously Phase 1)\n    if (activePlaningSpeedRatio > 0.8) {\n       hullHealth.current = Math.max(\n         0,\n         hullHealth.current - activePlaningSpeedRatio * 0.1 * dt,\n       );\n    }\n\n    // Rudder Health: Degrades when turning sharply at high speeds\n    const rudderLoadRatio =\n      appliedRudderForceN / Math.max(1, vessel.rudder.maximumForceN);\n    if (rudderLoadRatio > 0.45 && surgeSpeedRatio > 0.5) {\n      rudderHealth.current = Math.max(\n        0,\n        rudderHealth.current -\n          (rudderLoadRatio - 0.45) * 2.4 * dt,\n      );\n    }\n    \n",
+              "    // Designed planing and ordinary steering loads are normal\n    // operating states, not health-loss events. Structural damage is applied\n    // only through the explicit impact, slamming, hazard, flooding, and\n    // overheating paths above.\n    \n",
+          )
+
+          replace_once(
+              'package.json',
+              '    "test:scenario-interactions": "node --experimental-strip-types --no-warnings scripts/scenario-interaction-runtime-contract.mjs",\n',
+              '    "test:scenario-interactions": "node --experimental-strip-types --no-warnings scripts/scenario-interaction-runtime-contract.mjs",\n    "test:damage-policy": "node --experimental-strip-types --no-warnings scripts/vessel-damage-policy-contract.mjs",\n',
+          )
+          replace_once(
+              'package.json',
+              'npm run test:scenario-interactions && node --experimental-strip-types',
+              'npm run test:scenario-interactions && npm run test:damage-policy && node --experimental-strip-types',
+          )
+
+          replace_once(
+              'SIMULATOR_STABILIZATION_PLAN.md',
+              '- [ ] Remove unexplained normal-operation hull wear.\n',
+              '- [x] Remove passive hull wear from sustained planing and passive rudder wear from ordinary hydrodynamic steering loads.\n- [x] Route slamming, terrain, obstacle, environmental, overheating, and machinery-flooding health loss through one explicit typed damage policy with permanent regressions.\n',
+          )
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate damage policy and complete application
+        run: npm run validate
+
+      - name: Commit validated policy and remove migration workflow
+        shell: bash
+        run: |
+          rm .github/workflows/apply-vessel-damage-policy.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: remove passive vessel health wear"
+          git push origin HEAD:agent/simulator-stabilization
