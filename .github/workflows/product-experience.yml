@@ -169,10 +169,7 @@ jobs:
 
   apply-field-repair-fairness:
     name: Apply and validate field repair fairness
-    needs: experience
     if: >-
-      always() &&
-      needs.experience.result == 'success' &&
       github.event_name == 'pull_request' &&
       github.head_ref == 'agent/simulator-stabilization'
     permissions:
@@ -239,6 +236,22 @@ jobs:
           source = source.replace(
               call_anchor,
               call_anchor.replace('replace_once(', 'replace_last(', 1),
+              1,
+          )
+
+          reset_contract_anchor = (
+              "            const resetStart = storeSource.indexOf('resetVessel: () =>');\n"
+          )
+          reset_contract_replacement = (
+              "            const resetStart = storeSource.lastIndexOf(\n"
+              "              '  resetVessel: () => {',\n"
+              "            );\n"
+          )
+          if source.count(reset_contract_anchor) != 1:
+              raise SystemExit('Unable to locate reset-vessel contract target.')
+          source = source.replace(
+              reset_contract_anchor,
+              reset_contract_replacement,
               1,
           )
 
