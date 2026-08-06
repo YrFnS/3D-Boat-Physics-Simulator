@@ -19,6 +19,7 @@
     "test:world-direction": "node --experimental-strip-types --no-warnings scripts/world-direction-contract.mjs",
     "test:collision-lifecycle": "node --experimental-strip-types --no-warnings scripts/collision-contact-lifecycle-contract.mjs",
     "test:collision-runtime": "node --experimental-strip-types --no-warnings scripts/vessel-collision-runtime-contract.mjs",
+    "test:collision-architecture": "npm run test:collision-lifecycle && npm run test:collision-runtime",
     "test:mission-runtime": "node --experimental-strip-types --no-warnings scripts/mission-runtime-statistics-contract.mjs",
     "test:scored-environment": "node --experimental-strip-types --no-warnings scripts/scored-scenario-environment-contract.mjs",
     "test:scenario-interactions": "node --experimental-strip-types --no-warnings scripts/scenario-interaction-runtime-contract.mjs",
