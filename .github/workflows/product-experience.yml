@@ -203,34 +203,37 @@ jobs:
           path = Path('.github/workflows/apply-field-repair-fairness.yml')
           source = path.read_text(encoding='utf-8')
 
-          helper_anchor = """          def replace_once(path: str, old: str, new: str) -> None:
-              source = read(path)
-              count = source.count(old)
-              if count != 1:
-                  raise SystemExit(
-                      f'{path}: expected exactly one target, found {count}: {old[:180]!r}'
-                  )
-              write(path, source.replace(old, new, 1))
-"""
-          helper_replacement = helper_anchor + """
-          def replace_last(path: str, old: str, new: str) -> None:
-              source = read(path)
-              count = source.count(old)
-              if count < 1:
-                  raise SystemExit(
-                      f'{path}: expected at least one target, found {count}: {old[:180]!r}'
-                  )
-              index = source.rfind(old)
-              write(path, source[:index] + new + source[index + len(old):])
-"""
+          helper_anchor = (
+              "          def replace_once(path: str, old: str, new: str) -> None:\n"
+              "              source = read(path)\n"
+              "              count = source.count(old)\n"
+              "              if count != 1:\n"
+              "                  raise SystemExit(\n"
+              "                      f'{path}: expected exactly one target, found {count}: {old[:180]!r}'\n"
+              "                  )\n"
+              "              write(path, source.replace(old, new, 1))\n"
+          )
+          helper_replacement = helper_anchor + (
+              "\n"
+              "          def replace_last(path: str, old: str, new: str) -> None:\n"
+              "              source = read(path)\n"
+              "              count = source.count(old)\n"
+              "              if count < 1:\n"
+              "                  raise SystemExit(\n"
+              "                      f'{path}: expected at least one target, found {count}: {old[:180]!r}'\n"
+              "                  )\n"
+              "              index = source.rfind(old)\n"
+              "              write(path, source[:index] + new + source[index + len(old):])\n"
+          )
           if source.count(helper_anchor) != 1:
               raise SystemExit('Unable to locate replace_once helper.')
           source = source.replace(helper_anchor, helper_replacement, 1)
 
-          call_anchor = """          replace_once(
-              'components/Boat.tsx',
-              \"        setFloodingTelemetry(\\n          floodingResult.floodingRatio,\\n          floodingResult.totalFloodedVolumeM3,\\n        );\\n\",
-"""
+          call_anchor = (
+              "          replace_once(\n"
+              "              'components/Boat.tsx',\n"
+              "              \"        setFloodingTelemetry(\\n          floodingResult.floodingRatio,\\n          floodingResult.totalFloodedVolumeM3,\\n        );\\n\",\n"
+          )
           if source.count(call_anchor) != 1:
               raise SystemExit('Unable to locate Boat telemetry replacement call.')
           source = source.replace(
