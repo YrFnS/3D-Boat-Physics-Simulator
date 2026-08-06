@@ -48,12 +48,14 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
 
 ## P2 — Architecture and performance
 
-- [ ] Split vessel runtime, physics, collision, damage, telemetry, audio, and rendering responsibilities out of `Boat.tsx`.
-      - [x] Extract component condition, engine thermal/flooding damage, and field-repair mutation into `VesselConditionRuntime`.
-      - [x] Extract Rapier contact-summary response, impact damage, breach selection, collision telemetry, and impact-audio orchestration into `VesselCollisionRuntime`.
-      - [x] Protect the extracted vessel architecture with focused condition, dynamics, collision lifecycle, collision runtime, collision architecture, and vessel architecture developer gates.
-      - [x] Extract sectional hydrostatics, propulsion, steering, wind, planing, roll-stability, and environmental-force orchestration into `VesselDynamicsRuntime`.
-      - [ ] Extract telemetry/audio publication and move vessel meshes into dedicated render components.
+- [x] Split vessel runtime, physics, collision, damage, telemetry, audio, and rendering responsibilities out of `Boat.tsx`.
+  - [x] Extract component condition, engine thermal/flooding damage, and field-repair mutation into `VesselConditionRuntime`.
+  - [x] Extract Rapier contact-summary response, impact damage, breach selection, collision telemetry, and impact-audio orchestration into `VesselCollisionRuntime`.
+  - [x] Extract sectional hydrostatics, propulsion, steering, wind, planing, roll-stability, and environmental-force orchestration into `VesselDynamicsRuntime`.
+  - [x] Extract fixed-step telemetry, calibration publication, shared engineering state, and deterministic 10 Hz UI publication into `VesselTelemetryRuntime`.
+  - [x] Extract render interpolation, flag and rudder presentation, cached damage visuals, and render-frame audio coordination into `VesselPresentationRuntime`.
+  - [x] Move trawler and speedboat procedural meshes into dedicated render components with no simulation authority.
+  - [x] Protect the extracted vessel architecture with focused condition, dynamics, telemetry, presentation, render-model, collision lifecycle, collision runtime, collision architecture, and vessel architecture gates.
 - [ ] Version obstacle data and synchronize Rapier colliders only when obstacle state changes.
 - [ ] Align visible terrain detail and collision detail near the vessel.
 - [ ] Complete the physical desktop, integrated-GPU, and touch-device benchmark matrix.
