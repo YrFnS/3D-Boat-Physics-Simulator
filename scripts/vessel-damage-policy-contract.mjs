@@ -67,23 +67,37 @@ const boatSource = await fs.readFile(
   new URL('../components/Boat.tsx', import.meta.url),
   'utf8',
 );
+const conditionRuntimeSource = await fs.readFile(
+  new URL(
+    '../sim/vessels/VesselConditionRuntime.ts',
+    import.meta.url,
+  ),
+  'utf8',
+);
+const integratedDamageSource =
+  `${boatSource}\n${conditionRuntimeSource}`;
 
 assert.match(
+  conditionRuntimeSource,
+  /applyVesselDamage/,
+  'Condition health loss must route through the explicit damage policy.',
+);
+assert.doesNotMatch(
   boatSource,
   /applyVesselDamage/,
-  'Boat health loss must route through the explicit damage policy.',
+  'The React vessel component must delegate condition mutation.',
 );
 for (const source of Object.keys(VESSEL_DAMAGE_SOURCE_LABELS)) {
   assert.match(
-    boatSource,
+    integratedDamageSource,
     new RegExp(`source: '${source}'`),
-    `Boat must retain the explicit ${source} damage path.`,
+    `The integrated vessel runtime must retain the explicit ${source} damage path.`,
   );
 }
 
 assert.doesNotMatch(
   boatSource,
-  /activePlaningSpeedRatio\s*>\s*0\.8[\s\S]{0,260}hullHealth\.current\s*-/,
+  /activePlaningSpeedRatio\s*>\s*0\.8[\s\S]{0,260}(?:hullHealth\.current|conditionRuntime\.current\.hullHealth)\s*-/,
   'Designed planing operation must not passively consume hull health.',
 );
 assert.doesNotMatch(
@@ -97,8 +111,8 @@ assert.doesNotMatch(
   'The removed passive rudder-wear calculation must not remain dead code.',
 );
 assert.doesNotMatch(
-  boatSource,
-  /(?:hullHealth|engineHealth|rudderHealth)\.current\s*=\s*Math\.max\(\s*0,\s*(?:hullHealth|engineHealth|rudderHealth)\.current\s*-/,
+  integratedDamageSource,
+  /(?:hullHealth|engineHealth|rudderHealth)(?:\.current|Value)?\s*=\s*Math\.max\(\s*0,\s*(?:hullHealth|engineHealth|rudderHealth)(?:\.current|Value)?\s*-/,
   'Direct health subtraction must not bypass the damage policy.',
 );
 

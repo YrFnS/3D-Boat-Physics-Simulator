@@ -24,12 +24,8 @@ import { SectionalHydrostatics } from '@/sim/vessels/SectionalHydrostatics';
 import { FloodingModel } from '@/sim/vessels/FloodingModel';
 import { displacementBalanceErrorRatio } from '@/sim/vessels/HydrostaticsMath';
 import { EnvironmentalForces } from '@/sim/vessels/EnvironmentalForces';
+import { VesselConditionRuntime } from '@/sim/vessels/VesselConditionRuntime';
 import {
-  applyVesselDamage,
-  type VesselDamageEvent,
-} from '@/sim/vessels/VesselDamagePolicy';
-import {
-  applyFieldRepairStep,
   calculateFieldRepairPenalty,
   isFieldRepairEligible,
 } from '@/sim/vessels/FieldRepairPolicy';
@@ -163,25 +159,15 @@ export default function Boat() {
 
   // Component condition survives a recovery remount, while a fresh scenario
   // still enters through the store's reset telemetry at 100%.
-  const hullHealth = useRef(initialCondition.hullHealth);
-  const engineHealth = useRef(initialCondition.engineHealth);
-  const engineTemperature = useRef(initialCondition.engineTemperature);
-  const rudderHealth = useRef(initialCondition.rudderHealth);
+  const conditionRuntime = useRef(
+    new VesselConditionRuntime({
+      hullHealth: initialCondition.hullHealth,
+      engineHealth: initialCondition.engineHealth,
+      engineTemperature: initialCondition.engineTemperature,
+      rudderHealth: initialCondition.rudderHealth,
+    }),
+  );
 
-  const applyDamage = (event: VesselDamageEvent) => {
-    const nextHealth = applyVesselDamage(
-      {
-        hullHealth: hullHealth.current,
-        engineHealth: engineHealth.current,
-        rudderHealth: rudderHealth.current,
-      },
-      event,
-    );
-    hullHealth.current = nextHealth.hullHealth;
-    engineHealth.current = nextHealth.engineHealth;
-    rudderHealth.current = nextHealth.rudderHealth;
-  };
-  
   // Read active boat reactively to trigger re-renders
   const activeBoat = useSimStore((state) => state.activeBoat);
   const instantRepairTrigger = useSimStore((state) => state.instantRepairTrigger);
@@ -192,10 +178,7 @@ export default function Boat() {
   useEffect(() => {
     if (instantRepairTrigger > 0) {
       const vessel = getVesselConfig(activeBoat);
-      hullHealth.current = 100;
-      engineHealth.current = 100;
-      rudderHealth.current = 100;
-      engineTemperature.current = 20;
+      conditionRuntime.current.reset();
       floodingModel.current.reset(vessel);
       sectionalHydrostatics.current.reset(vessel);
       propulsionSystem.current.reset(vessel.engine);
@@ -235,10 +218,7 @@ export default function Boat() {
     sharedPhysics.tornadoPos.set(10_000, 0, 10_000);
     sharedPhysics.whirlpoolPos.set(-10_000, 0, -10_000);
 
-    hullHealth.current = 100;
-    engineHealth.current = 100;
-    rudderHealth.current = 100;
-    engineTemperature.current = 20;
+    conditionRuntime.current.reset();
     propulsionSystem.current.reset(vessel.engine);
     rudderAngle.current = 0;
     telemetryAccumulator.current = 0;
@@ -310,10 +290,12 @@ export default function Boat() {
       repairTestStore.engineHealth >= 99.9 &&
       repairTestStore.rudderHealth >= 99.9
     ) {
-      hullHealth.current = 72;
-      engineHealth.current = 35;
-      rudderHealth.current = 42;
-      engineTemperature.current = 78;
+      conditionRuntime.current.reset({
+      hullHealth: 72,
+      engineHealth: 35,
+      engineTemperature: 78,
+      rudderHealth: 42,
+    });
       repairTestStore.setTelemetry(0, 0, 72, 35, 78, 42);
     }
 
@@ -424,8 +406,8 @@ export default function Boat() {
     const floodingResult = floodingModel.current.step({
       vessel,
       deltaSeconds: dt,
-      hullHealth: calibration ? 100 : hullHealth.current,
-      engineHealth: engineHealth.current,
+      hullHealth: calibration ? 100 : conditionRuntime.current.hullHealth,
+      engineHealth: conditionRuntime.current.engineHealth,
       compartmentExposure: previousCompartmentExposure.current,
       activePump: activeFieldRepair,
       winterFactor: calibration ? 0 : isWinter,
@@ -537,7 +519,7 @@ export default function Boat() {
         )
       : 1;
     const hullDragPenalty =
-      1 + ((100 - hullHealth.current) / 100) * 0.8;
+      1 + ((100 - conditionRuntime.current.hullHealth) / 100) * 0.8;
 
     const sampleWater = calibration
       ? sampleFlatCalibrationWater
@@ -587,7 +569,7 @@ export default function Boat() {
       time > 2 &&
       hydrostaticResult.maximumSlamSeverity > 0
     ) {
-      applyDamage({
+      conditionRuntime.current.applyDamage({
         source: 'slamming',
         hullDamage: hydrostaticResult.slamHullDamage,
         engineDamage: hydrostaticResult.slamEngineDamage,
@@ -662,20 +644,20 @@ export default function Boat() {
     );
 
     const engineHealthEfficiency = MathUtils.clamp(
-      engineHealth.current / 100,
+      conditionRuntime.current.engineHealth / 100,
       0,
       1,
     );
     const temperatureEfficiency =
-      engineTemperature.current > 90
+      conditionRuntime.current.engineTemperature > 90
         ? Math.max(
             0.2,
-            1 - (engineTemperature.current - 90) / 20,
+            1 - (conditionRuntime.current.engineTemperature - 90) / 20,
           )
         : 1;
     let combustionEfficiency = 1;
-    if (engineHealth.current > 0 && engineHealth.current < 40) {
-      const damageRatio = (40 - engineHealth.current) / 40;
+    if (conditionRuntime.current.engineHealth > 0 && conditionRuntime.current.engineHealth < 40) {
+      const damageRatio = (40 - conditionRuntime.current.engineHealth) / 40;
       const misfireProbability = 1 - Math.exp(-damageRatio * 8 * dt);
       if (simulationRandom.current.next() < misfireProbability) {
         combustionEfficiency = MathUtils.lerp(
@@ -779,7 +761,7 @@ export default function Boat() {
 
     // --- LOCAL-FLOW RUDDER WITH SIGNED PROP WASH ---
     const rudderHealthRatio = MathUtils.clamp(
-      rudderHealth.current / 100,
+      conditionRuntime.current.rudderHealth / 100,
       0,
       1,
     );
@@ -787,7 +769,7 @@ export default function Boat() {
     // rudder angle is starboard/right in the body-axis hydrodynamic model.
     let targetRudder =
       -steerRaw * vessel.rudder.maximumAngleRad * rudderHealthRatio;
-    if (rudderHealth.current > 0 && rudderHealth.current < 40) {
+    if (conditionRuntime.current.rudderHealth > 0 && conditionRuntime.current.rudderHealth < 40) {
       targetRudder +=
         (simulationRandom.current.next() - 0.5) *
         vessel.rudder.maximumAngleRad *
@@ -910,7 +892,7 @@ export default function Boat() {
         whirlpoolPosition: sharedPhysics.whirlpoolPos,
         random: simulationRandom.current,
       });
-      applyDamage({
+      conditionRuntime.current.applyDamage({
         source: 'environmental-impact',
         hullDamage: environmentalDamage.hullDamage,
         engineDamage: environmentalDamage.engineDamage,
@@ -1015,7 +997,7 @@ export default function Boat() {
           24,
           severity * 3.6 + normalizedImpulse * 0.42,
         );
-        applyDamage({
+        conditionRuntime.current.applyDamage({
           source: 'terrain-impact',
           hullDamage: damage,
           engineDamage: severity > 2.5 ? damage * 0.22 : 0,
@@ -1053,7 +1035,7 @@ export default function Boat() {
           severity > 2.1 &&
           glancingFactor > 0.3 &&
           normalizedImpulse > 1;
-        applyDamage({
+        conditionRuntime.current.applyDamage({
           source: 'obstacle-impact',
           hullDamage: damage,
           engineDamage:
@@ -1109,9 +1091,9 @@ export default function Boat() {
       speedMps: speed2D,
       forwardSpeedMps: vRelForward,
       headingRadians: MathUtils.degToRad(headingDeg),
-      hullHealth: hullHealth.current,
-      engineHealth: engineHealth.current,
-      rudderHealth: rudderHealth.current,
+      hullHealth: conditionRuntime.current.hullHealth,
+      engineHealth: conditionRuntime.current.engineHealth,
+      rudderHealth: conditionRuntime.current.rudderHealth,
       displacedVolumeM3: hydrostaticResult.displacedVolumeM3,
       physicalMassKg: mass,
       floodingRatio: floodingResult.floodingRatio,
@@ -1126,10 +1108,10 @@ export default function Boat() {
       setTelemetry(
         speedKnots,
         headingDeg,
-        hullHealth.current,
-        engineHealth.current,
-        engineTemperature.current,
-        rudderHealth.current,
+        conditionRuntime.current.hullHealth,
+        conditionRuntime.current.engineHealth,
+        conditionRuntime.current.engineTemperature,
+        conditionRuntime.current.rudderHealth,
       );
       setFloodingTelemetry(
         floodingResult.floodingRatio,
@@ -1137,90 +1119,29 @@ export default function Boat() {
       );
     }
 
-    // --- Phase 1: Health Math ---
-    
-    // Engine Temperature: Coils up based on RPM over 2800, cools down otherwise
-    // Realistic marine engines have constant sea-water cooling, meaning they stabilize safely near 70-80C at max RPM
-    const normalizedEngineRpm = MathUtils.clamp(
-      propulsionResult.engineRpm / Math.max(1, vessel.engine.ratedRpm),
-      0,
-      1.25,
-    );
-    const normalizedShaftPower = MathUtils.clamp(
-      propulsionResult.absorbedShaftPowerW /
-        Math.max(1, vessel.engine.ratedPowerW),
-      0,
-      1.25,
-    );
-    let targetTemp =
-      20 + normalizedEngineRpm * 32 + normalizedShaftPower * 34;
+    // --- Component temperature and explicit condition damage ---
+  conditionRuntime.current.stepThermalAndFlooding({
+    deltaSeconds: dt,
+    engineRpm: propulsionResult.engineRpm,
+    ratedEngineRpm: vessel.engine.ratedRpm,
+    absorbedShaftPowerW: propulsionResult.absorbedShaftPowerW,
+    ratedEnginePowerW: vessel.engine.ratedPowerW,
+    ventilationFactor: propulsionResult.ventilationFactor,
+    submergedRatio,
+    engineCompartmentFloodingRatio:
+      floodingResult.engineCompartmentFloodingRatio,
+    simulationTimeSeconds: time,
+  });
 
-    // Cooling is much more efficient than heating at low RPMs because the
-    // raw-water circuit continues to exchange heat near idle.
-    let tempLerpRate =
-      propulsionResult.engineRpm > vessel.engine.ratedRpm * 0.7
-        ? 0.012
-        : 0.025;
-    
-    // Water cooling if severely sinking
-    if (submergedRatio > 0.95) {
-       tempLerpRate = 0.5; // Rapid cooling when submerged
-    } else if (
-      propulsionResult.ventilationFactor < 0.15 &&
-      propulsionResult.engineRpm > vessel.engine.ratedRpm * 0.7
-    ) {
-       // Starved of cooling water AND revving high (Prop completely jumped out of water into open air)
-       targetTemp = 105; // Tightened cap (was 110)
-       tempLerpRate = 0.03; // Further reduced from 0.035
-    }
-
-    // Hard cap for target temperature to prevent physics-driven runaway heating
-    targetTemp = Math.min(105, targetTemp);
-    
-    engineTemperature.current = MathUtils.lerp(engineTemperature.current, targetTemp, tempLerpRate * dt);
-    
-    // Engine Health: Degrades slightly if temperature is over 90C
-    if (engineTemperature.current > 90) {
-       const overheatDamage = (engineTemperature.current - 90) * 0.05;
-       applyDamage({
-         source: 'engine-overheat',
-         engineDamage: overheatDamage * dt,
-       });
-    }
-
-    // Water in the machinery space now drives engine flooding directly.
-    if (
-      floodingResult.engineCompartmentFloodingRatio > 0.18 &&
-      time > 2
-    ) {
-      const floodingDamagePerSecond = MathUtils.lerp(
-        1.5,
-        16,
-        floodingResult.engineCompartmentFloodingRatio,
-      );
-      applyDamage({
-        source: 'machinery-flooding',
-        engineDamage: floodingDamagePerSecond * dt,
-      });
-    }
-    
-    // Designed planing and ordinary steering loads are normal
-    // operating states, not health-loss events. Structural damage is applied
-    // only through the explicit impact, slamming, hazard, flooding, and
-    // overheating paths above.
-    
     // --- Bilge pump and limited emergency field repair ---
     const repairStatisticsBeforeStep =
       sharedMissionRuntimeStatistics.snapshot;
     const repairUsageMatchesRun =
       repairStatisticsBeforeStep.runId === scenarioRunId;
-    const fieldRepairResult = applyFieldRepairStep({
+    const fieldRepairResult =
+    conditionRuntime.current.applyFieldRepair({
       active: activeFieldRepair,
       deltaSeconds: dt,
-      hullHealth: hullHealth.current,
-      engineHealth: engineHealth.current,
-      rudderHealth: rudderHealth.current,
-      engineTemperatureC: engineTemperature.current,
       engineConditionRestoredThisRun: repairUsageMatchesRun
         ? repairStatisticsBeforeStep.engineConditionRestored
         : 0,
@@ -1228,10 +1149,7 @@ export default function Boat() {
         ? repairStatisticsBeforeStep.rudderConditionRestored
         : 0,
     });
-    hullHealth.current = fieldRepairResult.hullHealth;
-    engineHealth.current = fieldRepairResult.engineHealth;
-    rudderHealth.current = fieldRepairResult.rudderHealth;
-    engineTemperature.current = fieldRepairResult.engineTemperatureC;
+
 
     const missionStatistics = !calibration
       ? sharedMissionRuntimeStatistics.advance({
@@ -1264,10 +1182,10 @@ export default function Boat() {
         setTelemetry(
           speedKnots,
           headingDeg,
-          hullHealth.current,
-          engineHealth.current,
-          engineTemperature.current,
-          rudderHealth.current,
+          conditionRuntime.current.hullHealth,
+          conditionRuntime.current.engineHealth,
+          conditionRuntime.current.engineTemperature,
+          conditionRuntime.current.rudderHealth,
         );
         setFloodingTelemetry(
           floodingResult.floodingRatio,
@@ -1466,8 +1384,8 @@ export default function Boat() {
 
     // Damage visuals are cached and updated at a controlled rate.
     updateVisualDamage(
-      hullHealth.current,
-      engineHealth.current,
+      conditionRuntime.current.hullHealth,
+      conditionRuntime.current.engineHealth,
       renderDelta,
     );
 

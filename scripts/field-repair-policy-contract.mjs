@@ -111,6 +111,13 @@ const boatSource = await fs.readFile(
   new URL('../components/Boat.tsx', import.meta.url),
   'utf8',
 );
+const conditionRuntimeSource = await fs.readFile(
+  new URL(
+    '../sim/vessels/VesselConditionRuntime.ts',
+    import.meta.url,
+  ),
+  'utf8',
+);
 const storeSource = await fs.readFile(
   new URL('../store/useSimStore.ts', import.meta.url),
   'utf8',
@@ -132,7 +139,12 @@ const persistenceSource = await fs.readFile(
   'utf8',
 );
 
-assert.match(boatSource, /applyFieldRepairStep\(/);
+assert.match(conditionRuntimeSource, /applyFieldRepairStep\(/);
+assert.match(
+  boatSource,
+  /conditionRuntime\.current\.applyFieldRepair\(/,
+);
+assert.doesNotMatch(boatSource, /applyFieldRepairStep\(/);
 assert.match(boatSource, /repairActive: activeFieldRepair/);
 assert.match(boatSource, /repairTrackingEnabled:/);
 assert.doesNotMatch(boatSource, /hullHealth\.current \+ 8\.0 \* dt/);

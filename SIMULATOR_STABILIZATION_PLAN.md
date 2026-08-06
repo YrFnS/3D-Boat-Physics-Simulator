@@ -49,6 +49,10 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
 ## P2 — Architecture and performance
 
 - [ ] Split vessel runtime, physics, collision, damage, telemetry, audio, and rendering responsibilities out of `Boat.tsx`.
+      - [x] Extract component condition, engine thermal/flooding damage, and field-repair mutation into `VesselConditionRuntime`.
+      - [ ] Extract collision response and impact orchestration.
+      - [ ] Extract propulsion, steering, and hydrodynamic force orchestration.
+      - [ ] Extract telemetry/audio publication and move vessel meshes into dedicated render components.
 - [ ] Version obstacle data and synchronize Rapier colliders only when obstacle state changes.
 - [ ] Align visible terrain detail and collision detail near the vessel.
 - [ ] Complete the physical desktop, integrated-GPU, and touch-device benchmark matrix.
