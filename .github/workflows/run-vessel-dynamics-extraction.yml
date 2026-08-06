@@ -84,6 +84,80 @@ jobs:
               path.write_text(source, encoding='utf-8')
           PY
 
+      - name: Delegate world-direction ownership contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/world-direction-contract.mjs')
+          source = path.read_text(encoding='utf-8')
+
+          boat_entry = """  boat: await fs.readFile(
+    new URL('../components/Boat.tsx', import.meta.url),
+    'utf8',
+  ),
+"""
+          dynamics_entry = boat_entry + """  dynamics: await fs.readFile(
+    new URL(
+      '../sim/vessels/VesselDynamicsRuntime.ts',
+      import.meta.url,
+    ),
+    'utf8',
+  ),
+"""
+          if source.count(boat_entry) != 1:
+              raise SystemExit('Unable to locate Boat source entry.')
+          source = source.replace(boat_entry, dynamics_entry, 1)
+
+          old_assertions = r"""assert.match(
+  sourceFiles.boat,
+  /setWorldVectorFromHeading\(windVelocity, windDir, windSpeed\)/,
+  'Vessel wind force must use the authoritative heading conversion.',
+);
+assert.match(
+  sourceFiles.boat,
+  /setWorldVectorFromHeading\(\s*baseCurrentVelocity,\s*currentDir,\s*currentSpeed/,
+  'Water current must use the authoritative heading conversion.',
+);
+"""
+          new_assertions = r"""assert.match(
+  sourceFiles.dynamics,
+  /setWorldVectorFromHeading\(\s*this\.windVelocity,\s*input\.windHeadingDegrees,\s*input\.windSpeedMps/,
+  'Vessel wind force must use the authoritative heading conversion.',
+);
+assert.match(
+  sourceFiles.dynamics,
+  /setWorldVectorFromHeading\(\s*this\.baseCurrentVelocity,\s*input\.currentHeadingDegrees,\s*input\.currentSpeedMps/,
+  'Water current must use the authoritative heading conversion.',
+);
+"""
+          if source.count(old_assertions) != 1:
+              raise SystemExit('Unable to locate world-direction assertions.')
+          source = source.replace(old_assertions, new_assertions, 1)
+
+          old_private_mapping = """assert.doesNotMatch(
+  sourceFiles.boat,
+  /const windRad = MathUtils\\.degToRad\\(windDir\\)/,
+  'Boat physics must not keep a private wind-axis mapping.',
+);
+"""
+          new_private_mapping = """assert.doesNotMatch(
+  `${sourceFiles.boat}\\n${sourceFiles.dynamics}`,
+  /const windRad = MathUtils\\.degToRad\\(windDir\\)/,
+  'Vessel physics must not keep a private wind-axis mapping.',
+);
+"""
+          if source.count(old_private_mapping) != 1:
+              raise SystemExit('Unable to locate private wind mapping assertion.')
+          source = source.replace(
+              old_private_mapping,
+              new_private_mapping,
+              1,
+          )
+          path.write_text(source, encoding='utf-8')
+          PY
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
