@@ -76,7 +76,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CI: 1
@@ -86,58 +86,14 @@ jobs:
   experience:
     name: Session, gameplay, onboarding, settings, and persistence flow
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 40
 
     steps:
-      - name: Check out stabilization branch
-        uses: actions/checkout@v7
-        with:
-          ref: agent/simulator-stabilization
-          fetch-depth: 0
-
-      - name: Stabilize repair recovery telemetry probe
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path('scripts/product-experience-smoke.mjs')
-          source = path.read_text(encoding='utf-8')
-          start_marker = "      checks.recoveryPreservesCondition ="
-          end_marker = "\n    },\n    '/?repairTest=1'"
-          start = source.index(start_marker)
-          end = source.index(end_marker, start)
-          block = source[start:end]
-
-          tolerance = ") < 0.75"
-          if block.count(tolerance) == 3:
-              block = block.replace(tolerance, ") < 1")
-          elif block.count(") < 1") != 3:
-              raise SystemExit('Unexpected recovery condition tolerances.')
-
-          exact_penalty = (
-              "        recovered.fieldRepairPenaltyPoints ===\n"
-              "          conditionBeforeRecovery.fieldRepairPenaltyPoints;"
-          )
-          monotonic_penalty = (
-              "        recovered.fieldRepairPenaltyPoints >=\n"
-              "          conditionBeforeRecovery.fieldRepairPenaltyPoints &&\n"
-              "        recovered.fieldRepairPenaltyPoints >=\n"
-              "          freeRepaired.fieldRepairPenaltyPoints;"
-          )
-          if exact_penalty in block:
-              block = block.replace(exact_penalty, monotonic_penalty, 1)
-          elif monotonic_penalty not in block:
-              raise SystemExit('Unexpected recovery penalty assertion.')
-
-          path.write_text(
-              source[:start] + block + source[end:],
-              encoding='utf-8',
-          )
-          PY
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
@@ -188,26 +144,6 @@ jobs:
         id: onboarding_settings
         continue-on-error: true
         run: node scripts/onboarding-settings-smoke.mjs
-
-      - name: Commit stabilized recovery probe
-        if: >-
-          steps.product_experience.outcome == 'success' &&
-          steps.gameplay_systems.outcome == 'success' &&
-          steps.onboarding_settings.outcome == 'success'
-        shell: bash
-        run: |
-          git fetch origin integration/all-branches-20260804
-          git show FETCH_HEAD:.github/workflows/product-experience.yml > .github/workflows/product-experience.yml
-          rm -f .github/workflows/stabilize-repair-recovery-probe.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --check
-          if git diff --cached --quiet; then
-            exit 0
-          fi
-          git commit -m "test: stabilize repair recovery telemetry"
-          git push origin HEAD:agent/simulator-stabilization
 
       - name: Collect server log
         if: always()

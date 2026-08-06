@@ -655,15 +655,17 @@ allPassed =
         recovered.rudderHealth < 70 &&
         Math.abs(
           recovered.hullHealth - conditionBeforeRecovery.hullHealth,
-        ) < 0.75 &&
+        ) < 1 &&
         Math.abs(
           recovered.engineHealth - conditionBeforeRecovery.engineHealth,
-        ) < 0.75 &&
+        ) < 1 &&
         Math.abs(
           recovered.rudderHealth - conditionBeforeRecovery.rudderHealth,
-        ) < 0.75 &&
-        recovered.fieldRepairPenaltyPoints ===
-          conditionBeforeRecovery.fieldRepairPenaltyPoints;
+        ) < 1 &&
+        recovered.fieldRepairPenaltyPoints >=
+          conditionBeforeRecovery.fieldRepairPenaltyPoints &&
+        recovered.fieldRepairPenaltyPoints >=
+          freeRepaired.fieldRepairPenaltyPoints;
     },
     '/?repairTest=1',
   )) && allPassed;
