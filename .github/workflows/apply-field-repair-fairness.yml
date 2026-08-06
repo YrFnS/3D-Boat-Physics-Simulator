@@ -1,0 +1,1099 @@
+name: Apply field repair fairness
+
+on:
+  push:
+    branches:
+      - agent/simulator-stabilization
+
+permissions:
+  contents: write
+
+concurrency:
+  group: field-repair-fairness-migration
+  cancel-in-progress: false
+
+env:
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  migrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Apply field repair and scoring authority
+        shell: bash
+        run: |
+          git fetch origin agent/simulator-stabilization
+          git reset --hard origin/agent/simulator-stabilization
+
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          def read(path: str) -> str:
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path: str, content: str) -> None:
+              target = Path(path)
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_text(content, encoding='utf-8')
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              source = read(path)
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(
+                      f'{path}: expected exactly one target, found {count}: {old[:180]!r}'
+                  )
+              write(path, source.replace(old, new, 1))
+
+          field_repair_policy = dedent(r'''
+            export interface FieldRepairEligibilityInput {
+              requested: boolean;
+              speedKnots: number;
+              throttle: number;
+              propulsionInputActive: boolean;
+            }
+
+            export interface FieldRepairStepInput {
+              active: boolean;
+              deltaSeconds: number;
+              hullHealth: number;
+              engineHealth: number;
+              rudderHealth: number;
+              engineTemperatureC: number;
+              engineConditionRestoredThisRun: number;
+              rudderConditionRestoredThisRun: number;
+            }
+
+            export interface FieldRepairStepResult {
+              hullHealth: number;
+              engineHealth: number;
+              rudderHealth: number;
+              engineTemperatureC: number;
+              engineConditionRestored: number;
+              rudderConditionRestored: number;
+              meaningful: boolean;
+            }
+
+            export interface FieldRepairUsage {
+              repairActiveSeconds: number;
+              repairActivationCount: number;
+              engineConditionRestored: number;
+              rudderConditionRestored: number;
+            }
+
+            export const FIELD_REPAIR_LIMITS = Object.freeze({
+              maximumSpeedKnots: 2,
+              maximumThrottleMagnitude: 0.1,
+              engineConditionCeiling: 55,
+              rudderConditionCeiling: 65,
+              engineRestoreRatePerSecond: 0.6,
+              rudderRestoreRatePerSecond: 0.9,
+              maximumEngineRestorePerRun: 12,
+              maximumRudderRestorePerRun: 18,
+              engineCoolingCelsiusPerSecond: 4,
+              breachStabilizationPerSecond: 0.012,
+            });
+
+            const MINIMUM_ENGINE_TEMPERATURE_C = 20;
+
+            function finiteNonNegative(value: number) {
+              return Number.isFinite(value) ? Math.max(0, value) : 0;
+            }
+
+            function clampHealth(value: number) {
+              if (!Number.isFinite(value)) return 0;
+              return Math.max(0, Math.min(100, value));
+            }
+
+            export function isFieldRepairEligible(
+              input: FieldRepairEligibilityInput,
+            ) {
+              return (
+                input.requested &&
+                Number.isFinite(input.speedKnots) &&
+                Math.abs(input.speedKnots) <=
+                  FIELD_REPAIR_LIMITS.maximumSpeedKnots &&
+                Number.isFinite(input.throttle) &&
+                Math.abs(input.throttle) <=
+                  FIELD_REPAIR_LIMITS.maximumThrottleMagnitude &&
+                !input.propulsionInputActive
+              );
+            }
+
+            export function applyFieldRepairStep(
+              input: FieldRepairStepInput,
+            ): FieldRepairStepResult {
+              const hullHealth = clampHealth(input.hullHealth);
+              const engineHealth = clampHealth(input.engineHealth);
+              const rudderHealth = clampHealth(input.rudderHealth);
+              const engineTemperatureC = Number.isFinite(input.engineTemperatureC)
+                ? Math.max(MINIMUM_ENGINE_TEMPERATURE_C, input.engineTemperatureC)
+                : MINIMUM_ENGINE_TEMPERATURE_C;
+              const deltaSeconds = finiteNonNegative(input.deltaSeconds);
+
+              if (!input.active || deltaSeconds <= 0) {
+                return {
+                  hullHealth,
+                  engineHealth,
+                  rudderHealth,
+                  engineTemperatureC,
+                  engineConditionRestored: 0,
+                  rudderConditionRestored: 0,
+                  meaningful: false,
+                };
+              }
+
+              const engineBudgetRemaining = Math.max(
+                0,
+                FIELD_REPAIR_LIMITS.maximumEngineRestorePerRun -
+                  finiteNonNegative(input.engineConditionRestoredThisRun),
+              );
+              const rudderBudgetRemaining = Math.max(
+                0,
+                FIELD_REPAIR_LIMITS.maximumRudderRestorePerRun -
+                  finiteNonNegative(input.rudderConditionRestoredThisRun),
+              );
+              const engineConditionRestored = Math.min(
+                FIELD_REPAIR_LIMITS.engineRestoreRatePerSecond * deltaSeconds,
+                Math.max(
+                  0,
+                  FIELD_REPAIR_LIMITS.engineConditionCeiling - engineHealth,
+                ),
+                engineBudgetRemaining,
+              );
+              const rudderConditionRestored = Math.min(
+                FIELD_REPAIR_LIMITS.rudderRestoreRatePerSecond * deltaSeconds,
+                Math.max(
+                  0,
+                  FIELD_REPAIR_LIMITS.rudderConditionCeiling - rudderHealth,
+                ),
+                rudderBudgetRemaining,
+              );
+              const cooledTemperatureC = Math.max(
+                MINIMUM_ENGINE_TEMPERATURE_C,
+                engineTemperatureC -
+                  FIELD_REPAIR_LIMITS.engineCoolingCelsiusPerSecond *
+                    deltaSeconds,
+              );
+
+              return {
+                // Structural hull condition requires a dockyard and cannot be
+                // restored by the underway bilge/emergency-repair action.
+                hullHealth,
+                engineHealth: clampHealth(
+                  engineHealth + engineConditionRestored,
+                ),
+                rudderHealth: clampHealth(
+                  rudderHealth + rudderConditionRestored,
+                ),
+                engineTemperatureC: cooledTemperatureC,
+                engineConditionRestored,
+                rudderConditionRestored,
+                meaningful:
+                  engineConditionRestored > 0 ||
+                  rudderConditionRestored > 0 ||
+                  cooledTemperatureC < engineTemperatureC,
+              };
+            }
+
+            export function calculateFieldRepairPenalty(
+              usage: FieldRepairUsage,
+            ) {
+              const activeSeconds = finiteNonNegative(
+                usage.repairActiveSeconds,
+              );
+              const activationCount = Math.floor(
+                finiteNonNegative(usage.repairActivationCount),
+              );
+              const engineRestored = finiteNonNegative(
+                usage.engineConditionRestored,
+              );
+              const rudderRestored = finiteNonNegative(
+                usage.rudderConditionRestored,
+              );
+
+              return Math.round(
+                Math.min(
+                  250,
+                  activeSeconds * 1.25 +
+                    activationCount * 12 +
+                    engineRestored * 5 +
+                    rudderRestored * 3.5,
+                ),
+              );
+            }
+          ''').lstrip()
+          write('sim/vessels/FieldRepairPolicy.ts', field_repair_policy)
+
+          mission_runtime = dedent(r'''
+            export interface MissionRuntimeStatisticsStep {
+              runId: number;
+              vesselGeneration: number;
+              enabled: boolean;
+              deltaSeconds: number;
+              boatX: number;
+              boatZ: number;
+              speedKnots: number;
+              repairActive?: boolean;
+              engineConditionRestored?: number;
+              rudderConditionRestored?: number;
+            }
+
+            export interface MissionRuntimeStatisticsSnapshot {
+              runId: number;
+              vesselGeneration: number;
+              elapsedSeconds: number;
+              distanceTravelledM: number;
+              maximumSpeedKnots: number;
+              fixedStepCount: number;
+              repairActiveSeconds: number;
+              repairActivationCount: number;
+              engineConditionRestored: number;
+              rudderConditionRestored: number;
+            }
+
+            export const DEFAULT_MAXIMUM_MISSION_SAMPLE_DISTANCE_M = 60;
+
+            function normalizeIdentity(value: number) {
+              return Number.isFinite(value) ? Math.trunc(value) : -1;
+            }
+
+            function finiteNonNegative(value: number | undefined) {
+              return typeof value === 'number' && Number.isFinite(value)
+                ? Math.max(0, value)
+                : 0;
+            }
+
+            /**
+             * Fixed-step authority for scored mission movement and repair use.
+             *
+             * A new scenario run resets every statistic. Vessel recovery only
+             * reanchors position and repair activation state, preserving elapsed
+             * time, travelled distance, and already-consumed repair allowance.
+             */
+            export class MissionRuntimeStatistics {
+              private readonly state: MissionRuntimeStatisticsSnapshot = {
+                runId: -1,
+                vesselGeneration: -1,
+                elapsedSeconds: 0,
+                distanceTravelledM: 0,
+                maximumSpeedKnots: 0,
+                fixedStepCount: 0,
+                repairActiveSeconds: 0,
+                repairActivationCount: 0,
+                engineConditionRestored: 0,
+                rudderConditionRestored: 0,
+              };
+              private previousBoatX = 0;
+              private previousBoatZ = 0;
+              private hasPreviousPosition = false;
+              private repairWasActive = false;
+              readonly maximumSampleDistanceM: number;
+
+              constructor(
+                maximumSampleDistanceM =
+                  DEFAULT_MAXIMUM_MISSION_SAMPLE_DISTANCE_M,
+              ) {
+                this.maximumSampleDistanceM =
+                  Number.isFinite(maximumSampleDistanceM) &&
+                  maximumSampleDistanceM > 0
+                    ? maximumSampleDistanceM
+                    : DEFAULT_MAXIMUM_MISSION_SAMPLE_DISTANCE_M;
+              }
+
+              get snapshot(): Readonly<MissionRuntimeStatisticsSnapshot> {
+                return this.state;
+              }
+
+              reset(
+                runId = -1,
+                vesselGeneration = -1,
+                boatX = Number.NaN,
+                boatZ = Number.NaN,
+              ) {
+                this.state.runId = normalizeIdentity(runId);
+                this.state.vesselGeneration = normalizeIdentity(vesselGeneration);
+                this.state.elapsedSeconds = 0;
+                this.state.distanceTravelledM = 0;
+                this.state.maximumSpeedKnots = 0;
+                this.state.fixedStepCount = 0;
+                this.state.repairActiveSeconds = 0;
+                this.state.repairActivationCount = 0;
+                this.state.engineConditionRestored = 0;
+                this.state.rudderConditionRestored = 0;
+                this.repairWasActive = false;
+                this.reanchor(boatX, boatZ);
+                return this.state;
+              }
+
+              advance(
+                step: MissionRuntimeStatisticsStep,
+              ): Readonly<MissionRuntimeStatisticsSnapshot> {
+                const runId = normalizeIdentity(step.runId);
+                const vesselGeneration = normalizeIdentity(
+                  step.vesselGeneration,
+                );
+
+                if (this.state.runId !== runId) {
+                  this.reset(
+                    runId,
+                    vesselGeneration,
+                    step.boatX,
+                    step.boatZ,
+                  );
+                } else if (
+                  this.state.vesselGeneration !== vesselGeneration
+                ) {
+                  this.state.vesselGeneration = vesselGeneration;
+                  this.repairWasActive = false;
+                  this.reanchor(step.boatX, step.boatZ);
+                }
+
+                const deltaSeconds = finiteNonNegative(step.deltaSeconds);
+                if (!step.enabled || deltaSeconds <= 0) {
+                  this.repairWasActive = false;
+                  this.reanchor(step.boatX, step.boatZ);
+                  return this.state;
+                }
+
+                this.state.elapsedSeconds += deltaSeconds;
+                this.state.fixedStepCount += 1;
+                if (Number.isFinite(step.speedKnots)) {
+                  this.state.maximumSpeedKnots = Math.max(
+                    this.state.maximumSpeedKnots,
+                    Math.abs(step.speedKnots),
+                  );
+                }
+
+                const repairActive = step.repairActive === true;
+                if (repairActive) {
+                  this.state.repairActiveSeconds += deltaSeconds;
+                  if (!this.repairWasActive) {
+                    this.state.repairActivationCount += 1;
+                  }
+                }
+                this.repairWasActive = repairActive;
+                this.state.engineConditionRestored += finiteNonNegative(
+                  step.engineConditionRestored,
+                );
+                this.state.rudderConditionRestored += finiteNonNegative(
+                  step.rudderConditionRestored,
+                );
+
+                if (
+                  Number.isFinite(step.boatX) &&
+                  Number.isFinite(step.boatZ)
+                ) {
+                  if (this.hasPreviousPosition) {
+                    const sampleDistanceM = Math.hypot(
+                      step.boatX - this.previousBoatX,
+                      step.boatZ - this.previousBoatZ,
+                    );
+                    if (
+                      Number.isFinite(sampleDistanceM) &&
+                      sampleDistanceM <= this.maximumSampleDistanceM
+                    ) {
+                      this.state.distanceTravelledM += sampleDistanceM;
+                    }
+                  }
+                  this.previousBoatX = step.boatX;
+                  this.previousBoatZ = step.boatZ;
+                  this.hasPreviousPosition = true;
+                } else {
+                  this.hasPreviousPosition = false;
+                }
+
+                return this.state;
+              }
+
+              private reanchor(boatX: number, boatZ: number) {
+                if (Number.isFinite(boatX) && Number.isFinite(boatZ)) {
+                  this.previousBoatX = boatX;
+                  this.previousBoatZ = boatZ;
+                  this.hasPreviousPosition = true;
+                } else {
+                  this.hasPreviousPosition = false;
+                }
+              }
+            }
+
+            /** Shared authority survives Boat remounts caused by recovery. */
+            export const sharedMissionRuntimeStatistics =
+              new MissionRuntimeStatistics();
+          ''').lstrip()
+          write('sim/scenarios/MissionRuntimeStatistics.ts', mission_runtime)
+
+          field_repair_contract = dedent(r'''
+            import assert from 'node:assert/strict';
+            import fs from 'node:fs/promises';
+            import {
+              applyFieldRepairStep,
+              calculateFieldRepairPenalty,
+              FIELD_REPAIR_LIMITS,
+              isFieldRepairEligible,
+            } from '../sim/vessels/FieldRepairPolicy.ts';
+
+            assert.equal(
+              isFieldRepairEligible({
+                requested: true,
+                speedKnots: 1.5,
+                throttle: 0,
+                propulsionInputActive: false,
+              }),
+              true,
+            );
+            assert.equal(
+              isFieldRepairEligible({
+                requested: true,
+                speedKnots: 2.1,
+                throttle: 0,
+                propulsionInputActive: false,
+              }),
+              false,
+            );
+            assert.equal(
+              isFieldRepairEligible({
+                requested: true,
+                speedKnots: 0,
+                throttle: 0.2,
+                propulsionInputActive: false,
+              }),
+              false,
+            );
+
+            const oneSecond = applyFieldRepairStep({
+              active: true,
+              deltaSeconds: 1,
+              hullHealth: 40,
+              engineHealth: 30,
+              rudderHealth: 35,
+              engineTemperatureC: 80,
+              engineConditionRestoredThisRun: 0,
+              rudderConditionRestoredThisRun: 0,
+            });
+            assert.equal(oneSecond.hullHealth, 40);
+            assert.equal(
+              oneSecond.engineHealth,
+              30 + FIELD_REPAIR_LIMITS.engineRestoreRatePerSecond,
+            );
+            assert.equal(
+              oneSecond.rudderHealth,
+              35 + FIELD_REPAIR_LIMITS.rudderRestoreRatePerSecond,
+            );
+            assert.equal(oneSecond.engineTemperatureC, 76);
+
+            const capped = applyFieldRepairStep({
+              active: true,
+              deltaSeconds: 120,
+              hullHealth: 25,
+              engineHealth: 10,
+              rudderHealth: 10,
+              engineTemperatureC: 120,
+              engineConditionRestoredThisRun: 0,
+              rudderConditionRestoredThisRun: 0,
+            });
+            assert.equal(capped.hullHealth, 25);
+            assert.equal(capped.engineHealth, 22);
+            assert.equal(capped.rudderHealth, 28);
+            assert.equal(
+              capped.engineConditionRestored,
+              FIELD_REPAIR_LIMITS.maximumEngineRestorePerRun,
+            );
+            assert.equal(
+              capped.rudderConditionRestored,
+              FIELD_REPAIR_LIMITS.maximumRudderRestorePerRun,
+            );
+
+            const ceiling = applyFieldRepairStep({
+              active: true,
+              deltaSeconds: 120,
+              hullHealth: 90,
+              engineHealth: 54,
+              rudderHealth: 64.5,
+              engineTemperatureC: 20,
+              engineConditionRestoredThisRun: 0,
+              rudderConditionRestoredThisRun: 0,
+            });
+            assert.equal(
+              ceiling.engineHealth,
+              FIELD_REPAIR_LIMITS.engineConditionCeiling,
+            );
+            assert.equal(
+              ceiling.rudderHealth,
+              FIELD_REPAIR_LIMITS.rudderConditionCeiling,
+            );
+
+            assert.equal(
+              calculateFieldRepairPenalty({
+                repairActiveSeconds: 20,
+                repairActivationCount: 1,
+                engineConditionRestored: 12,
+                rudderConditionRestored: 18,
+              }),
+              160,
+            );
+
+            const boatSource = await fs.readFile(
+              new URL('../components/Boat.tsx', import.meta.url),
+              'utf8',
+            );
+            const storeSource = await fs.readFile(
+              new URL('../store/useSimStore.ts', import.meta.url),
+              'utf8',
+            );
+            const directorSource = await fs.readFile(
+              new URL('../components/ScenarioDirector.tsx', import.meta.url),
+              'utf8',
+            );
+            const floodingSource = await fs.readFile(
+              new URL('../sim/vessels/FloodingModel.ts', import.meta.url),
+              'utf8',
+            );
+            const overlaySource = await fs.readFile(
+              new URL('../components/ScenarioResultOverlay.tsx', import.meta.url),
+              'utf8',
+            );
+            const persistenceSource = await fs.readFile(
+              new URL('../components/ExperiencePersistence.tsx', import.meta.url),
+              'utf8',
+            );
+
+            assert.match(boatSource, /applyFieldRepairStep\(/);
+            assert.match(boatSource, /repairActive: activeFieldRepair/);
+            assert.doesNotMatch(boatSource, /hullHealth\.current \+ 8\.0 \* dt/);
+            assert.doesNotMatch(boatSource, /engineHealth\.current \+ 12\.0 \* dt/);
+            assert.doesNotMatch(boatSource, /rudderHealth\.current \+ 15\.0 \* dt/);
+            assert.match(
+              boatSource,
+              /preserveConditionAcrossRecovery/,
+              'Boat remounts must rehydrate component condition after recovery.',
+            );
+
+            const resetStart = storeSource.indexOf('resetVessel: () =>');
+            const resetEnd = storeSource.indexOf('fireInstantRepair:', resetStart);
+            const resetBlock = storeSource.slice(resetStart, resetEnd);
+            assert.doesNotMatch(
+              resetBlock,
+              /resetTelemetry\(\)/,
+              'Recovery must not restore hull, engine, or rudder condition.',
+            );
+            assert.match(resetBlock, /floodingRatio: 0/);
+
+            assert.match(
+              floodingSource,
+              /FIELD_REPAIR_LIMITS\.breachStabilizationPerSecond/,
+            );
+            assert.match(directorSource, /result\.repairPenaltyPoints/);
+            assert.match(directorSource, /repairPenaltyPoints,/);
+            assert.match(
+              overlaySource,
+              /Field repair used/,
+              'Mission results must disclose field-repair use.',
+            );
+            assert.match(persistenceSource, /simFieldRepairSeconds/);
+
+            console.log('Field repair policy contract passed.');
+          ''').lstrip()
+          write('scripts/field-repair-policy-contract.mjs', field_repair_contract)
+
+          mission_contract = dedent(r'''
+            import assert from 'node:assert/strict';
+            import fs from 'node:fs/promises';
+            import {
+              MissionRuntimeStatistics,
+            } from '../sim/scenarios/MissionRuntimeStatistics.ts';
+
+            const EPSILON = 1e-9;
+            const STEP_SECONDS = 1 / 60;
+
+            function approximatelyEqual(actual, expected, message) {
+              assert.ok(
+                Math.abs(actual - expected) <= EPSILON,
+                `${message}: expected ${expected}, received ${actual}`,
+              );
+            }
+
+            function capture(tracker) {
+              return { ...tracker.snapshot };
+            }
+
+            const tracker = new MissionRuntimeStatistics(5);
+            tracker.advance({
+              runId: 1,
+              vesselGeneration: 10,
+              enabled: true,
+              deltaSeconds: 0,
+              boatX: 0,
+              boatZ: 0,
+              speedKnots: 0,
+            });
+
+            for (let step = 1; step <= 60; step += 1) {
+              tracker.advance({
+                runId: 1,
+                vesselGeneration: 10,
+                enabled: true,
+                deltaSeconds: STEP_SECONDS,
+                boatX: step / 60,
+                boatZ: 0,
+                speedKnots: step === 40 ? 14 : 8,
+                repairActive: step <= 30,
+                engineConditionRestored: step <= 30 ? 0.01 : 0,
+                rudderConditionRestored: step <= 30 ? 0.02 : 0,
+              });
+            }
+
+            let snapshot = capture(tracker);
+            approximatelyEqual(snapshot.elapsedSeconds, 1, 'fixed-step elapsed time');
+            approximatelyEqual(snapshot.distanceTravelledM, 1, 'fixed-step distance');
+            approximatelyEqual(snapshot.repairActiveSeconds, 0.5, 'repair duration');
+            approximatelyEqual(snapshot.engineConditionRestored, 0.3, 'engine restoration');
+            approximatelyEqual(snapshot.rudderConditionRestored, 0.6, 'rudder restoration');
+            assert.equal(snapshot.repairActivationCount, 1);
+            assert.equal(snapshot.maximumSpeedKnots, 14);
+            assert.equal(snapshot.fixedStepCount, 60);
+
+            const beforeDisabled = capture(tracker);
+            tracker.advance({
+              runId: 1,
+              vesselGeneration: 10,
+              enabled: false,
+              deltaSeconds: 4,
+              boatX: 25,
+              boatZ: -12,
+              speedKnots: 40,
+              repairActive: true,
+              engineConditionRestored: 5,
+            });
+            snapshot = capture(tracker);
+            assert.deepEqual(
+              snapshot,
+              beforeDisabled,
+              'Disabled/menu/free-navigation frames must not alter scored statistics.',
+            );
+
+            tracker.advance({
+              runId: 1,
+              vesselGeneration: 10,
+              enabled: true,
+              deltaSeconds: STEP_SECONDS,
+              boatX: 25 + 1 / 60,
+              boatZ: -12,
+              speedKnots: 7,
+            });
+            snapshot = capture(tracker);
+            approximatelyEqual(
+              snapshot.distanceTravelledM,
+              beforeDisabled.distanceTravelledM + 1 / 60,
+              'disabled interval must reanchor distance',
+            );
+
+            const beforeRecovery = capture(tracker);
+            tracker.advance({
+              runId: 1,
+              vesselGeneration: 11,
+              enabled: true,
+              deltaSeconds: STEP_SECONDS,
+              boatX: -120,
+              boatZ: 80,
+              speedKnots: 6,
+              repairActive: true,
+              engineConditionRestored: 0.01,
+            });
+            snapshot = capture(tracker);
+            approximatelyEqual(
+              snapshot.distanceTravelledM,
+              beforeRecovery.distanceTravelledM,
+              'vessel recovery teleport must not add distance',
+            );
+            approximatelyEqual(
+              snapshot.elapsedSeconds,
+              beforeRecovery.elapsedSeconds + STEP_SECONDS,
+              'vessel recovery must not reset mission time',
+            );
+            assert.equal(
+              snapshot.repairActivationCount,
+              beforeRecovery.repairActivationCount + 1,
+              'Recovery starts a new repair activation without resetting usage.',
+            );
+
+            tracker.advance({
+              runId: 2,
+              vesselGeneration: 12,
+              enabled: true,
+              deltaSeconds: STEP_SECONDS,
+              boatX: 0,
+              boatZ: 0,
+              speedKnots: 5,
+            });
+            snapshot = capture(tracker);
+            assert.equal(snapshot.runId, 2);
+            approximatelyEqual(snapshot.elapsedSeconds, STEP_SECONDS, 'new-run elapsed time');
+            assert.equal(snapshot.repairActiveSeconds, 0);
+            assert.equal(snapshot.repairActivationCount, 0);
+            assert.equal(snapshot.engineConditionRestored, 0);
+            assert.equal(snapshot.rudderConditionRestored, 0);
+
+            const boatSource = await fs.readFile(
+              new URL('../components/Boat.tsx', import.meta.url),
+              'utf8',
+            );
+            const directorSource = await fs.readFile(
+              new URL('../components/ScenarioDirector.tsx', import.meta.url),
+              'utf8',
+            );
+
+            assert.match(boatSource, /sharedMissionRuntimeStatistics\.advance\(\{/);
+            assert.match(boatSource, /engineConditionRestored:/);
+            assert.match(directorSource, /sharedMissionRuntimeStatistics\.snapshot/);
+            assert.doesNotMatch(directorSource, /statistics\.elapsedSeconds \+= frameDelta/);
+
+            console.log('Mission runtime statistics contract passed.');
+          ''').lstrip()
+          write('scripts/mission-runtime-statistics-contract.mjs', mission_contract)
+
+          # Flooding stabilization remains available but is no longer an instant seal.
+          replace_once(
+              'sim/vessels/FloodingModel.ts',
+              "} from '@/sim/vessels/VesselConfig';\n",
+              "} from '@/sim/vessels/VesselConfig';\nimport { FIELD_REPAIR_LIMITS } from '@/sim/vessels/FieldRepairPolicy';\n",
+          )
+          replace_once(
+              'sim/vessels/FloodingModel.ts',
+              '          state.breachSeverity - 0.055 * dt,\n',
+              '          state.breachSeverity -\n            FIELD_REPAIR_LIMITS.breachStabilizationPerSecond * dt,\n',
+          )
+
+          # Boat runtime: shared eligibility, capped restoration, repair telemetry,
+          # deterministic test seed, and condition persistence across recovery.
+          replace_once(
+              'components/Boat.tsx',
+              "} from '@/sim/vessels/VesselDamagePolicy';\n",
+              "} from '@/sim/vessels/VesselDamagePolicy';\nimport {\n  applyFieldRepairStep,\n  calculateFieldRepairPenalty,\n  isFieldRepairEligible,\n} from '@/sim/vessels/FieldRepairPolicy';\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              '  const collisionTestEnabled = useRef(false);\n',
+              '  const collisionTestEnabled = useRef(false);\n  const repairTestEnabled = useRef(false);\n',
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "  // Phase 1: Health tracking refs\n  const hullHealth = useRef(100);\n  const engineHealth = useRef(100);\n  const engineTemperature = useRef(20);\n  const rudderHealth = useRef(100);\n",
+              "  const initialCondition = useMemo(() => {\n    const state = useSimStore.getState();\n    const preserveConditionAcrossRecovery =\n      state.sessionPhase !== 'menu' &&\n      state.scenarioRunStatus === 'active';\n    return preserveConditionAcrossRecovery\n      ? {\n          hullHealth: state.hullHealth,\n          engineHealth: state.engineHealth,\n          engineTemperature: state.engineTemperature,\n          rudderHealth: state.rudderHealth,\n        }\n      : {\n          hullHealth: 100,\n          engineHealth: 100,\n          engineTemperature: 20,\n          rudderHealth: 100,\n        };\n  }, []);\n\n  // Component condition survives a recovery remount, while a fresh scenario\n  // still enters through the store's reset telemetry at 100%.\n  const hullHealth = useRef(initialCondition.hullHealth);\n  const engineHealth = useRef(initialCondition.engineHealth);\n  const engineTemperature = useRef(initialCondition.engineTemperature);\n  const rudderHealth = useRef(initialCondition.rudderHealth);\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "    collisionTestEnabled.current =\n      new URLSearchParams(window.location.search).get('collisionTest') === '1';\n",
+              "    const searchParams = new URLSearchParams(window.location.search);\n    collisionTestEnabled.current = searchParams.get('collisionTest') === '1';\n    repairTestEnabled.current = searchParams.get('repairTest') === '1';\n\n    const repairTestStore = useSimStore.getState();\n    if (\n      repairTestEnabled.current &&\n      repairTestStore.hullHealth >= 99.9 &&\n      repairTestStore.engineHealth >= 99.9 &&\n      repairTestStore.rudderHealth >= 99.9\n    ) {\n      hullHealth.current = 72;\n      engineHealth.current = 35;\n      rudderHealth.current = 42;\n      engineTemperature.current = 78;\n      repairTestStore.setTelemetry(0, 0, 72, 35, 78, 42);\n    }\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "      setTelemetry,\n      setFloodingTelemetry,\n",
+              "      setTelemetry,\n      setFloodingTelemetry,\n      setFieldRepairTelemetry,\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "    const activePump =\n      !calibration &&\n      keys.r &&\n      currentSpeedKnots < 2 &&\n      Math.abs(thrustRaw) < 0.1;\n",
+              "    const propulsionInputActive =\n      keys.w ||\n      keys.s ||\n      keys.arrowup ||\n      keys.arrowdown;\n    const activeFieldRepair =\n      !calibration &&\n      isFieldRepairEligible({\n        requested: keys.r,\n        speedKnots: currentSpeedKnots,\n        throttle: thrustRaw,\n        propulsionInputActive,\n      });\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              '      activePump,\n',
+              '      activePump: activeFieldRepair,\n',
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "    if (!calibration) {\n      sharedMissionRuntimeStatistics.advance({\n        runId: scenarioRunId,\n        vesselGeneration: resetVesselTrigger,\n        enabled:\n          canAdvanceAuthoritativeSimulation(sessionPhase) &&\n          scenarioRunStatus === 'active' &&\n          useNavigationPlanner.getState().mode === 'mission',\n        deltaSeconds: dt,\n        boatX: body.position.x,\n        boatZ: body.position.z,\n        speedKnots,\n      });\n    }\n\n",
+              "",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "    // --- Phase 5: Active Repair / Bilge Mechanics ---\n    if (activePump) {\n        hullHealth.current = Math.min(100, hullHealth.current + 8.0 * dt);\n        engineHealth.current = Math.min(100, engineHealth.current + 12.0 * dt);\n        rudderHealth.current = Math.min(100, rudderHealth.current + 15.0 * dt);\n        \n        // The compartment model performs the actual active pump-down. Repair\n        // also cools the stopped engine and reduces breach severity over time.\n        engineTemperature.current = Math.max(20, engineTemperature.current - 5.0 * dt);\n    }\n\n",
+              "    // --- Bilge pump and limited emergency field repair ---\n    const repairStatisticsBeforeStep =\n      sharedMissionRuntimeStatistics.snapshot;\n    const repairUsageMatchesRun =\n      repairStatisticsBeforeStep.runId === scenarioRunId;\n    const fieldRepairResult = applyFieldRepairStep({\n      active: activeFieldRepair,\n      deltaSeconds: dt,\n      hullHealth: hullHealth.current,\n      engineHealth: engineHealth.current,\n      rudderHealth: rudderHealth.current,\n      engineTemperatureC: engineTemperature.current,\n      engineConditionRestoredThisRun: repairUsageMatchesRun\n        ? repairStatisticsBeforeStep.engineConditionRestored\n        : 0,\n      rudderConditionRestoredThisRun: repairUsageMatchesRun\n        ? repairStatisticsBeforeStep.rudderConditionRestored\n        : 0,\n    });\n    hullHealth.current = fieldRepairResult.hullHealth;\n    engineHealth.current = fieldRepairResult.engineHealth;\n    rudderHealth.current = fieldRepairResult.rudderHealth;\n    engineTemperature.current = fieldRepairResult.engineTemperatureC;\n\n    const missionStatistics = !calibration\n      ? sharedMissionRuntimeStatistics.advance({\n          runId: scenarioRunId,\n          vesselGeneration: resetVesselTrigger,\n          enabled:\n            canAdvanceAuthoritativeSimulation(sessionPhase) &&\n            scenarioRunStatus === 'active' &&\n            useNavigationPlanner.getState().mode === 'mission',\n          deltaSeconds: dt,\n          boatX: body.position.x,\n          boatZ: body.position.z,\n          speedKnots,\n          repairActive: activeFieldRepair,\n          engineConditionRestored:\n            fieldRepairResult.engineConditionRestored,\n          rudderConditionRestored:\n            fieldRepairResult.rudderConditionRestored,\n        })\n      : sharedMissionRuntimeStatistics.snapshot;\n\n",
+          )
+          replace_once(
+              'components/Boat.tsx',
+              "        setFloodingTelemetry(\n          floodingResult.floodingRatio,\n          floodingResult.totalFloodedVolumeM3,\n        );\n",
+              "        setFloodingTelemetry(\n          floodingResult.floodingRatio,\n          floodingResult.totalFloodedVolumeM3,\n        );\n        setFieldRepairTelemetry({\n          active: activeFieldRepair,\n          activeSeconds: missionStatistics.repairActiveSeconds,\n          activationCount: missionStatistics.repairActivationCount,\n          engineConditionRestored:\n            missionStatistics.engineConditionRestored,\n          rudderConditionRestored:\n            missionStatistics.rudderConditionRestored,\n          penaltyPoints: calculateFieldRepairPenalty(missionStatistics),\n        });\n",
+          )
+
+          # Store mission repair telemetry/result fields and preserve condition on recovery.
+          replace_once(
+              'store/useSimStore.ts',
+              "export interface ScenarioCheckpointState {\n  id: string;\n  label: string;\n  waypointIndex: number;\n  x: number;\n  z: number;\n  headingDeg: number;\n}\n\n",
+              "export interface ScenarioCheckpointState {\n  id: string;\n  label: string;\n  waypointIndex: number;\n  x: number;\n  z: number;\n  headingDeg: number;\n}\n\nexport interface FieldRepairTelemetry {\n  active: boolean;\n  activeSeconds: number;\n  activationCount: number;\n  engineConditionRestored: number;\n  rudderConditionRestored: number;\n  penaltyPoints: number;\n}\n\n",
+          )
+          replace_once(
+              'store/useSimStore.ts',
+              "  resetCount: number;\n  maximumSpeedKnots: number;\n",
+              "  resetCount: number;\n  repairActiveSeconds: number;\n  repairActivationCount: number;\n  engineConditionRestored: number;\n  rudderConditionRestored: number;\n  repairPenaltyPoints: number;\n  maximumSpeedKnots: number;\n",
+          )
+          replace_once(
+              'store/useSimStore.ts',
+              "    scenarioResetCount: 0,\n    completedScenarioEntityIds: [] as string[],\n",
+              "    scenarioResetCount: 0,\n    fieldRepairActive: false,\n    fieldRepairSeconds: 0,\n    fieldRepairActivationCount: 0,\n    fieldRepairEngineRestored: 0,\n    fieldRepairRudderRestored: 0,\n    fieldRepairPenaltyPoints: 0,\n    completedScenarioEntityIds: [] as string[],\n",
+          )
+          replace_once(
+              'store/useSimStore.ts',
+              "  scenarioResetCount: number;\n  completedScenarioEntityIds: string[];\n",
+              "  scenarioResetCount: number;\n  fieldRepairActive: boolean;\n  fieldRepairSeconds: number;\n  fieldRepairActivationCount: number;\n  fieldRepairEngineRestored: number;\n  fieldRepairRudderRestored: number;\n  fieldRepairPenaltyPoints: number;\n  completedScenarioEntityIds: string[];\n",
+          )
+          replace_once(
+              'store/useSimStore.ts',
+              "  setFloodingTelemetry: (\n    floodingRatio: number,\n    floodedVolumeM3: number,\n  ) => void;\n",
+              "  setFloodingTelemetry: (\n    floodingRatio: number,\n    floodedVolumeM3: number,\n  ) => void;\n  setFieldRepairTelemetry: (telemetry: FieldRepairTelemetry) => void;\n",
+          )
+          replace_once(
+              'store/useSimStore.ts',
+              "  setFloodingTelemetry: (floodingRatio, floodedVolumeM3) =>\n    set({\n      floodingRatio: Math.max(0, Math.min(1, floodingRatio)),\n      floodedVolumeM3: Math.max(0, floodedVolumeM3),\n    }),\n",
+              "  setFloodingTelemetry: (floodingRatio, floodedVolumeM3) =>\n    set({\n      floodingRatio: Math.max(0, Math.min(1, floodingRatio)),\n      floodedVolumeM3: Math.max(0, floodedVolumeM3),\n    }),\n  setFieldRepairTelemetry: (telemetry) =>\n    set({\n      fieldRepairActive: telemetry.active,\n      fieldRepairSeconds: Math.max(0, telemetry.activeSeconds),\n      fieldRepairActivationCount: Math.max(\n        0,\n        Math.floor(telemetry.activationCount),\n      ),\n      fieldRepairEngineRestored: Math.max(\n        0,\n        telemetry.engineConditionRestored,\n      ),\n      fieldRepairRudderRestored: Math.max(\n        0,\n        telemetry.rudderConditionRestored,\n      ),\n      fieldRepairPenaltyPoints: Math.max(\n        0,\n        Math.round(telemetry.penaltyPoints),\n      ),\n    }),\n",
+          )
+          replace_once(
+              'store/useSimStore.ts',
+              '  clearKeys: () => set({ keys: createEmptyKeys() }),\n',
+              '  clearKeys: () =>\n    set({ keys: createEmptyKeys(), fieldRepairActive: false }),\n',
+          )
+          replace_once(
+              'store/useSimStore.ts',
+              "      scenarioInteractionMessage: '',\n      ...resetTelemetry(),\n",
+              "      scenarioInteractionMessage: '',\n      speedKnots: 0,\n      heading: state.scenarioSpawnHeadingDeg,\n      floodingRatio: 0,\n      floodedVolumeM3: 0,\n      fieldRepairActive: false,\n",
+          )
+
+          # Score and result disclosure.
+          replace_once(
+              'components/ScenarioDirector.tsx',
+              "import { sharedMissionRuntimeStatistics } from '@/sim/scenarios/MissionRuntimeStatistics';\n",
+              "import { sharedMissionRuntimeStatistics } from '@/sim/scenarios/MissionRuntimeStatistics';\nimport { calculateFieldRepairPenalty } from '@/sim/vessels/FieldRepairPolicy';\n",
+          )
+          replace_once(
+              'components/ScenarioDirector.tsx',
+              "  const resetPenalty = result.resetCount * 70;\n\n  return Math.round(\n    MathUtils.clamp(\n      1_000 - timePenalty - damagePenalty - contactPenalty - resetPenalty,\n",
+              "  const resetPenalty = result.resetCount * 70;\n\n  return Math.round(\n    MathUtils.clamp(\n      1_000 -\n        timePenalty -\n        damagePenalty -\n        contactPenalty -\n        resetPenalty -\n        result.repairPenaltyPoints,\n",
+          )
+          replace_once(
+              'components/ScenarioDirector.tsx',
+              "      const baseResult = {\n        runMode: latestStore.scenarioRunMode,\n",
+              "      const repairPenaltyPoints =\n        calculateFieldRepairPenalty(missionStatistics);\n      const baseResult = {\n        runMode: latestStore.scenarioRunMode,\n",
+          )
+          replace_once(
+              'components/ScenarioDirector.tsx',
+              "        resetCount: latestStore.scenarioResetCount,\n        maximumSpeedKnots: missionStatistics.maximumSpeedKnots,\n",
+              "        resetCount: latestStore.scenarioResetCount,\n        repairActiveSeconds: missionStatistics.repairActiveSeconds,\n        repairActivationCount: missionStatistics.repairActivationCount,\n        engineConditionRestored:\n          missionStatistics.engineConditionRestored,\n        rudderConditionRestored:\n          missionStatistics.rudderConditionRestored,\n        repairPenaltyPoints,\n        maximumSpeedKnots: missionStatistics.maximumSpeedKnots,\n",
+          )
+
+          replace_once(
+              'components/ScenarioResultOverlay.tsx',
+              "  Trophy,\n} from 'lucide-react';\n",
+              "  Trophy,\n  Wrench,\n} from 'lucide-react';\n",
+          )
+          replace_once(
+              'components/ScenarioResultOverlay.tsx',
+              "        <div className=\"mt-4 flex flex-col gap-2 rounded-2xl border border-white/8 bg-white/[0.025] px-4 py-3 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between\">\n",
+              "        {result.repairActiveSeconds > 0 && (\n          <div className=\"mt-4 flex gap-3 rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.06] p-4 text-cyan-100\">\n            <Wrench className=\"mt-0.5 h-5 w-5 shrink-0\" />\n            <div>\n              <div className=\"text-[10px] font-black uppercase tracking-[0.18em]\">\n                Field repair used · -{result.repairPenaltyPoints} score\n              </div>\n              <p className=\"mt-1 text-xs leading-5 text-slate-300\">\n                {formatDuration(result.repairActiveSeconds)} active across{' '}\n                {result.repairActivationCount} stop{result.repairActivationCount === 1 ? '' : 's'}. Emergency restoration: engine +{result.engineConditionRestored.toFixed(1)}, rudder +{result.rudderConditionRestored.toFixed(1)}. Hull structure was not restored underway.\n              </p>\n            </div>\n          </div>\n        )}\n\n        <div className=\"mt-4 flex flex-col gap-2 rounded-2xl border border-white/8 bg-white/[0.025] px-4 py-3 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between\">\n",
+          )
+
+          # HUD uses the same eligibility and clearly discloses caps/budgets.
+          replace_once(
+              'components/HUD.tsx',
+              "import { useDebugMode } from '@/hooks/useDebugMode';\n",
+              "import { useDebugMode } from '@/hooks/useDebugMode';\nimport {\n  FIELD_REPAIR_LIMITS,\n  isFieldRepairEligible,\n} from '@/sim/vessels/FieldRepairPolicy';\n",
+          )
+          replace_once(
+              'components/HUD.tsx',
+              "      scenarioAssistanceReason: store.scenarioAssistanceReason,\n      keys: store.keys,\n",
+              "      scenarioAssistanceReason: store.scenarioAssistanceReason,\n      fieldRepairSeconds: store.fieldRepairSeconds,\n      fieldRepairActivationCount: store.fieldRepairActivationCount,\n      fieldRepairEngineRestored: store.fieldRepairEngineRestored,\n      fieldRepairRudderRestored: store.fieldRepairRudderRestored,\n      fieldRepairPenaltyPoints: store.fieldRepairPenaltyPoints,\n      keys: store.keys,\n",
+          )
+          replace_once(
+              'components/HUD.tsx',
+              "  const isRepairing =\n    state.keys.r &&\n    Math.abs(state.speedKnots) < 2 &&\n    state.engineThrust < 0.1 &&\n    !state.keys.w &&\n    !state.keys.s &&\n    !state.keys.arrowup &&\n    !state.keys.arrowdown;\n",
+              "  const isRepairing = isFieldRepairEligible({\n    requested: state.keys.r,\n    speedKnots: state.speedKnots,\n    throttle: state.engineThrust,\n    propulsionInputActive:\n      state.keys.w ||\n      state.keys.s ||\n      state.keys.arrowup ||\n      state.keys.arrowdown,\n  });\n  const remainingEngineRepair = Math.max(\n    0,\n    FIELD_REPAIR_LIMITS.maximumEngineRestorePerRun -\n      state.fieldRepairEngineRestored,\n  );\n  const remainingRudderRepair = Math.max(\n    0,\n    FIELD_REPAIR_LIMITS.maximumRudderRestorePerRun -\n      state.fieldRepairRudderRestored,\n  );\n",
+          )
+          replace_once(
+              'components/HUD.tsx',
+              '                Hold [R] to repair\n',
+              '                Hold [R] bilge / field repair\n',
+          )
+          replace_once(
+              'components/HUD.tsx',
+              "              {isRepairing\n                ? 'Active field repair'\n                : 'Slow down and cut throttle to repair'}\n",
+              "              {isRepairing\n                ? 'Bilge pump active · emergency repair logged'\n                : 'Slow below 2 kt and set neutral to repair'}\n",
+          )
+          replace_once(
+              'components/HUD.tsx',
+              "            {debugEnabled && (\n",
+              "            {(\n              state.fieldRepairSeconds > 0 ||\n              state.hullHealth < 100 ||\n              state.engineHealth < 100 ||\n              state.rudderHealth < 100 ||\n              state.floodingRatio > 0\n            ) && (\n              <div className=\"mt-3 rounded-xl border border-cyan-300/15 bg-cyan-300/[0.05] p-3 text-[9px] leading-4 text-slate-400\">\n                <div className=\"flex items-center gap-1.5 font-black uppercase tracking-wider text-cyan-200\">\n                  <Wrench className=\"h-3 w-3\" /> Field repair limits\n                </div>\n                <p className=\"mt-1\">\n                  Bilge pumping and breach stabilization remain available. Hull structural condition cannot be restored underway. Engine recovery is capped at {FIELD_REPAIR_LIMITS.engineConditionCeiling}% with {remainingEngineRepair.toFixed(1)} points remaining; rudder recovery is capped at {FIELD_REPAIR_LIMITS.rudderConditionCeiling}% with {remainingRudderRepair.toFixed(1)} remaining.\n                </p>\n                {state.fieldRepairPenaltyPoints > 0 && (\n                  <div className=\"mt-1 font-mono text-cyan-200\">\n                    {state.fieldRepairActivationCount} stop{state.fieldRepairActivationCount === 1 ? '' : 's'} · {state.fieldRepairSeconds.toFixed(1)}s · -{state.fieldRepairPenaltyPoints} score\n                  </div>\n                )}\n              </div>\n            )}\n\n            {debugEnabled && (\n",
+          )
+          replace_once(
+              'components/HUD.tsx',
+              '              aria-label="Repair vessel"\n',
+              '              aria-label="Activate bilge pump and emergency field repair"\n',
+          )
+
+          # Browser-observable telemetry and deterministic repair product probe.
+          replace_once(
+              'components/ExperiencePersistence.tsx',
+              "  dataset.simScenarioResultRunMode = state.scenarioResult?.runMode ?? '';\n",
+              "  dataset.simScenarioResultRunMode = state.scenarioResult?.runMode ?? '';\n  dataset.simHullHealth = String(state.hullHealth);\n  dataset.simEngineHealth = String(state.engineHealth);\n  dataset.simRudderHealth = String(state.rudderHealth);\n  dataset.simEngineTemperature = String(state.engineTemperature);\n  dataset.simFloodingRatio = String(state.floodingRatio);\n  dataset.simFieldRepairActive = state.fieldRepairActive ? '1' : '0';\n  dataset.simFieldRepairSeconds = String(state.fieldRepairSeconds);\n  dataset.simFieldRepairActivationCount = String(\n    state.fieldRepairActivationCount,\n  );\n  dataset.simFieldRepairEngineRestored = String(\n    state.fieldRepairEngineRestored,\n  );\n  dataset.simFieldRepairRudderRestored = String(\n    state.fieldRepairRudderRestored,\n  );\n  dataset.simFieldRepairPenaltyPoints = String(\n    state.fieldRepairPenaltyPoints,\n  );\n  dataset.simScenarioRepairPenaltyPoints = String(\n    state.scenarioResult?.repairPenaltyPoints ?? 0,\n  );\n",
+          )
+
+          replace_once(
+              'scripts/product-experience-smoke.mjs',
+              "      scenarioResultRunMode: dataset.simScenarioResultRunMode ?? '',\n",
+              "      scenarioResultRunMode: dataset.simScenarioResultRunMode ?? '',\n      hullHealth: Number(dataset.simHullHealth ?? '0'),\n      engineHealth: Number(dataset.simEngineHealth ?? '0'),\n      rudderHealth: Number(dataset.simRudderHealth ?? '0'),\n      fieldRepairActive: dataset.simFieldRepairActive ?? '0',\n      fieldRepairSeconds: Number(dataset.simFieldRepairSeconds ?? '0'),\n      fieldRepairActivationCount: Number(\n        dataset.simFieldRepairActivationCount ?? '0',\n      ),\n      fieldRepairEngineRestored: Number(\n        dataset.simFieldRepairEngineRestored ?? '0',\n      ),\n      fieldRepairRudderRestored: Number(\n        dataset.simFieldRepairRudderRestored ?? '0',\n      ),\n      fieldRepairPenaltyPoints: Number(\n        dataset.simFieldRepairPenaltyPoints ?? '0',\n      ),\n",
+          )
+          repair_flow = dedent(r'''
+            allPassed =
+              (await runFlow(
+                'field-repair-fairness-flow',
+                {
+                  viewport: { width: 1280, height: 820 },
+                  deviceScaleFactor: 1,
+                  isMobile: false,
+                  hasTouch: false,
+                },
+                async ({ page, checks }) => {
+                  await page
+                    .locator('button')
+                    .filter({ hasText: 'Harbor Training' })
+                    .first()
+                    .click();
+                  await waitForDataset(page, 'simScenario', 'harbor-training');
+                  await page.getByRole('button', { name: /Begin passage/i }).click();
+                  await waitForDataset(page, 'simSessionPhase', 'running');
+                  await waitForCollisionRuntimeReady(page);
+                  await page.waitForFunction(
+                    () => {
+                      const dataset = document.documentElement.dataset;
+                      return (
+                        Number(dataset.simHullHealth) <= 72.1 &&
+                        Number(dataset.simEngineHealth) <= 35.1 &&
+                        Number(dataset.simRudderHealth) <= 42.1
+                      );
+                    },
+                    undefined,
+                    { timeout: 60_000 },
+                  );
+
+                  const initial = await readExperienceState(page);
+                  await page.keyboard.down('r');
+                  await page.waitForFunction(
+                    () =>
+                      Number(
+                        document.documentElement.dataset.simFieldRepairSeconds ??
+                          '0',
+                      ) >= 1.5,
+                    undefined,
+                    { timeout: 60_000 },
+                  );
+                  await page.keyboard.up('r');
+                  await page.waitForFunction(
+                    () =>
+                      document.documentElement.dataset.simFieldRepairActive ===
+                      '0',
+                    undefined,
+                    { timeout: 60_000 },
+                  );
+
+                  const repaired = await readExperienceState(page);
+                  checks.hullNotRestored =
+                    Math.abs(repaired.hullHealth - initial.hullHealth) < 0.15;
+                  checks.emergencyRepairIsLimited =
+                    repaired.engineHealth > initial.engineHealth + 0.5 &&
+                    repaired.rudderHealth > initial.rudderHealth + 0.8 &&
+                    repaired.engineHealth <= 55.01 &&
+                    repaired.rudderHealth <= 65.01;
+                  checks.repairUsageRecorded =
+                    repaired.fieldRepairSeconds >= 1.5 &&
+                    repaired.fieldRepairActivationCount === 1 &&
+                    repaired.fieldRepairEngineRestored > 0.5 &&
+                    repaired.fieldRepairRudderRestored > 0.8 &&
+                    repaired.fieldRepairPenaltyPoints > 0;
+                  checks.repairLimitsDisclosed =
+                    (await page.getByText(
+                      /Hull structural condition cannot be restored underway/i,
+                    ).count()) > 0;
+
+                  const resetBeforeRecovery = repaired.resetVesselTrigger;
+                  await page.keyboard.press('Home');
+                  await page.waitForFunction(
+                    (previousReset) =>
+                      Number(
+                        document.documentElement.dataset.simResetVesselTrigger ??
+                          '0',
+                      ) > previousReset,
+                    resetBeforeRecovery,
+                    { timeout: 60_000 },
+                  );
+                  await waitForCollisionRuntimeReady(page);
+                  await page.waitForTimeout(350);
+                  const recovered = await readExperienceState(page);
+                  checks.recoveryPreservesCondition =
+                    Math.abs(recovered.hullHealth - repaired.hullHealth) < 0.25 &&
+                    Math.abs(recovered.engineHealth - repaired.engineHealth) < 0.25 &&
+                    Math.abs(recovered.rudderHealth - repaired.rudderHealth) < 0.25 &&
+                    recovered.fieldRepairPenaltyPoints ===
+                      repaired.fieldRepairPenaltyPoints;
+                },
+                '/?repairTest=1',
+              )) && allPassed;
+
+          ''').lstrip()
+          product_source = read('scripts/product-experience-smoke.mjs')
+          marker = "allPassed =\n  (await runFlow(\n    'assisted-environment-flow',"
+          if product_source.count(marker) != 1:
+              raise SystemExit('Unable to locate assisted flow insertion marker.')
+          write(
+              'scripts/product-experience-smoke.mjs',
+              product_source.replace(marker, repair_flow + marker, 1),
+          )
+
+          # Test registration and plan completion.
+          replace_once(
+              'package.json',
+              '    "test:damage-policy": "node --experimental-strip-types --no-warnings scripts/vessel-damage-policy-contract.mjs",\n',
+              '    "test:damage-policy": "node --experimental-strip-types --no-warnings scripts/vessel-damage-policy-contract.mjs",\n    "test:field-repair": "node --experimental-strip-types --no-warnings scripts/field-repair-policy-contract.mjs",\n',
+          )
+          replace_once(
+              'package.json',
+              'npm run test:scenario-interactions && npm run test:damage-policy && ',
+              'npm run test:scenario-interactions && npm run test:damage-policy && npm run test:field-repair && ',
+          )
+          replace_once(
+              'SIMULATOR_STABILIZATION_PLAN.md',
+              '- [ ] Rebalance field repair and account for repair use in scoring.\n',
+              '- [x] Separate bilge pumping from structural repair, cap emergency engine/rudder recovery, preserve condition across recovery, and include repair time/restoration in mission scoring and results.\n',
+          )
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate complete source and product graph
+        run: npm run validate
+
+      - name: Commit validated field repair fairness changes
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply-field-repair-fairness.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: rebalance field repair and scoring"
+          git push origin HEAD:agent/simulator-stabilization
