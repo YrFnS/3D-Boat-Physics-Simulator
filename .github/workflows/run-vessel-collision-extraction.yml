@@ -43,6 +43,50 @@ jobs:
           exec(compile(staged_script, '<collision-extraction>', 'exec'))
           PY
 
+      - name: Stabilize collision runtime effect ownership
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('components/Boat.tsx')
+          source = path.read_text(encoding='utf-8')
+
+          old_effect_start = """  useEffect(() => {
+            let cancelled = false;
+            const searchParams = new URLSearchParams(window.location.search);
+          """
+          new_effect_start = """  useEffect(() => {
+            let cancelled = false;
+            const activeCollisionRuntime = collisionRuntime.current;
+            const searchParams = new URLSearchParams(window.location.search);
+          """
+          if source.count(old_effect_start) != 1:
+              raise SystemExit('Unable to locate collision initialization effect.')
+          source = source.replace(old_effect_start, new_effect_start, 1)
+
+          replacements = (
+              (
+                  '    collisionRuntime.current.reset(sharedPhysics);',
+                  '    activeCollisionRuntime.reset(sharedPhysics);',
+              ),
+              (
+                  '        collisionRuntime.current.setReady(sharedPhysics, true);',
+                  '        activeCollisionRuntime.setReady(sharedPhysics, true);',
+              ),
+              (
+                  '      collisionRuntime.current.setReady(sharedPhysics, false);',
+                  '      activeCollisionRuntime.setReady(sharedPhysics, false);',
+              ),
+          )
+          for old, new in replacements:
+              if source.count(old) != 1:
+                  raise SystemExit(f'Unable to locate ownership target: {old}')
+              source = source.replace(old, new, 1)
+
+          path.write_text(source, encoding='utf-8')
+          PY
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
