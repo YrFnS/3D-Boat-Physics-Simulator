@@ -58,15 +58,9 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
 - [ ] Align visible terrain detail and collision detail near the vessel.
 - [ ] Complete the physical desktop, integrated-GPU, and touch-device benchmark matrix.
 
-## Latest exact-head checkpoint
+## Exact-head evidence
 
-Validated commit:
-
-```text
-4690328ee6efd4beb9ce46419b2b98616f0872c8
-```
-
-All repository-owned workflows passed on this exact head: CI, Visual Smoke, Physics Calibration, Product Experience, and Release Validation.
+The current validated commit and its five workflow results are recorded in PR #20 after the matrix finishes. This file deliberately avoids embedding a moving branch-head SHA.
 
 ## Release rule
 
