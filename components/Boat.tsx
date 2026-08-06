@@ -292,11 +292,11 @@ export default function Boat() {
       repairTestStore.rudderHealth >= 99.9
     ) {
       conditionRuntime.current.reset({
-      hullHealth: 72,
-      engineHealth: 35,
-      engineTemperature: 78,
-      rudderHealth: 42,
-    });
+        hullHealth: 72,
+        engineHealth: 35,
+        engineTemperature: 78,
+        rudderHealth: 42,
+      });
       repairTestStore.setTelemetry(0, 0, 72, 35, 78, 42);
     }
 
@@ -941,22 +941,22 @@ export default function Boat() {
     body.enforceMotionLimits(motionLimits.current);
 
 
-if (collisionSummary) {
-  collisionRuntime.current.process({
-    summary: collisionSummary,
-    scenarioRunId,
-    vesselGeneration: resetVesselTrigger,
-    simulationTimeSeconds: time,
-    effectiveMassKg: mass,
-    forwardWaterRelativeSpeedMps: vRelForward,
-    vessel,
-    condition: conditionRuntime.current,
-    flooding: floodingModel.current,
-    telemetry: sharedPhysics,
-    random: simulationRandom.current,
-    audio,
-  });
-}
+    if (collisionSummary) {
+      collisionRuntime.current.process({
+        summary: collisionSummary,
+        scenarioRunId,
+        vesselGeneration: resetVesselTrigger,
+        simulationTimeSeconds: time,
+        effectiveMassKg: mass,
+        forwardWaterRelativeSpeedMps: vRelForward,
+        vessel,
+        condition: conditionRuntime.current,
+        flooding: floodingModel.current,
+        telemetry: sharedPhysics,
+        random: simulationRandom.current,
+        audio,
+      });
+    }
 
     forwardDir.set(0, 0, -1).applyQuaternion(body.quaternion);
     forwardDir.y = 0;
