@@ -44,6 +44,7 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
 - [x] Remove passive hull wear from sustained planing and passive rudder wear from ordinary hydrodynamic steering loads.
 - [x] Route slamming, terrain, obstacle, environmental, overheating, and machinery-flooding health loss through one explicit typed damage policy with permanent regressions.
 - [x] Separate bilge pumping from structural repair, cap emergency engine/rudder recovery, preserve condition across recovery, and include repair time/restoration in mission scoring and results.
+- [x] Attribute repair use during free navigation to the active mission budget and clear active-repair state immediately on release, pause, or mission completion.
 
 ## P2 — Architecture and performance
 
