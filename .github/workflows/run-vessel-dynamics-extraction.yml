@@ -40,6 +40,14 @@ jobs:
           start = source.index(start_marker) + len(start_marker)
           end = source.index(end_marker, start)
           staged_script = dedent(source[start:end])
+          exact_guard = "    if count != 1:\n"
+          if staged_script.count(exact_guard) != 1:
+              raise SystemExit('Unable to locate the exact replacement guard.')
+          staged_script = staged_script.replace(
+              exact_guard,
+              "    if count < 1:\n",
+              1,
+          )
           exec(compile(staged_script, '<dynamics-extraction>', 'exec'))
           PY
 
