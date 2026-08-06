@@ -57,6 +57,9 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
   - [x] Move trawler and speedboat procedural meshes into dedicated render components with no simulation authority.
   - [x] Protect the extracted vessel architecture with focused condition, dynamics, telemetry, presentation, render-model, collision lifecycle, collision runtime, collision architecture, and vessel architecture gates.
 - [x] Version obstacle data and synchronize only changed Rapier collider slots, skipping unchanged fixed steps entirely.
+  - [x] Deduplicate repeated changes to the same obstacle before each Rapier synchronization.
+  - [x] Ignore sub-threshold buoy motion and retain a bounded revision history with safe full-sync recovery for new or stale collision worlds.
+  - [x] Remove direct raw-array obstacle mutation and protect the authority boundary with `test:obstacle-sync`.
 - [ ] Align visible terrain detail and collision detail near the vessel.
 - [ ] Complete the physical desktop, integrated-GPU, and touch-device benchmark matrix.
 
