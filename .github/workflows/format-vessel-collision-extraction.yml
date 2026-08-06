@@ -1,0 +1,99 @@
+name: Format vessel collision extraction
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/format-vessel-collision-extraction.yml
+
+permissions:
+  contents: write
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  format:
+    if: github.head_ref == 'agent/simulator-stabilization'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Normalize extracted orchestration formatting
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('components/Boat.tsx')
+          source = path.read_text(encoding='utf-8')
+
+          old_repair = (
+              "      conditionRuntime.current.reset({\n"
+              "      hullHealth: 72,\n"
+              "      engineHealth: 35,\n"
+              "      engineTemperature: 78,\n"
+              "      rudderHealth: 42,\n"
+              "    });"
+          )
+          new_repair = (
+              "      conditionRuntime.current.reset({\n"
+              "        hullHealth: 72,\n"
+              "        engineHealth: 35,\n"
+              "        engineTemperature: 78,\n"
+              "        rudderHealth: 42,\n"
+              "      });"
+          )
+          if source.count(old_repair) != 1:
+              raise SystemExit('Unable to locate repair-test condition seed.')
+          source = source.replace(old_repair, new_repair, 1)
+
+          collision_start = "\n\nif (collisionSummary) {"
+          collision_end = "\n\n    forwardDir.set(0, 0, -1).applyQuaternion(body.quaternion);"
+          if source.count(collision_start) != 1:
+              raise SystemExit('Unable to locate extracted collision block.')
+          start = source.index(collision_start)
+          end = source.index(collision_end, start)
+          block = source[start + 2:end]
+          indented_block = "\n".join(
+              f"    {line}" if line else line
+              for line in block.splitlines()
+          )
+          source = (
+              source[:start]
+              + "\n\n"
+              + indented_block
+              + source[end:]
+          )
+
+          path.write_text(source, encoding='utf-8')
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate normalized architecture
+        run: npm run validate
+
+      - name: Commit normalized extraction
+        shell: bash
+        run: |
+          rm -f .github/workflows/format-vessel-collision-extraction.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "style: normalize collision runtime orchestration"
+          git push origin HEAD:agent/simulator-stabilization
