@@ -1,0 +1,128 @@
+name: Format vessel condition extraction
+
+on:
+  push:
+    branches:
+      - agent/simulator-stabilization
+    paths:
+      - .github/workflows/format-vessel-condition-extraction.yml
+
+permissions:
+  contents: write
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Normalize extracted orchestration formatting
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('components/Boat.tsx')
+          source = path.read_text(encoding='utf-8')
+
+          old = """    // --- Component temperature and explicit condition damage ---
+          conditionRuntime.current.stepThermalAndFlooding({
+            deltaSeconds: dt,
+            engineRpm: propulsionResult.engineRpm,
+            ratedEngineRpm: vessel.engine.ratedRpm,
+            absorbedShaftPowerW: propulsionResult.absorbedShaftPowerW,
+            ratedEnginePowerW: vessel.engine.ratedPowerW,
+            ventilationFactor: propulsionResult.ventilationFactor,
+            submergedRatio,
+            engineCompartmentFloodingRatio:
+              floodingResult.engineCompartmentFloodingRatio,
+            simulationTimeSeconds: time,
+          });
+
+          """
+          new = """    // --- Component temperature and explicit condition damage ---
+              conditionRuntime.current.stepThermalAndFlooding({
+                deltaSeconds: dt,
+                engineRpm: propulsionResult.engineRpm,
+                ratedEngineRpm: vessel.engine.ratedRpm,
+                absorbedShaftPowerW: propulsionResult.absorbedShaftPowerW,
+                ratedEnginePowerW: vessel.engine.ratedPowerW,
+                ventilationFactor: propulsionResult.ventilationFactor,
+                submergedRatio,
+                engineCompartmentFloodingRatio:
+                  floodingResult.engineCompartmentFloodingRatio,
+                simulationTimeSeconds: time,
+              });
+
+          """
+          if source.count(old) != 1:
+              raise SystemExit('Unable to locate thermal condition block.')
+          source = source.replace(old, new, 1)
+
+          old = """    const fieldRepairResult =
+              conditionRuntime.current.applyFieldRepair({
+                active: activeFieldRepair,
+                deltaSeconds: dt,
+                engineConditionRestoredThisRun: repairUsageMatchesRun
+                  ? repairStatisticsBeforeStep.engineConditionRestored
+                  : 0,
+                rudderConditionRestoredThisRun: repairUsageMatchesRun
+                  ? repairStatisticsBeforeStep.rudderConditionRestored
+                  : 0,
+              });
+
+
+              const missionStatistics"""
+          new = """    const fieldRepairResult =
+              conditionRuntime.current.applyFieldRepair({
+                active: activeFieldRepair,
+                deltaSeconds: dt,
+                engineConditionRestoredThisRun: repairUsageMatchesRun
+                  ? repairStatisticsBeforeStep.engineConditionRestored
+                  : 0,
+                rudderConditionRestoredThisRun: repairUsageMatchesRun
+                  ? repairStatisticsBeforeStep.rudderConditionRestored
+                  : 0,
+              });
+
+              const missionStatistics"""
+          if source.count(old) != 1:
+              raise SystemExit('Unable to locate field-repair orchestration block.')
+          source = source.replace(old, new, 1)
+
+          path.write_text(source, encoding='utf-8')
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate normalized source
+        run: npm run validate
+
+      - name: Commit normalized extraction
+        shell: bash
+        run: |
+          rm -f .github/workflows/format-vessel-condition-extraction.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "style: normalize condition runtime orchestration"
+          git push origin HEAD:agent/simulator-stabilization
