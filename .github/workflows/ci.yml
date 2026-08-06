@@ -69,10 +69,19 @@ jobs:
           ref: agent/simulator-stabilization
           fetch-depth: 0
 
-      - name: Prepare and execute corrected migration
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply migration and validate complete source
         shell: bash
         run: |
-          python - <<'PY'
+          set -euo pipefail
+          : > /tmp/field-repair-migration.log
+
+          python - <<'PY' 2>&1 | tee -a /tmp/field-repair-migration.log
           from pathlib import Path
           from textwrap import dedent
 
@@ -114,41 +123,46 @@ jobs:
               call_anchor.replace('replace_once(', 'replace_last(', 1),
               1,
           )
-          path.write_text(source, encoding='utf-8')
 
           start_marker = "          python - <<'PY'\n"
           end_marker = "\n          PY\n\n      - name: Set up Node.js"
           start = source.index(start_marker) + len(start_marker)
           end = source.index(end_marker, start)
-          migration_script = dedent(source[start:end])
           Path('/tmp/apply-field-repair-fairness.py').write_text(
-              migration_script,
+              dedent(source[start:end]),
               encoding='utf-8',
           )
+          print('Prepared corrected field-repair migration script.')
           PY
 
-          python /tmp/apply-field-repair-fairness.py
+          python /tmp/apply-field-repair-fairness.py \
+            2>&1 | tee -a /tmp/field-repair-migration.log
+          npm ci 2>&1 | tee -a /tmp/field-repair-migration.log
+          npm run validate 2>&1 | tee -a /tmp/field-repair-migration.log
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Validate migrated source and product graph
-        run: npm run validate
-
-      - name: Commit clean validated migration
+      - name: Commit migration failure report
+        if: failure()
         shell: bash
         run: |
-          git show HEAD^:.github/workflows/ci.yml > .github/workflows/ci.yml
+          git reset --hard HEAD
+          cp /tmp/field-repair-migration.log FIELD_REPAIR_MIGRATION_FAILURE.log || \
+            printf 'Migration failed before a log was created.\n' > FIELD_REPAIR_MIGRATION_FAILURE.log
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add FIELD_REPAIR_MIGRATION_FAILURE.log
+          git commit -m "chore: record field repair migration failure"
+          git push origin HEAD:agent/simulator-stabilization
+
+      - name: Commit clean validated migration
+        if: success()
+        shell: bash
+        run: |
+          git show 2043183fbd8992fcccfedad96dd503c214805c8c:.github/workflows/ci.yml > .github/workflows/ci.yml
           rm -f .github/workflows/apply-field-repair-fairness.yml
           rm -f .github/workflows/repair-field-repair-migration.yml
           rm -f FIELD_REPAIR_FAIRNESS_TRIGGER.txt
           rm -f FIELD_REPAIR_MIGRATION_CORRECTION_TRIGGER.txt
+          rm -f FIELD_REPAIR_MIGRATION_FAILURE.log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
