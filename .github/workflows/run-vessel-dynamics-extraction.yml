@@ -164,6 +164,61 @@ jobs:
           path.write_text(source, encoding='utf-8')
           PY
 
+      - name: Delegate condition-damage ownership contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/vessel-condition-runtime-contract.mjs')
+          source = path.read_text(encoding='utf-8')
+
+          runtime_entry = (
+              "const runtimeSource = await fs.readFile(\n"
+              "  new URL('../sim/vessels/VesselConditionRuntime.ts', import.meta.url),\n"
+              "  'utf8',\n"
+              ");\n"
+          )
+          dynamics_entry = runtime_entry + (
+              "const dynamicsSource = await fs.readFile(\n"
+              "  new URL(\n"
+              "    '../sim/vessels/VesselDynamicsRuntime.ts',\n"
+              "    import.meta.url,\n"
+              "  ),\n"
+              "  'utf8',\n"
+              ");\n"
+          )
+          if source.count(runtime_entry) != 1:
+              raise SystemExit('Unable to locate condition runtime source entry.')
+          source = source.replace(runtime_entry, dynamics_entry, 1)
+
+          old_damage_assertion = (
+              "assert.match(boatSource, /conditionRuntime\\.current\\.applyDamage/);\n"
+          )
+          new_damage_assertion = (
+              "assert.match(\n"
+              "  boatSource,\n"
+              "  /condition:\\s*conditionRuntime\\.current/,\n"
+              "  'Boat must pass condition authority into vessel dynamics.',\n"
+              ");\n"
+              "assert.match(\n"
+              "  dynamicsSource,\n"
+              "  /condition\\.applyDamage\\(\\{/,\n"
+              "  'Dynamics damage must delegate to condition authority.',\n"
+              ");\n"
+              "assert.match(dynamicsSource, /source: 'slamming'/);\n"
+              "assert.match(dynamicsSource, /source: 'environmental-impact'/);\n"
+          )
+          if source.count(old_damage_assertion) != 1:
+              raise SystemExit('Unable to locate condition damage assertion.')
+          source = source.replace(
+              old_damage_assertion,
+              new_damage_assertion,
+              1,
+          )
+          path.write_text(source, encoding='utf-8')
+          PY
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
