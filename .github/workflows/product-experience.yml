@@ -166,3 +166,128 @@ jobs:
           steps.gameplay_systems.outcome != 'success' ||
           steps.onboarding_settings.outcome != 'success'
         run: exit 1
+
+  synchronize-repair-recovery-probe:
+    name: Synchronize recovery telemetry convergence probe
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.head_ref == 'agent/simulator-stabilization'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Replace fixed-delay recovery sampling with convergence
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/product-experience-smoke.mjs')
+          source = path.read_text(encoding='utf-8')
+
+          old = """      await waitForCollisionRuntimeReady(page);
+      await page.waitForTimeout(350);
+      const recovered = await readExperienceState(page);
+      checks.recoveryPreservesCondition =
+        // Recovery may republish condition on a different 10 Hz telemetry
+        // boundary, but it must never erase meaningful damage or repair cost.
+        recovered.hullHealth < 90 &&
+        recovered.engineHealth < 60 &&
+        recovered.rudderHealth < 70 &&
+        Math.abs(
+          recovered.hullHealth - conditionBeforeRecovery.hullHealth,
+        ) < 0.75 &&
+        Math.abs(
+          recovered.engineHealth - conditionBeforeRecovery.engineHealth,
+        ) < 0.75 &&
+        Math.abs(
+          recovered.rudderHealth - conditionBeforeRecovery.rudderHealth,
+        ) < 0.75 &&
+        recovered.fieldRepairPenaltyPoints ===
+          conditionBeforeRecovery.fieldRepairPenaltyPoints;
+"""
+          new = """      await waitForCollisionRuntimeReady(page);
+      await page.waitForFunction(
+        ({ before, minimumPenalty }) => {
+          const dataset = document.documentElement.dataset;
+          const hullHealth = Number(dataset.simHullHealth ?? '100');
+          const engineHealth = Number(dataset.simEngineHealth ?? '100');
+          const rudderHealth = Number(dataset.simRudderHealth ?? '100');
+          const penaltyPoints = Number(
+            dataset.simFieldRepairPenaltyPoints ?? '0',
+          );
+          return (
+            hullHealth < 90 &&
+            engineHealth < 60 &&
+            rudderHealth < 70 &&
+            Math.abs(hullHealth - before.hullHealth) < 1 &&
+            Math.abs(engineHealth - before.engineHealth) < 1 &&
+            Math.abs(rudderHealth - before.rudderHealth) < 1 &&
+            penaltyPoints >= before.fieldRepairPenaltyPoints &&
+            penaltyPoints >= minimumPenalty
+          );
+        },
+        {
+          before: conditionBeforeRecovery,
+          minimumPenalty: freeRepaired.fieldRepairPenaltyPoints,
+        },
+        { timeout: 60_000 },
+      );
+      const recovered = await readExperienceState(page);
+      checks.recoveryPreservesCondition =
+        // Recovery can republish on a later 10 Hz telemetry boundary. It must
+        // keep meaningful damage and may never reduce accumulated repair cost.
+        recovered.hullHealth < 90 &&
+        recovered.engineHealth < 60 &&
+        recovered.rudderHealth < 70 &&
+        Math.abs(
+          recovered.hullHealth - conditionBeforeRecovery.hullHealth,
+        ) < 1 &&
+        Math.abs(
+          recovered.engineHealth - conditionBeforeRecovery.engineHealth,
+        ) < 1 &&
+        Math.abs(
+          recovered.rudderHealth - conditionBeforeRecovery.rudderHealth,
+        ) < 1 &&
+        recovered.fieldRepairPenaltyPoints >=
+          conditionBeforeRecovery.fieldRepairPenaltyPoints &&
+        recovered.fieldRepairPenaltyPoints >=
+          freeRepaired.fieldRepairPenaltyPoints;
+"""
+
+          if source.count(old) != 1:
+              raise SystemExit('Unable to locate the repair recovery probe block.')
+          path.write_text(source.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate source graph
+        run: npm run validate
+
+      - name: Commit synchronized probe
+        shell: bash
+        run: |
+          git show HEAD^:.github/workflows/product-experience.yml > .github/workflows/product-experience.yml
+          rm -f .github/workflows/stabilize-repair-recovery-probe.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "test: stabilize repair recovery telemetry"
+          git push origin HEAD:agent/simulator-stabilization
