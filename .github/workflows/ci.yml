@@ -50,3 +50,108 @@ jobs:
 
       - name: Reject dependency advisories
         run: npm run audit
+
+  apply-field-repair-fairness:
+    name: Apply and validate field repair fairness
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/agent/simulator-stabilization' &&
+      github.actor != 'github-actions[bot]'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Prepare and execute corrected migration
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          path = Path('.github/workflows/apply-field-repair-fairness.yml')
+          source = path.read_text(encoding='utf-8')
+
+          helper_anchor = """          def replace_once(path: str, old: str, new: str) -> None:
+              source = read(path)
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(
+                      f'{path}: expected exactly one target, found {count}: {old[:180]!r}'
+                  )
+              write(path, source.replace(old, new, 1))
+"""
+          helper_replacement = helper_anchor + """
+          def replace_last(path: str, old: str, new: str) -> None:
+              source = read(path)
+              count = source.count(old)
+              if count < 1:
+                  raise SystemExit(
+                      f'{path}: expected at least one target, found {count}: {old[:180]!r}'
+                  )
+              index = source.rfind(old)
+              write(path, source[:index] + new + source[index + len(old):])
+"""
+          if source.count(helper_anchor) != 1:
+              raise SystemExit('Unable to locate replace_once helper.')
+          source = source.replace(helper_anchor, helper_replacement, 1)
+
+          call_anchor = """          replace_once(
+              'components/Boat.tsx',
+              \"        setFloodingTelemetry(\\n          floodingResult.floodingRatio,\\n          floodingResult.totalFloodedVolumeM3,\\n        );\\n\",
+"""
+          if source.count(call_anchor) != 1:
+              raise SystemExit('Unable to locate Boat telemetry replacement call.')
+          source = source.replace(
+              call_anchor,
+              call_anchor.replace('replace_once(', 'replace_last(', 1),
+              1,
+          )
+          path.write_text(source, encoding='utf-8')
+
+          start_marker = "          python - <<'PY'\n"
+          end_marker = "\n          PY\n\n      - name: Set up Node.js"
+          start = source.index(start_marker) + len(start_marker)
+          end = source.index(end_marker, start)
+          migration_script = dedent(source[start:end])
+          Path('/tmp/apply-field-repair-fairness.py').write_text(
+              migration_script,
+              encoding='utf-8',
+          )
+          PY
+
+          python /tmp/apply-field-repair-fairness.py
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate migrated source and product graph
+        run: npm run validate
+
+      - name: Commit clean validated migration
+        shell: bash
+        run: |
+          git show HEAD^:.github/workflows/ci.yml > .github/workflows/ci.yml
+          rm -f .github/workflows/apply-field-repair-fairness.yml
+          rm -f .github/workflows/repair-field-repair-migration.yml
+          rm -f FIELD_REPAIR_FAIRNESS_TRIGGER.txt
+          rm -f FIELD_REPAIR_MIGRATION_CORRECTION_TRIGGER.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: rebalance field repair and scoring"
+          git push origin HEAD:agent/simulator-stabilization
