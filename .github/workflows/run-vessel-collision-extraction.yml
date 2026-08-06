@@ -52,18 +52,18 @@ jobs:
           path = Path('components/Boat.tsx')
           source = path.read_text(encoding='utf-8')
 
-          old_effect_start = """  useEffect(() => {
-            let cancelled = false;
-            const searchParams = new URLSearchParams(window.location.search);
-          """
-          new_effect_start = """  useEffect(() => {
-            let cancelled = false;
-            const activeCollisionRuntime = collisionRuntime.current;
-            const searchParams = new URLSearchParams(window.location.search);
-          """
-          if source.count(old_effect_start) != 1:
+          old_effect_anchor = (
+              "    let cancelled = false;\n"
+              "    const searchParams = new URLSearchParams(window.location.search);"
+          )
+          new_effect_anchor = (
+              "    let cancelled = false;\n"
+              "    const activeCollisionRuntime = collisionRuntime.current;\n"
+              "    const searchParams = new URLSearchParams(window.location.search);"
+          )
+          if source.count(old_effect_anchor) != 1:
               raise SystemExit('Unable to locate collision initialization effect.')
-          source = source.replace(old_effect_start, new_effect_start, 1)
+          source = source.replace(old_effect_anchor, new_effect_anchor, 1)
 
           replacements = (
               (
