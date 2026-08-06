@@ -93,14 +93,10 @@ function Buoy({ x, z, id }: BuoyProps) {
   );
 
   useEffect(() => {
-    const obstacleOffset = id * 4;
-    sharedPhysics.obstacles[obstacleOffset] = x;
-    sharedPhysics.obstacles[obstacleOffset + 1] = 0;
-    sharedPhysics.obstacles[obstacleOffset + 2] = z;
-    sharedPhysics.obstacles[obstacleOffset + 3] = 1;
+    sharedPhysics.obstacleField.set(id, x, 0, z, 1);
 
     return () => {
-      sharedPhysics.obstacles.fill(0, obstacleOffset, obstacleOffset + 4);
+      sharedPhysics.obstacleField.clear(id);
     };
   }, [id, x, z]);
 
@@ -157,7 +153,7 @@ function Buoy({ x, z, id }: BuoyProps) {
         Math.min(1, 5 * delta * updateEvery),
       );
 
-      sharedPhysics.obstacles[id * 4 + 1] = wave.y;
+      sharedPhysics.obstacleField.set(id, x, wave.y, z, 1);
     }
 
     if (isInteractive) {

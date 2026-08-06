@@ -3,6 +3,7 @@ import { MathUtils, Quaternion, Vector3 } from 'three';
 import { getTerrainHeight } from '@/lib/terrain';
 import { MAX_OBSTACLES } from '@/store/useSimStore';
 import type { SixDofBody } from '@/sim/core/SixDofBody';
+import type { VersionedObstacleField } from './VersionedObstacleField';
 import type { VesselConfig } from '@/sim/vessels/VesselConfig';
 import {
   CollisionContactLifecycle,
@@ -149,6 +150,8 @@ export class RapierCollisionWorld {
   private readonly obstacleColliders: Array<RAPIER.Collider | null> =
     Array.from({ length: MAX_OBSTACLES }, () => null);
   private readonly obstacleRadii = new Float32Array(MAX_OBSTACLES);
+  private readonly changedObstacleIndices: number[] = [];
+  private lastObstacleVersion = -1;
   private readonly vesselColliders: RAPIER.Collider[] = [];
   private readonly vesselColliderHandles = new Set<number>();
   private readonly contactLifecycle = new CollisionContactLifecycle();
@@ -212,7 +215,7 @@ export class RapierCollisionWorld {
     body: SixDofBody,
     vessel: VesselConfig,
     deltaSeconds: number,
-    obstacleData: Float32Array,
+    obstacleField: VersionedObstacleField,
     debugProbeEnabled = false,
     fixtureKind: CollisionFixtureKind | null = null,
     effectiveMassKg = vessel.massKg,
@@ -224,7 +227,7 @@ export class RapierCollisionWorld {
       return createEmptySummary();
     }
 
-    this.syncObstacles(obstacleData);
+    this.syncObstacles(obstacleField);
     this.syncDebugProbe(body, vessel, debugProbeEnabled);
     this.syncCalibrationFixture(body, vessel, fixtureKind);
 
@@ -702,44 +705,67 @@ export class RapierCollisionWorld {
     }
   }
 
-  private syncObstacles(obstacleData: Float32Array) {
-    for (let index = 0; index < MAX_OBSTACLES; index += 1) {
-      const offset = index * 4;
-      const x = obstacleData[offset];
-      const y = obstacleData[offset + 1];
-      const z = obstacleData[offset + 2];
-      const radius = obstacleData[offset + 3];
-      const active = radius > 0 && Number.isFinite(x + y + z + radius);
-      let collider = this.obstacleColliders[index];
 
-      if (!active) {
-        collider?.setEnabled(false);
-        continue;
-      }
+private syncObstacles(obstacleField: VersionedObstacleField) {
+  if (obstacleField.version === this.lastObstacleVersion) return;
+  if (obstacleField.maxObstacles !== MAX_OBSTACLES) {
+    throw new RangeError(
+      `Expected ${MAX_OBSTACLES} obstacle slots, received ${
+        obstacleField.maxObstacles
+      }.`,
+    );
+  }
 
-      const safeRadius = Math.max(0.2, radius);
-      if (!collider) {
-        collider = this.world.createCollider(
-          this.rapier.ColliderDesc.ball(safeRadius)
-            .setTranslation(x, y, z)
-            .setFriction(0.15)
-            .setRestitution(0.08)
-            .setContactSkin(CONTACT_PREDICTION_M)
-            .setActiveCollisionTypes(this.rapier.ActiveCollisionTypes.ALL),
-        );
-        this.obstacleColliders[index] = collider;
+  const collection = obstacleField.collectChangedIndicesSince(
+    this.lastObstacleVersion,
+    this.changedObstacleIndices,
+  );
+  const obstacleData = obstacleField.data;
+
+  for (const index of this.changedObstacleIndices) {
+    const offset = index * 4;
+    const x = obstacleData[offset];
+    const y = obstacleData[offset + 1];
+    const z = obstacleData[offset + 2];
+    const radius = obstacleData[offset + 3];
+    const active =
+      radius > 0 && Number.isFinite(x + y + z + radius);
+    let collider = this.obstacleColliders[index];
+
+    if (!active) {
+      collider?.setEnabled(false);
+      continue;
+    }
+
+    const safeRadius = Math.max(0.2, radius);
+    if (!collider) {
+      collider = this.world.createCollider(
+        this.rapier.ColliderDesc.ball(safeRadius)
+          .setTranslation(x, y, z)
+          .setFriction(0.15)
+          .setRestitution(0.08)
+          .setContactSkin(CONTACT_PREDICTION_M)
+          .setActiveCollisionTypes(
+            this.rapier.ActiveCollisionTypes.ALL,
+          ),
+      );
+      this.obstacleColliders[index] = collider;
+      this.obstacleRadii[index] = safeRadius;
+    } else {
+      collider.setEnabled(true);
+      collider.setTranslation({ x, y, z });
+      if (
+        Math.abs(this.obstacleRadii[index] - safeRadius) >
+        1e-4
+      ) {
+        collider.setRadius(safeRadius);
         this.obstacleRadii[index] = safeRadius;
-      } else {
-        collider.setEnabled(true);
-        collider.setTranslation({ x, y, z });
-        if (Math.abs(this.obstacleRadii[index] - safeRadius) > 1e-4) {
-          collider.setRadius(safeRadius);
-          this.obstacleRadii[index] = safeRadius;
-        }
       }
     }
   }
 
+  this.lastObstacleVersion = collection.version;
+}
   private syncCalibrationFixture(
     body: SixDofBody,
     vessel: VesselConfig,

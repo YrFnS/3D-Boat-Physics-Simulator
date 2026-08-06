@@ -376,7 +376,7 @@ export default function Boat() {
             body,
             vessel,
             dt,
-            sharedPhysics.obstacles,
+            sharedPhysics.obstacleField,
             !calibration &&
               collisionTestEnabled.current &&
               thrustRaw > 0.1 &&

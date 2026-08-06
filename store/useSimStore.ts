@@ -3,6 +3,10 @@ import { Quaternion, Vector3 } from 'three';
 import { queueNextSixDofBodySpawn } from '@/sim/core/SixDofBody';
 import { normalizeHeadingDegrees } from '@/sim/world/WorldDirection';
 import {
+  MAX_SHARED_OBSTACLES,
+  sharedObstacleField,
+} from '@/sim/collision/VersionedObstacleField';
+import {
   DEFAULT_SCENARIO_ID,
   getScenarioDefinition,
   SCENARIOS,
@@ -119,7 +123,7 @@ export interface ScenarioResult {
   checkpointLabel: string;
 }
 
-export const MAX_OBSTACLES = 250;
+export const MAX_OBSTACLES = MAX_SHARED_OBSTACLES;
 
 function createEmptyKeys(): ControlState {
   return {
@@ -250,7 +254,7 @@ export const sharedPhysics = {
   calibrationVessel: '',
   calibrationResult: '',
   lightningFlash: 0,
-  obstacles: new Float32Array(MAX_OBSTACLES * 4), // x, y, z, radius
+  obstacleField: sharedObstacleField,
   worldTime: 12.0,
   season: 0.0, // 0=Spring, 0.25=Summer, 0.5=Fall, 0.75=Winter
   tornadoPos: new Vector3(0, 0, 0),
