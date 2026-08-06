@@ -1,0 +1,114 @@
+name: Resume vessel dynamics extraction
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/resume-vessel-dynamics-extraction.yml
+
+permissions:
+  contents: write
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  extract:
+    if: github.head_ref == 'agent/simulator-stabilization'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Check out stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Execute established migration stages
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          source = Path(
+              '.github/workflows/run-vessel-dynamics-extraction.yml'
+          ).read_text(encoding='utf-8')
+          start_marker = "          python - <<'PY'\n"
+          end_marker = "\n          PY\n"
+          cursor = 0
+          scripts = []
+
+          while True:
+              try:
+                  start = source.index(start_marker, cursor) + len(start_marker)
+              except ValueError:
+                  break
+              end = source.index(end_marker, start)
+              scripts.append(dedent(source[start:end]))
+              cursor = end + len(end_marker)
+
+          if len(scripts) != 4:
+              raise SystemExit(
+                  f'Expected four migration scripts, found {len(scripts)}.'
+              )
+
+          for index, script in enumerate(scripts, start=1):
+              exec(
+                  compile(script, f'<dynamics-stage-{index}>', 'exec'),
+                  {'__name__': '__main__'},
+              )
+          PY
+
+      - name: Restore post-solve direction scope
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('components/Boat.tsx')
+          source = path.read_text(encoding='utf-8')
+          old = (
+              "    forwardDir.set(0, 0, -1).applyQuaternion(body.quaternion);\n"
+          )
+          new = (
+              "    const forwardDir = scratch.forwardDir\n"
+              "      .set(0, 0, -1)\n"
+              "      .applyQuaternion(body.quaternion);\n"
+          )
+          if source.count(old) != 1:
+              raise SystemExit(
+                  f'Expected one post-solve direction target, found {source.count(old)}.'
+              )
+          path.write_text(source.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate dynamics contract
+        run: node --experimental-strip-types --no-warnings scripts/vessel-dynamics-runtime-contract.mjs
+
+      - name: Validate repository
+        run: npm run validate
+
+      - name: Commit validated extraction
+        shell: bash
+        run: |
+          rm -f \
+            .github/workflows/extract-vessel-dynamics-runtime.yml \
+            .github/workflows/run-vessel-dynamics-extraction.yml \
+            .github/workflows/resume-vessel-dynamics-extraction.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "refactor: extract vessel dynamics runtime"
+          git push origin HEAD:agent/simulator-stabilization
