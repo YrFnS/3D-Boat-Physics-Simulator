@@ -1,7 +1,7 @@
 {
   "name": "3d-boat-physics-simulator",
   "version": "1.0.0",
-  "description": "Deterministic 3D boat physics, navigation, damage, flooding, and mission simulator.",
+  "description": "A deterministic browser-based 3D boat physics, navigation, damage, flooding, and mission simulator.",
   "private": true,
   "scripts": {
     "dev": "next dev",
