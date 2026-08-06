@@ -625,6 +625,10 @@ allPassed =
         .getByRole('button', { name: /Resume passage/i })
         .click();
       await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForDataset(page, 'simFieldRepairActive', '0');
+      // Health telemetry publishes at 10 Hz. Let the final pre-pause repair
+      // step settle before capturing the condition that recovery must preserve.
+      await page.waitForTimeout(350);
       const conditionBeforeRecovery =
         await readExperienceState(page);
 
@@ -644,15 +648,20 @@ allPassed =
       await page.waitForTimeout(350);
       const recovered = await readExperienceState(page);
       checks.recoveryPreservesCondition =
+        // Recovery may republish condition on a different 10 Hz telemetry
+        // boundary, but it must never erase meaningful damage or repair cost.
+        recovered.hullHealth < 90 &&
+        recovered.engineHealth < 60 &&
+        recovered.rudderHealth < 70 &&
         Math.abs(
           recovered.hullHealth - conditionBeforeRecovery.hullHealth,
-        ) < 0.25 &&
+        ) < 0.75 &&
         Math.abs(
           recovered.engineHealth - conditionBeforeRecovery.engineHealth,
-        ) < 0.25 &&
+        ) < 0.75 &&
         Math.abs(
           recovered.rudderHealth - conditionBeforeRecovery.rudderHealth,
-        ) < 0.25 &&
+        ) < 0.75 &&
         recovered.fieldRepairPenaltyPoints ===
           conditionBeforeRecovery.fieldRepairPenaltyPoints;
     },
