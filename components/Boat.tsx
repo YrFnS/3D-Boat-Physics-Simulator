@@ -1120,18 +1120,18 @@ export default function Boat() {
     }
 
     // --- Component temperature and explicit condition damage ---
-  conditionRuntime.current.stepThermalAndFlooding({
-    deltaSeconds: dt,
-    engineRpm: propulsionResult.engineRpm,
-    ratedEngineRpm: vessel.engine.ratedRpm,
-    absorbedShaftPowerW: propulsionResult.absorbedShaftPowerW,
-    ratedEnginePowerW: vessel.engine.ratedPowerW,
-    ventilationFactor: propulsionResult.ventilationFactor,
-    submergedRatio,
-    engineCompartmentFloodingRatio:
-      floodingResult.engineCompartmentFloodingRatio,
-    simulationTimeSeconds: time,
-  });
+    conditionRuntime.current.stepThermalAndFlooding({
+      deltaSeconds: dt,
+      engineRpm: propulsionResult.engineRpm,
+      ratedEngineRpm: vessel.engine.ratedRpm,
+      absorbedShaftPowerW: propulsionResult.absorbedShaftPowerW,
+      ratedEnginePowerW: vessel.engine.ratedPowerW,
+      ventilationFactor: propulsionResult.ventilationFactor,
+      submergedRatio,
+      engineCompartmentFloodingRatio:
+        floodingResult.engineCompartmentFloodingRatio,
+      simulationTimeSeconds: time,
+    });
 
     // --- Bilge pump and limited emergency field repair ---
     const repairStatisticsBeforeStep =
@@ -1139,17 +1139,16 @@ export default function Boat() {
     const repairUsageMatchesRun =
       repairStatisticsBeforeStep.runId === scenarioRunId;
     const fieldRepairResult =
-    conditionRuntime.current.applyFieldRepair({
-      active: activeFieldRepair,
-      deltaSeconds: dt,
-      engineConditionRestoredThisRun: repairUsageMatchesRun
-        ? repairStatisticsBeforeStep.engineConditionRestored
-        : 0,
-      rudderConditionRestoredThisRun: repairUsageMatchesRun
-        ? repairStatisticsBeforeStep.rudderConditionRestored
-        : 0,
-    });
-
+      conditionRuntime.current.applyFieldRepair({
+        active: activeFieldRepair,
+        deltaSeconds: dt,
+        engineConditionRestoredThisRun: repairUsageMatchesRun
+          ? repairStatisticsBeforeStep.engineConditionRestored
+          : 0,
+        rudderConditionRestoredThisRun: repairUsageMatchesRun
+          ? repairStatisticsBeforeStep.rudderConditionRestored
+          : 0,
+      });
 
     const missionStatistics = !calibration
       ? sharedMissionRuntimeStatistics.advance({
