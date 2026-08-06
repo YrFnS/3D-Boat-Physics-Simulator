@@ -1,0 +1,72 @@
+name: Run vessel dynamics extraction
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/run-vessel-dynamics-extraction.yml
+
+permissions:
+  contents: write
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  extract:
+    if: github.head_ref == 'agent/simulator-stabilization'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Check out stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Execute staged dynamics extraction
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          source = Path(
+              '.github/workflows/extract-vessel-dynamics-runtime.yml'
+          ).read_text(encoding='utf-8')
+          start_marker = "          python - <<'PY'\n"
+          end_marker = "\n          PY\n\n      - name: Set up Node.js"
+          start = source.index(start_marker) + len(start_marker)
+          end = source.index(end_marker, start)
+          staged_script = dedent(source[start:end])
+          exec(compile(staged_script, '<dynamics-extraction>', 'exec'))
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate dynamics contract
+        run: node --experimental-strip-types --no-warnings scripts/vessel-dynamics-runtime-contract.mjs
+
+      - name: Validate repository
+        run: npm run validate
+
+      - name: Commit validated extraction
+        shell: bash
+        run: |
+          rm -f \
+            .github/workflows/extract-vessel-dynamics-runtime.yml \
+            .github/workflows/run-vessel-dynamics-extraction.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "refactor: extract vessel dynamics runtime"
+          git push origin HEAD:agent/simulator-stabilization
