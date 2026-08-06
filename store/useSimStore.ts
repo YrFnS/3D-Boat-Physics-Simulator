@@ -543,6 +543,9 @@ export const useSimStore = create<SimState>((set, get) => ({
           ...state.keys,
           [key]: value,
         },
+        ...(key === 'r' && !value
+          ? { fieldRepairActive: false }
+          : {}),
       };
     }),
   clearKeys: () =>
@@ -633,6 +636,7 @@ export const useSimStore = create<SimState>((set, get) => ({
             sessionPhase: 'paused',
             engineThrust: 0,
             keys: createEmptyKeys(),
+            fieldRepairActive: false,
           },
     ),
   resumeSession: () =>
@@ -654,6 +658,7 @@ export const useSimStore = create<SimState>((set, get) => ({
           sessionPhase: 'paused',
           engineThrust: 0,
           keys: createEmptyKeys(),
+          fieldRepairActive: false,
         };
       }
       if (
@@ -770,6 +775,7 @@ export const useSimStore = create<SimState>((set, get) => ({
       sessionPhase: 'paused',
       engineThrust: 0,
       keys: createEmptyKeys(),
+      fieldRepairActive: false,
     }),
   resetVessel: () => {
     const state = get();

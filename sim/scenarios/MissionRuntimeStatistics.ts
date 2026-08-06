@@ -2,6 +2,7 @@ export interface MissionRuntimeStatisticsStep {
   runId: number;
   vesselGeneration: number;
   enabled: boolean;
+  repairTrackingEnabled?: boolean;
   deltaSeconds: number;
   boatX: number;
   boatZ: number;
@@ -42,6 +43,8 @@ function finiteNonNegative(value: number | undefined) {
  * A new scenario run resets every statistic. Vessel recovery only
  * reanchors position and repair activation state, preserving elapsed
  * time, travelled distance, and already-consumed repair allowance.
+ * Free-navigation pauses scored movement while repair use remains
+ * attributable to the active mission.
  */
 export class MissionRuntimeStatistics {
   private readonly state: MissionRuntimeStatisticsSnapshot = {
@@ -122,8 +125,35 @@ export class MissionRuntimeStatistics {
     }
 
     const deltaSeconds = finiteNonNegative(step.deltaSeconds);
-    if (!step.enabled || deltaSeconds <= 0) {
+    const repairTrackingEnabled =
+      step.repairTrackingEnabled ?? step.enabled;
+
+    if (deltaSeconds <= 0) {
+      if (!repairTrackingEnabled) this.repairWasActive = false;
+      if (!step.enabled) this.reanchor(step.boatX, step.boatZ);
+      return this.state;
+    }
+
+    if (repairTrackingEnabled) {
+      const repairActive = step.repairActive === true;
+      if (repairActive) {
+        this.state.repairActiveSeconds += deltaSeconds;
+        if (!this.repairWasActive) {
+          this.state.repairActivationCount += 1;
+        }
+      }
+      this.repairWasActive = repairActive;
+      this.state.engineConditionRestored += finiteNonNegative(
+        step.engineConditionRestored,
+      );
+      this.state.rudderConditionRestored += finiteNonNegative(
+        step.rudderConditionRestored,
+      );
+    } else {
       this.repairWasActive = false;
+    }
+
+    if (!step.enabled) {
       this.reanchor(step.boatX, step.boatZ);
       return this.state;
     }
@@ -136,21 +166,6 @@ export class MissionRuntimeStatistics {
         Math.abs(step.speedKnots),
       );
     }
-
-    const repairActive = step.repairActive === true;
-    if (repairActive) {
-      this.state.repairActiveSeconds += deltaSeconds;
-      if (!this.repairWasActive) {
-        this.state.repairActivationCount += 1;
-      }
-    }
-    this.repairWasActive = repairActive;
-    this.state.engineConditionRestored += finiteNonNegative(
-      step.engineConditionRestored,
-    );
-    this.state.rudderConditionRestored += finiteNonNegative(
-      step.rudderConditionRestored,
-    );
 
     if (
       Number.isFinite(step.boatX) &&

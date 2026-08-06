@@ -134,6 +134,7 @@ const persistenceSource = await fs.readFile(
 
 assert.match(boatSource, /applyFieldRepairStep\(/);
 assert.match(boatSource, /repairActive: activeFieldRepair/);
+assert.match(boatSource, /repairTrackingEnabled:/);
 assert.doesNotMatch(boatSource, /hullHealth\.current \+ 8\.0 \* dt/);
 assert.doesNotMatch(boatSource, /engineHealth\.current \+ 12\.0 \* dt/);
 assert.doesNotMatch(boatSource, /rudderHealth\.current \+ 15\.0 \* dt/);
@@ -154,6 +155,33 @@ assert.doesNotMatch(
   'Recovery must not restore hull, engine, or rudder condition.',
 );
 assert.match(resetBlock, /floodingRatio: 0/);
+
+const pauseStart = storeSource.lastIndexOf('  pauseSession: () =>');
+const pauseEnd = storeSource.indexOf('  resumeSession:', pauseStart);
+assert.match(
+  storeSource.slice(pauseStart, pauseEnd),
+  /fieldRepairActive: false/,
+  'Pausing must clear the visible active-repair flag immediately.',
+);
+const toggleStart = storeSource.lastIndexOf('  togglePause: () =>');
+const toggleEnd = storeSource.indexOf('  restartScenario:', toggleStart);
+assert.match(
+  storeSource.slice(toggleStart, toggleEnd),
+  /fieldRepairActive: false/,
+  'Keyboard pause must clear the visible active-repair flag.',
+);
+const finishStart = storeSource.lastIndexOf('  finishScenario:');
+const finishEnd = storeSource.indexOf('  resetVessel:', finishStart);
+assert.match(
+  storeSource.slice(finishStart, finishEnd),
+  /fieldRepairActive: false/,
+  'Mission completion must not leave repair marked active.',
+);
+assert.match(
+  storeSource,
+  /key === 'r' && !value[\s\S]{0,120}fieldRepairActive: false/,
+  'Releasing the repair control must clear its UI state immediately.',
+);
 
 assert.match(
   floodingSource,

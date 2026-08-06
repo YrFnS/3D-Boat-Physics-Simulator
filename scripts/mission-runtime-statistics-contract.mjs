@@ -23,6 +23,7 @@ tracker.advance({
   runId: 1,
   vesselGeneration: 10,
   enabled: true,
+  repairTrackingEnabled: true,
   deltaSeconds: 0,
   boatX: 0,
   boatZ: 0,
@@ -34,6 +35,7 @@ for (let step = 1; step <= 60; step += 1) {
     runId: 1,
     vesselGeneration: 10,
     enabled: true,
+    repairTrackingEnabled: true,
     deltaSeconds: STEP_SECONDS,
     boatX: step / 60,
     boatZ: 0,
@@ -54,11 +56,12 @@ assert.equal(snapshot.repairActivationCount, 1);
 assert.equal(snapshot.maximumSpeedKnots, 14);
 assert.equal(snapshot.fixedStepCount, 60);
 
-const beforeDisabled = capture(tracker);
+const beforePaused = capture(tracker);
 tracker.advance({
   runId: 1,
   vesselGeneration: 10,
   enabled: false,
+  repairTrackingEnabled: false,
   deltaSeconds: 4,
   boatX: 25,
   boatZ: -12,
@@ -69,24 +72,71 @@ tracker.advance({
 snapshot = capture(tracker);
 assert.deepEqual(
   snapshot,
-  beforeDisabled,
-  'Disabled/menu/free-navigation frames must not alter scored statistics.',
+  beforePaused,
+  'Paused and menu intervals must not alter mission or repair statistics.',
 );
 
+const beforeFreeNavigation = capture(tracker);
+tracker.advance({
+  runId: 1,
+  vesselGeneration: 10,
+  enabled: false,
+  repairTrackingEnabled: true,
+  deltaSeconds: 2,
+  boatX: 30,
+  boatZ: -10,
+  speedKnots: 0,
+  repairActive: true,
+  engineConditionRestored: 0.5,
+  rudderConditionRestored: 0.75,
+});
+snapshot = capture(tracker);
+approximatelyEqual(
+  snapshot.elapsedSeconds,
+  beforeFreeNavigation.elapsedSeconds,
+  'Free navigation must not advance scored mission time.',
+);
+approximatelyEqual(
+  snapshot.distanceTravelledM,
+  beforeFreeNavigation.distanceTravelledM,
+  'Free navigation must not add scored mission distance.',
+);
+approximatelyEqual(
+  snapshot.repairActiveSeconds,
+  beforeFreeNavigation.repairActiveSeconds + 2,
+  'Free-navigation repair time remains attributable to the active mission.',
+);
+approximatelyEqual(
+  snapshot.engineConditionRestored,
+  beforeFreeNavigation.engineConditionRestored + 0.5,
+  'Free-navigation engine restoration must consume the mission budget.',
+);
+approximatelyEqual(
+  snapshot.rudderConditionRestored,
+  beforeFreeNavigation.rudderConditionRestored + 0.75,
+  'Free-navigation rudder restoration must consume the mission budget.',
+);
+assert.equal(
+  snapshot.repairActivationCount,
+  beforeFreeNavigation.repairActivationCount + 1,
+);
+
+const beforeResume = capture(tracker);
 tracker.advance({
   runId: 1,
   vesselGeneration: 10,
   enabled: true,
+  repairTrackingEnabled: true,
   deltaSeconds: STEP_SECONDS,
-  boatX: 25 + 1 / 60,
-  boatZ: -12,
+  boatX: 30 + 1 / 60,
+  boatZ: -10,
   speedKnots: 7,
 });
 snapshot = capture(tracker);
 approximatelyEqual(
   snapshot.distanceTravelledM,
-  beforeDisabled.distanceTravelledM + 1 / 60,
-  'disabled interval must reanchor distance',
+  beforeResume.distanceTravelledM + 1 / 60,
+  'Free-navigation interval must reanchor scored distance.',
 );
 
 const beforeRecovery = capture(tracker);
@@ -94,6 +144,7 @@ tracker.advance({
   runId: 1,
   vesselGeneration: 11,
   enabled: true,
+  repairTrackingEnabled: true,
   deltaSeconds: STEP_SECONDS,
   boatX: -120,
   boatZ: 80,
@@ -105,12 +156,12 @@ snapshot = capture(tracker);
 approximatelyEqual(
   snapshot.distanceTravelledM,
   beforeRecovery.distanceTravelledM,
-  'vessel recovery teleport must not add distance',
+  'Vessel recovery teleport must not add distance.',
 );
 approximatelyEqual(
   snapshot.elapsedSeconds,
   beforeRecovery.elapsedSeconds + STEP_SECONDS,
-  'vessel recovery must not reset mission time',
+  'Vessel recovery must not reset mission time.',
 );
 assert.equal(
   snapshot.repairActivationCount,
@@ -122,6 +173,7 @@ tracker.advance({
   runId: 2,
   vesselGeneration: 12,
   enabled: true,
+  repairTrackingEnabled: true,
   deltaSeconds: STEP_SECONDS,
   boatX: 0,
   boatZ: 0,
@@ -145,6 +197,7 @@ const directorSource = await fs.readFile(
 );
 
 assert.match(boatSource, /sharedMissionRuntimeStatistics\.advance\(\{/);
+assert.match(boatSource, /repairTrackingEnabled:/);
 assert.match(boatSource, /engineConditionRestored:/);
 assert.match(directorSource, /sharedMissionRuntimeStatistics\.snapshot/);
 assert.doesNotMatch(directorSource, /statistics\.elapsedSeconds \+= frameDelta/);

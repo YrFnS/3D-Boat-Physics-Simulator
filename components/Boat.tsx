@@ -1241,6 +1241,9 @@ export default function Boat() {
             canAdvanceAuthoritativeSimulation(sessionPhase) &&
             scenarioRunStatus === 'active' &&
             useNavigationPlanner.getState().mode === 'mission',
+          repairTrackingEnabled:
+            canAdvanceAuthoritativeSimulation(sessionPhase) &&
+            scenarioRunStatus === 'active',
           deltaSeconds: dt,
           boatX: body.position.x,
           boatZ: body.position.z,

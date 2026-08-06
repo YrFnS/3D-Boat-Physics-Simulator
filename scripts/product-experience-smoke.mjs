@@ -581,7 +581,55 @@ allPassed =
           /Hull structural condition cannot be restored underway/i,
         ).count()) > 0;
 
-      const resetBeforeRecovery = repaired.resetVesselTrigger;
+      await page
+        .getByRole('button', { name: 'Open free route plotter' })
+        .click();
+      await waitForDataset(page, 'simNavigationMode', 'free');
+      await page.keyboard.down('r');
+      await page.waitForFunction(
+        (minimumSeconds) =>
+          Number(
+            document.documentElement.dataset.simFieldRepairSeconds ??
+              '0',
+          ) >= minimumSeconds,
+        repaired.fieldRepairSeconds + 0.75,
+        { timeout: 60_000 },
+      );
+      await page.keyboard.up('r');
+      await waitForDataset(page, 'simFieldRepairActive', '0');
+      const freeRepaired = await readExperienceState(page);
+      checks.freeNavigationRepairTracked =
+        freeRepaired.fieldRepairSeconds >=
+          repaired.fieldRepairSeconds + 0.75 &&
+        freeRepaired.fieldRepairActivationCount ===
+          repaired.fieldRepairActivationCount + 1 &&
+        freeRepaired.fieldRepairEngineRestored >
+          repaired.fieldRepairEngineRestored &&
+        freeRepaired.fieldRepairRudderRestored >
+          repaired.fieldRepairRudderRestored &&
+        freeRepaired.fieldRepairPenaltyPoints >
+          repaired.fieldRepairPenaltyPoints;
+
+      await page
+        .getByRole('button', { name: 'Return to mission route' })
+        .click();
+      await waitForDataset(page, 'simNavigationMode', 'mission');
+      await page.keyboard.down('r');
+      await waitForDataset(page, 'simFieldRepairActive', '1');
+      await page.keyboard.press('Escape');
+      await waitForDataset(page, 'simSessionPhase', 'paused');
+      await waitForDataset(page, 'simFieldRepairActive', '0');
+      await page.keyboard.up('r');
+      checks.pauseClearsRepairState = true;
+      await page
+        .getByRole('button', { name: /Resume passage/i })
+        .click();
+      await waitForDataset(page, 'simSessionPhase', 'running');
+      const conditionBeforeRecovery =
+        await readExperienceState(page);
+
+      const resetBeforeRecovery =
+        conditionBeforeRecovery.resetVesselTrigger;
       await page.keyboard.press('Home');
       await page.waitForFunction(
         (previousReset) =>
@@ -596,11 +644,17 @@ allPassed =
       await page.waitForTimeout(350);
       const recovered = await readExperienceState(page);
       checks.recoveryPreservesCondition =
-        Math.abs(recovered.hullHealth - repaired.hullHealth) < 0.25 &&
-        Math.abs(recovered.engineHealth - repaired.engineHealth) < 0.25 &&
-        Math.abs(recovered.rudderHealth - repaired.rudderHealth) < 0.25 &&
+        Math.abs(
+          recovered.hullHealth - conditionBeforeRecovery.hullHealth,
+        ) < 0.25 &&
+        Math.abs(
+          recovered.engineHealth - conditionBeforeRecovery.engineHealth,
+        ) < 0.25 &&
+        Math.abs(
+          recovered.rudderHealth - conditionBeforeRecovery.rudderHealth,
+        ) < 0.25 &&
         recovered.fieldRepairPenaltyPoints ===
-          repaired.fieldRepairPenaltyPoints;
+          conditionBeforeRecovery.fieldRepairPenaltyPoints;
     },
     '/?repairTest=1',
   )) && allPassed;
