@@ -13,18 +13,9 @@ import { canAdvanceAuthoritativeSimulation } from '@/sim/core/SimulationRuntimeA
 import { SixDofBody } from '@/sim/core/SixDofBody';
 import { SeededRandom } from '@/sim/core/SeededRandom';
 import { getVesselConfig } from '@/sim/vessels/VesselConfig';
-import { createWaterSurfaceSample } from '@/sim/water/WaterSurface';
-import {
-  computeRudderHydrodynamics,
-  MarinePropulsionSystem,
-  moveToward,
-  resolveRudderForceComponents,
-} from '@/sim/vessels/PropulsionSystem';
-import { SectionalHydrostatics } from '@/sim/vessels/SectionalHydrostatics';
 import { FloodingModel } from '@/sim/vessels/FloodingModel';
-import { displacementBalanceErrorRatio } from '@/sim/vessels/HydrostaticsMath';
-import { EnvironmentalForces } from '@/sim/vessels/EnvironmentalForces';
 import { VesselConditionRuntime } from '@/sim/vessels/VesselConditionRuntime';
+import { VesselDynamicsRuntime } from '@/sim/vessels/VesselDynamicsRuntime';
 import {
   calculateFieldRepairPenalty,
   isFieldRepairEligible,
@@ -33,10 +24,6 @@ import {
   setWorldVectorFromHeading,
   worldDirectionToHeadingDegrees,
 } from '@/sim/world/WorldDirection';
-import {
-  planingSpeedRatio,
-  waterRelativeSurgeSpeed,
-} from '@/sim/vessels/PhysicsCorrectness';
 import { RapierCollisionWorld } from '@/sim/collision/RapierCollisionWorld';
 import { VesselCollisionRuntime } from '@/sim/collision/VesselCollisionRuntime';
 import { sharedMissionRuntimeStatistics } from '@/sim/scenarios/MissionRuntimeStatistics';
@@ -60,14 +47,9 @@ export default function Boat() {
   const physicsBody = useRef(new SixDofBody());
   const fixedStepRunner = useRef(new FixedStepRunner());
   const simulationRandom = useRef(new SeededRandom(0xb0475eed));
-  const sectionalHydrostatics = useRef(new SectionalHydrostatics());
-  const propulsionSystem = useRef(new MarinePropulsionSystem());
+  const dynamicsRuntime = useRef(new VesselDynamicsRuntime());
   const floodingModel = useRef(new FloodingModel());
-  const previousCompartmentExposure = useRef<Record<string, number>>({});
   const configuredVesselType = useRef<string | null>(null);
-  const addedMass = useRef<[number, number, number]>([0, 0, 0]);
-  const addedInertia = useRef<[number, number, number]>([0, 0, 0]);
-  const environmentalForces = useRef(new EnvironmentalForces());
   const rapierCollisionWorld = useRef<RapierCollisionWorld | null>(null);
   const collisionRuntime = useRef(new VesselCollisionRuntime());
   const collisionTestEnabled = useRef(false);
@@ -76,8 +58,6 @@ export default function Boat() {
   const currentPosition = useRef(new Vector3());
   const previousQuaternion = useRef(new Quaternion());
   const currentQuaternion = useRef(new Quaternion());
-  const lastSubmergedRatio = useRef(1);
-  const rudderAngle = useRef(0);
   const trawlerEngineRef = useRef<Group>(null);
   const speedboatEngineLRef = useRef<Group>(null);
   const speedboatEngineRRef = useRef<Group>(null);
@@ -91,51 +71,18 @@ export default function Boat() {
     maxAngularSpeedRadPerSecond: 4,
   });
 
-  const scratch = useMemo(
-    () => ({
-      forwardDir: new Vector3(),
-      rightDir: new Vector3(),
-      windVelocity: new Vector3(),
-      waterVelocity: new Vector3(),
-      baseCurrentVelocity: new Vector3(),
-      propellerPointVelocity: new Vector3(),
-      propellerWaterVelocity: new Vector3(),
-      propellerRelativeVelocity: new Vector3(),
-      rudderPointVelocity: new Vector3(),
-      rudderWaterVelocity: new Vector3(),
-      rudderRelativeVelocity: new Vector3(),
-      rudderFlowDirection: new Vector3(),
-      rudderLiftDirection: new Vector3(),
-      rudderDragForce: new Vector3(),
-      propellerReactionTorque: new Vector3(),
-      propellerWaterSample: createWaterSurfaceSample(),
-      rudderWaterSample: createWaterSurfaceSample(),
-      thrustForce: new Vector3(),
-      thrustDirection: new Vector3(),
-      apparentWind: new Vector3(),
-      apparentWindDir: new Vector3(),
-      flagApparentWindLocal: new Vector3(),
-      inverseBoatQuaternion: new Quaternion(),
-      windForce: new Vector3(),
-      gravityForce: new Vector3(),
-      localPropeller: new Vector3(),
-      localRudder: new Vector3(),
-      localWind: new Vector3(),
-      localPlaning: new Vector3(),
-      worldPropeller: new Vector3(),
-      worldRudder: new Vector3(),
-      worldWind: new Vector3(),
-      worldPlaning: new Vector3(),
-      planingForce: new Vector3(),
-      rudderForce: new Vector3(),
-      rollStabilityTorque: new Vector3(),
-      boatForward: new Vector3(),
-      boatRight: new Vector3(),
-      boatUp: new Vector3(),
-      worldUp: new Vector3(0, 1, 0),
-    }),
-    [],
-  );
+
+const scratch = useMemo(
+  () => ({
+    forwardDir: new Vector3(),
+    windVelocity: new Vector3(),
+    apparentWind: new Vector3(),
+    flagApparentWindLocal: new Vector3(),
+    inverseBoatQuaternion: new Quaternion(),
+  }),
+  [],
+);
+
   
   const initialCondition = useMemo(() => {
     const state = useSimStore.getState();
@@ -180,9 +127,10 @@ export default function Boat() {
       const vessel = getVesselConfig(activeBoat);
       conditionRuntime.current.reset();
       floodingModel.current.reset(vessel);
-      sectionalHydrostatics.current.reset(vessel);
-      propulsionSystem.current.reset(vessel.engine);
-      previousCompartmentExposure.current = {};
+      dynamicsRuntime.current.reset(
+        vessel,
+        dynamicsRuntime.current.submergedRatio,
+      );
       configuredVesselType.current = vessel.type;
       sharedPhysics.maximumSlamSeverity = 0;
       useSimStore.getState().setFloodingTelemetry(0, 0);
@@ -219,14 +167,10 @@ export default function Boat() {
     sharedPhysics.whirlpoolPos.set(-10_000, 0, -10_000);
 
     conditionRuntime.current.reset();
-    propulsionSystem.current.reset(vessel.engine);
-    rudderAngle.current = 0;
+    dynamicsRuntime.current.reset(vessel);
     telemetryAccumulator.current = 0;
     floodingModel.current.reset(vessel);
-    sectionalHydrostatics.current.reset(vessel);
-    previousCompartmentExposure.current = {};
     configuredVesselType.current = vessel.type;
-    lastSubmergedRatio.current = 0.75;
 
     runner.initialize(body, vessel);
     previousPosition.current.copy(body.position);
@@ -353,11 +297,8 @@ export default function Boat() {
     const vessel = getVesselConfig(activeBoat);
     if (configuredVesselType.current !== vessel.type) {
       floodingModel.current.reset(vessel);
-      sectionalHydrostatics.current.reset(vessel);
-      propulsionSystem.current.reset(vessel.engine);
-      previousCompartmentExposure.current = {};
+      dynamicsRuntime.current.reset(vessel);
       configuredVesselType.current = vessel.type;
-      lastSubmergedRatio.current = 0.75;
       sharedPhysics.maximumSlamSeverity = 0;
     }
 
@@ -402,510 +343,47 @@ export default function Boat() {
       deltaSeconds: dt,
       hullHealth: calibration ? 100 : conditionRuntime.current.hullHealth,
       engineHealth: conditionRuntime.current.engineHealth,
-      compartmentExposure: previousCompartmentExposure.current,
+      compartmentExposure: dynamicsRuntime.current.compartmentExposure,
       activePump: activeFieldRepair,
       winterFactor: calibration ? 0 : isWinter,
     });
 
-    const addedMassScale = MathUtils.smoothstep(
-      lastSubmergedRatio.current,
-      0.05,
-      0.85,
-    );
-    for (let axis = 0; axis < 3; axis += 1) {
-      addedMass.current[axis] =
-        vessel.hydrodynamics.addedMassKg[axis] * addedMassScale;
-      addedInertia.current[axis] =
-        vessel.hydrodynamics.addedInertiaKgM2[axis] * addedMassScale;
-    }
 
-    body.setMassProperties(
-      floodingResult.physicalMassKg,
-      floodingResult.principalInertiaKgM2,
-      vessel.angularDampingPerSecond,
-      floodingResult.centerOfMassLocal,
-      addedMass.current,
-      addedInertia.current,
-    );
-    body.beginStep();
-    body.addForce(
-      scratch.gravityForce.set(
-        0,
-        -floodingResult.physicalMassKg * 9.81,
-        0,
-      ),
-    );
-
-    // --- Vessel Dynamics Configuration ---
-    const mass = floodingResult.physicalMassKg;
-    const windCoeff = vessel.windAreaCoefficient;
-
-    // Physics keeps pitch and roll in these axes. Horizontal projection is
-    // reserved for navigation heading after the completed simulation step.
-    const forwardDir = scratch.forwardDir
-      .set(0, 0, -1)
-      .applyQuaternion(body.quaternion)
-      .normalize();
-    const rightDir = scratch.rightDir
-      .set(-1, 0, 0)
-      .applyQuaternion(body.quaternion)
-      .normalize();
-
-    const pos = body.position;
-    const halfL = vessel.halfLengthM;
-    const windVelocity = scratch.windVelocity;
-    const baseCurrentVelocity = scratch.baseCurrentVelocity;
-    if (calibration) {
-      windVelocity.set(0, 0, 0);
-      baseCurrentVelocity.set(0, 0, 0);
-    } else {
-      setWorldVectorFromHeading(windVelocity, windDir, windSpeed);
-      setWorldVectorFromHeading(
-        baseCurrentVelocity,
-        currentDir,
-        currentSpeed,
-      );
-    }
-
-    // Recreate the localized ice field used by the ocean shader.
-    const iceNoise =
-      Math.sin(pos.x * 0.01) * Math.cos(pos.z * 0.01) +
-      Math.sin(pos.x * 0.05 + pos.z * 0.04) * 0.5;
-    const currentIceFactor = calibration
-      ? 0
-      : MathUtils.clamp(
-          (iceNoise * 0.3 + isWinter * 1.5 - 1) * 2,
-          0,
-          1,
-        );
-
-    // Use the base current for the drag pre-pass. The current step's local
-    // Gerstner orbital velocity is available after the sectional solve and is
-    // used by propulsion, steering, hazards, telemetry, and the next step.
-    const preSolveSurgeSpeed = waterRelativeSurgeSpeed(
-      body.linearVelocity,
-      baseCurrentVelocity,
-      forwardDir,
-    );
-    const preSolvePlaningRatio = planingSpeedRatio(
-      preSolveSurgeSpeed,
-      vessel.planingReferenceSpeedMps,
-    );
-    // Powered trim reduces wetted area more than a coasting hull at the same
-    // speed. When throttle is cut, the planing craft progressively settles and
-    // regains resistance instead of retaining its minimum powered drag until
-    // it has almost stopped.
-    const planingPowerSupport = MathUtils.smoothstep(
-      Math.max(0, thrustRaw),
-      0.05,
-      0.5,
-    );
-    const fullPlaningDragMultiplier = MathUtils.lerp(
-      0.62,
-      0.28,
-      planingPowerSupport,
-    );
-    const planingDragReduction = vessel.planingCapable
-      ? MathUtils.lerp(
-          1,
-          fullPlaningDragMultiplier,
-          preSolvePlaningRatio * preSolvePlaningRatio,
-        )
-      : 1;
-    const hullDragPenalty =
-      1 + ((100 - conditionRuntime.current.hullHealth) / 100) * 0.8;
-
-    const sampleWater = calibration
-      ? sampleFlatCalibrationWater
-      : sampleOceanSurface;
-    const hydrostaticResult = sectionalHydrostatics.current.apply({
-      body,
-      vessel,
-      timeSeconds: time,
-      deltaSeconds: dt,
-      baseCurrentVelocity,
-      forwardDragMultiplier:
-        planingDragReduction * hullDragPenalty,
-      lateralDragMultiplier: hullDragPenalty,
-      buoyancyAvailabilityByCompartment:
-        floodingResult.buoyancyAvailabilityByCompartment,
-      physicalMassKg: mass,
-      sampleWater,
-    });
-    const submergedRatio = hydrostaticResult.submergedRatio;
-    const waterVelocity = scratch.waterVelocity.copy(
-      hydrostaticResult.averageWaterVelocityWorld,
-    );
-
-    const previousExposure = previousCompartmentExposure.current;
-    for (const key of Object.keys(previousExposure)) {
-      delete previousExposure[key];
-    }
-    Object.assign(previousExposure, hydrostaticResult.compartmentExposure);
-
-    const vRelForward = waterRelativeSurgeSpeed(
-      body.linearVelocity,
-      waterVelocity,
-      forwardDir,
-    );
-    const activePlaningSpeedRatio = planingSpeedRatio(
-      vRelForward,
-      vessel.planingReferenceSpeedMps,
-    );
-    const displacementErrorRatio = displacementBalanceErrorRatio(
-      hydrostaticResult.displacedVolumeM3,
-      mass,
-      vessel.waterDensityKgM3,
-    );
-
-    if (
-      !calibration &&
-      time > 2 &&
-      hydrostaticResult.maximumSlamSeverity > 0
-    ) {
-      conditionRuntime.current.applyDamage({
-        source: 'slamming',
-        hullDamage: hydrostaticResult.slamHullDamage,
-        engineDamage: hydrostaticResult.slamEngineDamage,
-        rudderDamage: hydrostaticResult.slamRudderDamage,
-      });
-      if (hydrostaticResult.slamCompartmentId) {
-        floodingModel.current.registerBreach(
-          vessel,
-          hydrostaticResult.slamCompartmentId,
-          MathUtils.clamp(
-            (hydrostaticResult.maximumSlamSeverity - 0.45) * 0.035,
-            0,
-            0.18,
-          ),
-        );
-      }
-      audio.playSlam(hydrostaticResult.maximumSlamSeverity);
-    }
-
-    // --- Applied body-relative forces ---
-
-    // PLANING HYDRODYNAMICS
-    // The speedboat receives bow lift once forward speed builds. Hull
-    // resistance is already reduced inside the sectional hull model.
-    const planingFactor =
-      activePlaningSpeedRatio *
-      activePlaningSpeedRatio *
-      submergedRatio;
-
-    // --- ENGINE, DRIVELINE, AND PROPELLER OPEN-WATER MODEL ---
-    body.localPointToWorld(
-      scratch.localPropeller.fromArray(vessel.propeller.pointLocal),
-      scratch.worldPropeller,
-    );
-    const propellerWaterSample = sampleWater(
-      scratch.worldPropeller.x,
-      scratch.worldPropeller.z,
-      time,
-      scratch.propellerWaterSample,
-    );
-    body.velocityAtPoint(
-      scratch.worldPropeller,
-      scratch.propellerPointVelocity,
-    );
-    scratch.propellerWaterVelocity
-      .set(
-        propellerWaterSample.velocityX,
-        propellerWaterSample.velocityY,
-        propellerWaterSample.velocityZ,
-      )
-      .add(baseCurrentVelocity);
-    const shaftAngleCos = Math.cos(vessel.propeller.shaftAngleRad);
-    const shaftAngleSin = Math.sin(vessel.propeller.shaftAngleRad);
-    const thrustDirection = scratch.thrustDirection
-      .copy(forwardDir)
-      .multiplyScalar(shaftAngleCos)
-      .addScaledVector(
-        scratch.boatUp
-          .set(0, 1, 0)
-          .applyQuaternion(body.quaternion)
-          .normalize(),
-        shaftAngleSin,
-      )
-      .normalize();
-    const propellerAdvanceSpeedMps = scratch.propellerRelativeVelocity
-      .copy(scratch.propellerPointVelocity)
-      .sub(scratch.propellerWaterVelocity)
-      .dot(thrustDirection);
-    const propellerSubmergenceM = Math.max(
-      0,
-      propellerWaterSample.y - scratch.worldPropeller.y,
-    );
-
-    const engineHealthEfficiency = MathUtils.clamp(
-      conditionRuntime.current.engineHealth / 100,
-      0,
-      1,
-    );
-    const temperatureEfficiency =
-      conditionRuntime.current.engineTemperature > 90
-        ? Math.max(
-            0.2,
-            1 - (conditionRuntime.current.engineTemperature - 90) / 20,
-          )
-        : 1;
-    let combustionEfficiency = 1;
-    if (conditionRuntime.current.engineHealth > 0 && conditionRuntime.current.engineHealth < 40) {
-      const damageRatio = (40 - conditionRuntime.current.engineHealth) / 40;
-      const misfireProbability = 1 - Math.exp(-damageRatio * 8 * dt);
-      if (simulationRandom.current.next() < misfireProbability) {
-        combustionEfficiency = MathUtils.lerp(
-          0.08,
-          0.28,
-          simulationRandom.current.next(),
-        );
-      }
-    }
-
-    const propulsionResult = propulsionSystem.current.step(
-      vessel.engine,
-      vessel.propeller,
-      {
-        deltaSeconds: dt,
-        throttle: thrustRaw,
-        engineHealthRatio: engineHealthEfficiency,
-        temperatureEfficiency,
-        combustionEfficiency,
-        waterDensityKgM3: vessel.waterDensityKgM3,
-        propellerAdvanceSpeedMps,
-        propellerSubmergenceM,
-      },
-    );
-    const thrustForce = scratch.thrustForce
-      .copy(thrustDirection)
-      .multiplyScalar(propulsionResult.propellerThrustN);
-    body.addTorque(
-      scratch.propellerReactionTorque
-        .copy(thrustDirection)
-        .multiplyScalar(
-          -vessel.propeller.rotationDirection *
-            Math.sign(propulsionResult.shaftRpm) *
-            propulsionResult.shaftTorqueNm *
-            vessel.propeller.hullReactionTorqueFraction,
-        ),
-    );
-
-    // DIRECTIONAL WIND CATCHING
-    const apparentWind = scratch.apparentWind
-      .copy(windVelocity)
-      .sub(body.linearVelocity);
-    const apparentWindLengthSq = apparentWind.lengthSq();
-    const apparentWindDir = scratch.apparentWindDir;
-    if (apparentWindLengthSq > 1e-8) {
-      apparentWindDir.copy(apparentWind).multiplyScalar(
-        1 / Math.sqrt(apparentWindLengthSq),
-      );
-    } else {
-      apparentWindDir.set(1, 0, 0);
-    }
-    
-    const windDotForward = apparentWindDir.dot(forwardDir);
-    const windDotRight = apparentWindDir.dot(rightDir);
-    const sideAreaMultiplier = vessel.sideAreaMultiplier;
-    const exposedProfileArea =
-      Math.abs(windDotForward) +
-      Math.abs(windDotRight) * sideAreaMultiplier;
-    const trueWindCoeff = windCoeff * exposedProfileArea;
-    const windForce = scratch.windForce.copy(apparentWind).multiplyScalar(
-      Math.sqrt(apparentWindLengthSq) * trueWindCoeff,
-    );
-
-    body.addForceAtPoint(thrustForce, scratch.worldPropeller);
-    body.localPointToWorld(
-      scratch.localWind.fromArray(vessel.windPointLocal),
-      scratch.worldWind,
-    );
-    body.addForceAtPoint(windForce, scratch.worldWind);
-
-    if (vessel.planingCapable && planingFactor > 0) {
-      // The pressure center stays close to the center of mass and moves
-      // modestly aft as the hull climbs onto plane. The angled shaft already
-      // carries its own trim moment, so planing lift must not act as a large
-      // artificial bow or transom lever.
-      const planingCenterOffsetM = halfL * MathUtils.lerp(
-        0.03,
-        0.14,
-        activePlaningSpeedRatio,
-      );
-      body.localPointToWorld(
-        scratch.localPlaning.set(
-          0,
-          0,
-          vessel.centerOfMassLocal[2] + planingCenterOffsetM,
-        ),
-        scratch.worldPlaning,
-      );
-      body.addForceAtPoint(
-        scratch.planingForce.set(
-          0,
-          mass * 9.81 * planingFactor * 0.2,
-          0,
-        ),
-        scratch.worldPlaning,
-      );
-    }
-    
-    // Ice, tornado, and whirlpool loads are accumulated below through the
-    // environmental force model before the authoritative integration step.
-
-    // --- LOCAL-FLOW RUDDER WITH SIGNED PROP WASH ---
-    const rudderHealthRatio = MathUtils.clamp(
-      conditionRuntime.current.rudderHealth / 100,
-      0,
-      1,
-    );
-    // Positive input means port/left in the UI, while positive physical
-    // rudder angle is starboard/right in the body-axis hydrodynamic model.
-    let targetRudder =
-      -steerRaw * vessel.rudder.maximumAngleRad * rudderHealthRatio;
-    if (conditionRuntime.current.rudderHealth > 0 && conditionRuntime.current.rudderHealth < 40) {
-      targetRudder +=
-        (simulationRandom.current.next() - 0.5) *
-        vessel.rudder.maximumAngleRad *
-        0.3;
-    }
-    rudderAngle.current = moveToward(
-      rudderAngle.current,
-      targetRudder,
-      vessel.rudder.rateRadPerSecond * dt,
-    );
-
-    body.localPointToWorld(
-      scratch.localRudder.fromArray(vessel.rudder.pointLocal),
-      scratch.worldRudder,
-    );
-    const rudderWaterSample = sampleWater(
-      scratch.worldRudder.x,
-      scratch.worldRudder.z,
-      time,
-      scratch.rudderWaterSample,
-    );
-    body.velocityAtPoint(
-      scratch.worldRudder,
-      scratch.rudderPointVelocity,
-    );
-    scratch.rudderWaterVelocity
-      .set(
-        rudderWaterSample.velocityX,
-        rudderWaterSample.velocityY,
-        rudderWaterSample.velocityZ,
-      )
-      .add(baseCurrentVelocity);
-    scratch.rudderRelativeVelocity
-      .copy(scratch.rudderPointVelocity)
-      .sub(scratch.rudderWaterVelocity);
-    const rudderForwardFlowMps =
-      scratch.rudderRelativeVelocity.dot(forwardDir) +
-      propulsionResult.propWashSpeedMps * vessel.rudder.propWashFraction;
-    const rudderRightFlowMps =
-      scratch.rudderRelativeVelocity.dot(rightDir);
-    const rudderSubmergenceM = Math.max(
-      0,
-      rudderWaterSample.y - scratch.worldRudder.y,
-    );
-    const rudderHydrodynamics = computeRudderHydrodynamics({
-      config: vessel.rudder,
-      waterDensityKgM3: vessel.waterDensityKgM3,
-      forwardFlowMps: rudderForwardFlowMps,
-      rightFlowMps: rudderRightFlowMps,
-      rudderAngleRad: rudderAngle.current,
-      submergenceM: rudderSubmergenceM,
-      healthRatio: rudderHealthRatio,
-    });
-
-    const rudderForceComponents = resolveRudderForceComponents(
-      rudderHydrodynamics,
-      rudderForwardFlowMps,
-      rudderRightFlowMps,
-    );
-    const uprightY = scratch.boatUp
-      .set(0, 1, 0)
-      .applyQuaternion(body.quaternion).y;
-    const uprightSteeringAuthority = MathUtils.smoothstep(
-      uprightY,
-      0.08,
-      0.78,
-    );
-    scratch.rudderForce
-      .copy(forwardDir)
-      .multiplyScalar(rudderForceComponents.forwardN)
-      .addScaledVector(rightDir, rudderForceComponents.rightN)
-      .multiplyScalar(uprightSteeringAuthority);
-    const appliedRudderForceN = scratch.rudderForce.length();
-    body.addForceAtPoint(scratch.rudderForce, scratch.worldRudder);
-
-    if (vessel.planingCapable && activePlaningSpeedRatio > 0.15) {
-      // atan2(sin, cos) provides a signed roll error through the full
-      // orientation range. Unlike a sine-only term, it does not lose all
-      // righting authority when the hull approaches an inverted attitude.
-      const rollSin = scratch.rollStabilityTorque
-        .copy(scratch.boatUp)
-        .cross(scratch.worldUp)
-        .dot(forwardDir);
-      const rollCos = MathUtils.clamp(
-        scratch.boatUp.dot(scratch.worldUp),
-        -1,
-        1,
-      );
-      const signedRollRadians = Math.atan2(rollSin, rollCos);
-      const rollRateRadPerSecond =
-        body.angularVelocity.dot(forwardDir);
-      const stabilityBlend = MathUtils.smoothstep(
-        activePlaningSpeedRatio,
-        0.15,
-        0.65,
-      );
-      const rollStabilityTorqueNm = MathUtils.clamp(
-        signedRollRadians * mass * 24 -
-          rollRateRadPerSecond * mass * 8,
-        -mass * 45,
-        mass * 45,
-      );
-      body.addTorque(
-        scratch.rollStabilityTorque
-          .copy(forwardDir)
-          .multiplyScalar(rollStabilityTorqueNm * stabilityBlend),
-      );
-    }
-
-    if (!calibration) {
-      const environmentalDamage = environmentalForces.current.apply({
-        body,
-        vessel,
-        deltaSeconds: dt,
-        waterVelocity,
-        iceFactor: currentIceFactor,
-        submergedRatio,
-        throttle: thrustRaw,
-        tornadoPosition: sharedPhysics.tornadoPos,
-        whirlpoolPosition: sharedPhysics.whirlpoolPos,
-        random: simulationRandom.current,
-      });
-      conditionRuntime.current.applyDamage({
-        source: 'environmental-impact',
-        hullDamage: environmentalDamage.hullDamage,
-        engineDamage: environmentalDamage.engineDamage,
-      });
-      if (
-        environmentalDamage.hullDamage > 0 &&
-        environmentalDamage.iceContactSpeedMps > 3.5
-      ) {
-        floodingModel.current.registerBreach(
-          vessel,
-          'bow',
-          MathUtils.clamp(
-            environmentalDamage.hullDamage * 0.004,
-            0,
-            0.08,
-          ),
-        );
-      }
-    }
+const dynamicsResult = dynamicsRuntime.current.step({
+  body,
+  vessel,
+  deltaSeconds: dt,
+  timeSeconds: time,
+  throttle: thrustRaw,
+  steering: steerRaw,
+  calibration: Boolean(calibration),
+  flooding: floodingResult,
+  condition: conditionRuntime.current,
+  floodingSink: floodingModel.current,
+  random: simulationRandom.current,
+  sampleWater: calibration
+    ? sampleFlatCalibrationWater
+    : sampleOceanSurface,
+  windSpeedMps: windSpeed,
+  windHeadingDegrees: windDir,
+  currentSpeedMps: currentSpeed,
+  currentHeadingDegrees: currentDir,
+  winterFactor: isWinter,
+  tornadoPosition: sharedPhysics.tornadoPos,
+  whirlpoolPosition: sharedPhysics.whirlpoolPos,
+  audio,
+});
+const {
+  massKg: mass,
+  hydrostaticResult,
+  submergedRatio,
+  forwardWaterRelativeSpeedMps: vRelForward,
+  displacementBalanceErrorRatio: displacementErrorRatio,
+  propulsionResult,
+  rudderHydrodynamics,
+  appliedRudderForceN,
+  rudderAngleRad,
+} = dynamicsResult;
 
     // The custom marine solver updates anisotropic velocity first. Rapier then
     // advances the pose exactly once and owns every contact impulse, friction
@@ -958,7 +436,9 @@ export default function Boat() {
       });
     }
 
-    forwardDir.set(0, 0, -1).applyQuaternion(body.quaternion);
+    const forwardDir = scratch.forwardDir
+      .set(0, 0, -1)
+      .applyQuaternion(body.quaternion);
     forwardDir.y = 0;
     if (forwardDir.lengthSq() > 1e-8) forwardDir.normalize();
     else forwardDir.set(0, 0, -1);
@@ -1134,14 +614,13 @@ export default function Boat() {
     sharedPhysics.cavitationFactor = propulsionResult.cavitationFactor;
     sharedPhysics.ventilationFactor = propulsionResult.ventilationFactor;
     sharedPhysics.propWashSpeedMps = propulsionResult.propWashSpeedMps;
-    sharedPhysics.rudderAngleRad = rudderAngle.current;
+    sharedPhysics.rudderAngleRad = rudderAngleRad;
     sharedPhysics.rudderForceN = appliedRudderForceN;
     sharedPhysics.rudderFlowSpeedMps =
       rudderHydrodynamics.flowSpeedMps;
     sharedPhysics.rudderAngleOfAttackRad =
       rudderHydrodynamics.angleOfAttackRad;
 
-    lastSubmergedRatio.current = submergedRatio;
     currentPosition.current.copy(body.position);
     currentQuaternion.current.copy(body.quaternion);
   };
@@ -1248,7 +727,7 @@ export default function Boat() {
       .copy(scratch.windVelocity)
       .sub(physicsBody.current.linearVelocity);
     const speed2D = Math.hypot(physicsBody.current.linearVelocity.x, physicsBody.current.linearVelocity.z);
-    const submergedRatio = lastSubmergedRatio.current;
+    const submergedRatio = dynamicsRuntime.current.submergedRatio;
     const pos = boat.position;
 
     // --- Update Flag (Apparent Wind) ---
@@ -1269,9 +748,16 @@ export default function Boat() {
     }
     
     // --- Update Visual Rudders/Engines ---
-    if (trawlerEngineRef.current) trawlerEngineRef.current.rotation.y = rudderAngle.current;
-    if (speedboatEngineLRef.current) speedboatEngineLRef.current.rotation.y = rudderAngle.current;
-    if (speedboatEngineRRef.current) speedboatEngineRRef.current.rotation.y = rudderAngle.current;
+    const visualRudderAngle = dynamicsRuntime.current.rudderAngleRad;
+    if (trawlerEngineRef.current) {
+      trawlerEngineRef.current.rotation.y = visualRudderAngle;
+    }
+    if (speedboatEngineLRef.current) {
+      speedboatEngineLRef.current.rotation.y = visualRudderAngle;
+    }
+    if (speedboatEngineRRef.current) {
+      speedboatEngineRRef.current.rotation.y = visualRudderAngle;
+    }
 
     // Damage visuals are cached and updated at a controlled rate.
     updateVisualDamage(
@@ -1288,7 +774,7 @@ export default function Boat() {
         forwardDir,
         state.camera.position,
         state.camera.quaternion,
-        propulsionSystem.current.result.engineRpm,
+        dynamicsRuntime.current.propulsionResult.engineRpm,
         isSpeedboat,
         speed2D,
         submergedRatio,

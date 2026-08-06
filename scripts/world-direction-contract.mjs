@@ -68,6 +68,13 @@ const sourceFiles = {
     new URL('../components/Boat.tsx', import.meta.url),
     'utf8',
   ),
+  dynamics: await fs.readFile(
+    new URL(
+      '../sim/vessels/VesselDynamicsRuntime.ts',
+      import.meta.url,
+    ),
+    'utf8',
+  ),
   weather: await fs.readFile(
     new URL('../components/WeatherEffects.tsx', import.meta.url),
     'utf8',
@@ -95,13 +102,13 @@ const sourceFiles = {
 };
 
 assert.match(
-  sourceFiles.boat,
-  /setWorldVectorFromHeading\(windVelocity, windDir, windSpeed\)/,
+  sourceFiles.dynamics,
+  /setWorldVectorFromHeading\(\s*this\.windVelocity,\s*input\.windHeadingDegrees,\s*input\.windSpeedMps/,
   'Vessel wind force must use the authoritative heading conversion.',
 );
 assert.match(
-  sourceFiles.boat,
-  /setWorldVectorFromHeading\(\s*baseCurrentVelocity,\s*currentDir,\s*currentSpeed/,
+  sourceFiles.dynamics,
+  /setWorldVectorFromHeading\(\s*this\.baseCurrentVelocity,\s*input\.currentHeadingDegrees,\s*input\.currentSpeedMps/,
   'Water current must use the authoritative heading conversion.',
 );
 assert.match(
@@ -110,9 +117,9 @@ assert.match(
   'Vessel telemetry must publish the same compass convention.',
 );
 assert.doesNotMatch(
-  sourceFiles.boat,
+  `${sourceFiles.boat}\n${sourceFiles.dynamics}`,
   /const windRad = MathUtils\.degToRad\(windDir\)/,
-  'Boat physics must not keep a private wind-axis mapping.',
+  'Vessel physics must not keep a private wind-axis mapping.',
 );
 
 assert.match(

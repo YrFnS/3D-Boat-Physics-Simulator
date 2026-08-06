@@ -106,9 +106,27 @@ const runtimeSource = await fs.readFile(
   new URL('../sim/vessels/VesselConditionRuntime.ts', import.meta.url),
   'utf8',
 );
+const dynamicsSource = await fs.readFile(
+  new URL(
+    '../sim/vessels/VesselDynamicsRuntime.ts',
+    import.meta.url,
+  ),
+  'utf8',
+);
 
 assert.match(boatSource, /VesselConditionRuntime/);
-assert.match(boatSource, /conditionRuntime\.current\.applyDamage/);
+assert.match(
+  boatSource,
+  /condition:\s*conditionRuntime\.current/,
+  'Boat must pass condition authority into vessel dynamics.',
+);
+assert.match(
+  dynamicsSource,
+  /condition\.applyDamage\(\{/,
+  'Dynamics damage must delegate to condition authority.',
+);
+assert.match(dynamicsSource, /source: 'slamming'/);
+assert.match(dynamicsSource, /source: 'environmental-impact'/);
 assert.match(boatSource, /conditionRuntime\.current\.applyFieldRepair/);
 assert.match(boatSource, /conditionRuntime\.current\.stepThermalAndFlooding/);
 assert.doesNotMatch(boatSource, /applyVesselDamage/);
