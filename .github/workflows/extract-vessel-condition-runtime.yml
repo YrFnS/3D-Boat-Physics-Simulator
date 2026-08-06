@@ -1,0 +1,586 @@
+name: Extract vessel condition runtime
+
+on:
+  push:
+    branches:
+      - agent/simulator-stabilization
+    paths:
+      - .github/workflows/extract-vessel-condition-runtime.yml
+
+permissions:
+  contents: write
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  extract:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Extract condition authority from Boat
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          def read(path: str) -> str:
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path: str, content: str) -> None:
+              Path(path).write_text(content, encoding='utf-8')
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              source = read(path)
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(
+                      f'{path}: expected exactly one target, found {count}: {old[:180]!r}'
+                  )
+              write(path, source.replace(old, new, 1))
+
+          def replace_section(
+              path: str,
+              start_marker: str,
+              end_marker: str,
+              replacement: str,
+          ) -> None:
+              source = read(path)
+              start_count = source.count(start_marker)
+              if start_count != 1:
+                  raise SystemExit(
+                      f'{path}: expected one start marker, found {start_count}: {start_marker!r}'
+                  )
+              start = source.index(start_marker)
+              end = source.index(end_marker, start)
+              write(path, source[:start] + replacement + source[end:])
+
+          replace_once(
+              'components/Boat.tsx',
+              """import {
+            applyVesselDamage,
+            type VesselDamageEvent,
+          } from '@/sim/vessels/VesselDamagePolicy';
+          """,
+              """import { VesselConditionRuntime } from '@/sim/vessels/VesselConditionRuntime';
+          """,
+          )
+          replace_once(
+              'components/Boat.tsx',
+              """import {
+            applyFieldRepairStep,
+            calculateFieldRepairPenalty,
+            isFieldRepairEligible,
+          } from '@/sim/vessels/FieldRepairPolicy';
+          """,
+              """import {
+            calculateFieldRepairPenalty,
+            isFieldRepairEligible,
+          } from '@/sim/vessels/FieldRepairPolicy';
+          """,
+          )
+
+          replace_section(
+              'components/Boat.tsx',
+              '  // Component condition survives a recovery remount',
+              '  // Read active boat reactively to trigger re-renders',
+              """  // Component condition survives a recovery remount, while a fresh scenario
+            // still enters through the store's reset telemetry at 100%.
+            const conditionRuntime = useRef(
+              new VesselConditionRuntime({
+                hullHealth: initialCondition.hullHealth,
+                engineHealth: initialCondition.engineHealth,
+                engineTemperature: initialCondition.engineTemperature,
+                rudderHealth: initialCondition.rudderHealth,
+              }),
+            );
+
+          """,
+          )
+
+          replace_once(
+              'components/Boat.tsx',
+              """      hullHealth.current = 100;
+                engineHealth.current = 100;
+                rudderHealth.current = 100;
+                engineTemperature.current = 20;
+          """,
+              """      conditionRuntime.current.reset();
+          """,
+          )
+          replace_once(
+              'components/Boat.tsx',
+              """    hullHealth.current = 100;
+              engineHealth.current = 100;
+              rudderHealth.current = 100;
+              engineTemperature.current = 20;
+          """,
+              """    conditionRuntime.current.reset();
+          """,
+          )
+          replace_once(
+              'components/Boat.tsx',
+              """      hullHealth.current = 72;
+                engineHealth.current = 35;
+                rudderHealth.current = 42;
+                engineTemperature.current = 78;
+          """,
+              """      conditionRuntime.current.reset({
+                hullHealth: 72,
+                engineHealth: 35,
+                engineTemperature: 78,
+                rudderHealth: 42,
+              });
+          """,
+          )
+
+          replace_section(
+              'components/Boat.tsx',
+              '    // --- Phase 1: Health Math ---',
+              '    // --- Bilge pump and limited emergency field repair ---',
+              """    // --- Component temperature and explicit condition damage ---
+            conditionRuntime.current.stepThermalAndFlooding({
+              deltaSeconds: dt,
+              engineRpm: propulsionResult.engineRpm,
+              ratedEngineRpm: vessel.engine.ratedRpm,
+              absorbedShaftPowerW: propulsionResult.absorbedShaftPowerW,
+              ratedEnginePowerW: vessel.engine.ratedPowerW,
+              ventilationFactor: propulsionResult.ventilationFactor,
+              submergedRatio,
+              engineCompartmentFloodingRatio:
+                floodingResult.engineCompartmentFloodingRatio,
+              simulationTimeSeconds: time,
+            });
+
+          """,
+          )
+
+          replace_section(
+              'components/Boat.tsx',
+              '    const fieldRepairResult = applyFieldRepairStep({',
+              '\n\n    const missionStatistics',
+              """    const fieldRepairResult =
+              conditionRuntime.current.applyFieldRepair({
+                active: activeFieldRepair,
+                deltaSeconds: dt,
+                engineConditionRestoredThisRun: repairUsageMatchesRun
+                  ? repairStatisticsBeforeStep.engineConditionRestored
+                  : 0,
+                rudderConditionRestoredThisRun: repairUsageMatchesRun
+                  ? repairStatisticsBeforeStep.rudderConditionRestored
+                  : 0,
+              });
+          """,
+          )
+
+          boat_source = read('components/Boat.tsx')
+          damage_call_count = boat_source.count('applyDamage({')
+          if damage_call_count != 4:
+              raise SystemExit(
+                  f'components/Boat.tsx: expected four remaining explicit damage origins, found {damage_call_count}'
+              )
+          boat_source = boat_source.replace(
+              'applyDamage({',
+              'conditionRuntime.current.applyDamage({',
+          )
+          for old, new in (
+              ('hullHealth.current', 'conditionRuntime.current.hullHealth'),
+              ('engineHealth.current', 'conditionRuntime.current.engineHealth'),
+              ('engineTemperature.current', 'conditionRuntime.current.engineTemperature'),
+              ('rudderHealth.current', 'conditionRuntime.current.rudderHealth'),
+          ):
+              boat_source = boat_source.replace(old, new)
+          write('components/Boat.tsx', boat_source)
+
+          damage_contract = dedent(r'''
+            import assert from 'node:assert/strict';
+            import fs from 'node:fs/promises';
+            import {
+              applyVesselDamage,
+              NORMAL_OPERATION_DAMAGE_POLICY,
+              VESSEL_DAMAGE_SOURCE_LABELS,
+            } from '../sim/vessels/VesselDamagePolicy.ts';
+
+            const pristine = {
+              hullHealth: 100,
+              engineHealth: 100,
+              rudderHealth: 100,
+            };
+
+            assert.deepEqual(
+              applyVesselDamage(pristine, {
+                source: 'terrain-impact',
+                hullDamage: 12,
+                engineDamage: 3,
+                rudderDamage: 4,
+              }),
+              {
+                hullHealth: 88,
+                engineHealth: 97,
+                rudderHealth: 96,
+              },
+              'Explicit damage must affect only the declared health channels.',
+            );
+
+            assert.deepEqual(
+              applyVesselDamage(pristine, {
+                source: 'obstacle-impact',
+                hullDamage: 500,
+                engineDamage: Number.POSITIVE_INFINITY,
+                rudderDamage: -8,
+              }),
+              {
+                hullHealth: 0,
+                engineHealth: 100,
+                rudderHealth: 100,
+              },
+              'Damage must clamp health and ignore invalid or negative values.',
+            );
+
+            assert.equal(
+              NORMAL_OPERATION_DAMAGE_POLICY.sustainedPlaningHullDamagePerSecond,
+              0,
+            );
+            assert.equal(
+              NORMAL_OPERATION_DAMAGE_POLICY.hydrodynamicRudderWearPerSecond,
+              0,
+            );
+            assert.deepEqual(
+              Object.keys(VESSEL_DAMAGE_SOURCE_LABELS).sort(),
+              [
+                'engine-overheat',
+                'environmental-impact',
+                'machinery-flooding',
+                'obstacle-impact',
+                'slamming',
+                'terrain-impact',
+              ],
+              'Every allowed health-loss source must be explicit and named.',
+            );
+
+            const boatSource = await fs.readFile(
+              new URL('../components/Boat.tsx', import.meta.url),
+              'utf8',
+            );
+            const conditionRuntimeSource = await fs.readFile(
+              new URL(
+                '../sim/vessels/VesselConditionRuntime.ts',
+                import.meta.url,
+              ),
+              'utf8',
+            );
+            const integratedDamageSource =
+              `${boatSource}\n${conditionRuntimeSource}`;
+
+            assert.match(
+              conditionRuntimeSource,
+              /applyVesselDamage/,
+              'Condition health loss must route through the explicit damage policy.',
+            );
+            assert.doesNotMatch(
+              boatSource,
+              /applyVesselDamage/,
+              'The React vessel component must delegate condition mutation.',
+            );
+            for (const source of Object.keys(VESSEL_DAMAGE_SOURCE_LABELS)) {
+              assert.match(
+                integratedDamageSource,
+                new RegExp(`source: '${source}'`),
+                `The integrated vessel runtime must retain the explicit ${source} damage path.`,
+              );
+            }
+
+            assert.doesNotMatch(
+              boatSource,
+              /activePlaningSpeedRatio\s*>\s*0\.8[\s\S]{0,260}(?:hullHealth\.current|conditionRuntime\.current\.hullHealth)\s*-/,
+              'Designed planing operation must not passively consume hull health.',
+            );
+            assert.doesNotMatch(
+              boatSource,
+              /rudderLoadRatio/,
+              'Ordinary hydrodynamic rudder load must not passively consume rudder health.',
+            );
+            assert.doesNotMatch(
+              boatSource,
+              /normalizedSurgeSpeed/,
+              'The removed passive rudder-wear calculation must not remain dead code.',
+            );
+            assert.doesNotMatch(
+              integratedDamageSource,
+              /(?:hullHealth|engineHealth|rudderHealth)(?:\.current|Value)?\s*=\s*Math\.max\(\s*0,\s*(?:hullHealth|engineHealth|rudderHealth)(?:\.current|Value)?\s*-/,
+              'Direct health subtraction must not bypass the damage policy.',
+            );
+
+            console.log('Vessel damage policy contract passed.');
+          ''').lstrip()
+          write('scripts/vessel-damage-policy-contract.mjs', damage_contract)
+
+          repair_contract = dedent(r'''
+            import assert from 'node:assert/strict';
+            import fs from 'node:fs/promises';
+            import {
+              applyFieldRepairStep,
+              calculateFieldRepairPenalty,
+              FIELD_REPAIR_LIMITS,
+              isFieldRepairEligible,
+            } from '../sim/vessels/FieldRepairPolicy.ts';
+
+            assert.equal(
+              isFieldRepairEligible({
+                requested: true,
+                speedKnots: 1.5,
+                throttle: 0,
+                propulsionInputActive: false,
+              }),
+              true,
+            );
+            assert.equal(
+              isFieldRepairEligible({
+                requested: true,
+                speedKnots: 2.1,
+                throttle: 0,
+                propulsionInputActive: false,
+              }),
+              false,
+            );
+            assert.equal(
+              isFieldRepairEligible({
+                requested: true,
+                speedKnots: 0,
+                throttle: 0.2,
+                propulsionInputActive: false,
+              }),
+              false,
+            );
+
+            const oneSecond = applyFieldRepairStep({
+              active: true,
+              deltaSeconds: 1,
+              hullHealth: 40,
+              engineHealth: 30,
+              rudderHealth: 35,
+              engineTemperatureC: 80,
+              engineConditionRestoredThisRun: 0,
+              rudderConditionRestoredThisRun: 0,
+            });
+            assert.equal(oneSecond.hullHealth, 40);
+            assert.equal(
+              oneSecond.engineHealth,
+              30 + FIELD_REPAIR_LIMITS.engineRestoreRatePerSecond,
+            );
+            assert.equal(
+              oneSecond.rudderHealth,
+              35 + FIELD_REPAIR_LIMITS.rudderRestoreRatePerSecond,
+            );
+            assert.equal(oneSecond.engineTemperatureC, 76);
+
+            const capped = applyFieldRepairStep({
+              active: true,
+              deltaSeconds: 120,
+              hullHealth: 25,
+              engineHealth: 10,
+              rudderHealth: 10,
+              engineTemperatureC: 120,
+              engineConditionRestoredThisRun: 0,
+              rudderConditionRestoredThisRun: 0,
+            });
+            assert.equal(capped.hullHealth, 25);
+            assert.equal(capped.engineHealth, 22);
+            assert.equal(capped.rudderHealth, 28);
+            assert.equal(
+              capped.engineConditionRestored,
+              FIELD_REPAIR_LIMITS.maximumEngineRestorePerRun,
+            );
+            assert.equal(
+              capped.rudderConditionRestored,
+              FIELD_REPAIR_LIMITS.maximumRudderRestorePerRun,
+            );
+
+            const ceiling = applyFieldRepairStep({
+              active: true,
+              deltaSeconds: 120,
+              hullHealth: 90,
+              engineHealth: 54,
+              rudderHealth: 64.5,
+              engineTemperatureC: 20,
+              engineConditionRestoredThisRun: 0,
+              rudderConditionRestoredThisRun: 0,
+            });
+            assert.equal(
+              ceiling.engineHealth,
+              FIELD_REPAIR_LIMITS.engineConditionCeiling,
+            );
+            assert.equal(
+              ceiling.rudderHealth,
+              FIELD_REPAIR_LIMITS.rudderConditionCeiling,
+            );
+
+            assert.equal(
+              calculateFieldRepairPenalty({
+                repairActiveSeconds: 20,
+                repairActivationCount: 1,
+                engineConditionRestored: 12,
+                rudderConditionRestored: 18,
+              }),
+              160,
+            );
+
+            const boatSource = await fs.readFile(
+              new URL('../components/Boat.tsx', import.meta.url),
+              'utf8',
+            );
+            const conditionRuntimeSource = await fs.readFile(
+              new URL(
+                '../sim/vessels/VesselConditionRuntime.ts',
+                import.meta.url,
+              ),
+              'utf8',
+            );
+            const storeSource = await fs.readFile(
+              new URL('../store/useSimStore.ts', import.meta.url),
+              'utf8',
+            );
+            const directorSource = await fs.readFile(
+              new URL('../components/ScenarioDirector.tsx', import.meta.url),
+              'utf8',
+            );
+            const floodingSource = await fs.readFile(
+              new URL('../sim/vessels/FloodingModel.ts', import.meta.url),
+              'utf8',
+            );
+            const overlaySource = await fs.readFile(
+              new URL('../components/ScenarioResultOverlay.tsx', import.meta.url),
+              'utf8',
+            );
+            const persistenceSource = await fs.readFile(
+              new URL('../components/ExperiencePersistence.tsx', import.meta.url),
+              'utf8',
+            );
+
+            assert.match(conditionRuntimeSource, /applyFieldRepairStep\(/);
+            assert.match(
+              boatSource,
+              /conditionRuntime\.current\.applyFieldRepair\(/,
+            );
+            assert.doesNotMatch(boatSource, /applyFieldRepairStep\(/);
+            assert.match(boatSource, /repairActive: activeFieldRepair/);
+            assert.match(boatSource, /repairTrackingEnabled:/);
+            assert.doesNotMatch(boatSource, /hullHealth\.current \+ 8\.0 \* dt/);
+            assert.doesNotMatch(boatSource, /engineHealth\.current \+ 12\.0 \* dt/);
+            assert.doesNotMatch(boatSource, /rudderHealth\.current \+ 15\.0 \* dt/);
+            assert.match(
+              boatSource,
+              /preserveConditionAcrossRecovery/,
+              'Boat remounts must rehydrate component condition after recovery.',
+            );
+
+            const resetStart = storeSource.lastIndexOf(
+              '  resetVessel: () => {',
+            );
+            const resetEnd = storeSource.indexOf('fireInstantRepair:', resetStart);
+            const resetBlock = storeSource.slice(resetStart, resetEnd);
+            assert.doesNotMatch(
+              resetBlock,
+              /resetTelemetry\(\)/,
+              'Recovery must not restore hull, engine, or rudder condition.',
+            );
+            assert.match(resetBlock, /floodingRatio: 0/);
+
+            const pauseStart = storeSource.lastIndexOf('  pauseSession: () =>');
+            const pauseEnd = storeSource.indexOf('  resumeSession:', pauseStart);
+            assert.match(
+              storeSource.slice(pauseStart, pauseEnd),
+              /fieldRepairActive: false/,
+              'Pausing must clear the visible active-repair flag immediately.',
+            );
+            const toggleStart = storeSource.lastIndexOf('  togglePause: () =>');
+            const toggleEnd = storeSource.indexOf('  restartScenario:', toggleStart);
+            assert.match(
+              storeSource.slice(toggleStart, toggleEnd),
+              /fieldRepairActive: false/,
+              'Keyboard pause must clear the visible active-repair flag.',
+            );
+            const finishStart = storeSource.lastIndexOf('  finishScenario:');
+            const finishEnd = storeSource.indexOf('  resetVessel:', finishStart);
+            assert.match(
+              storeSource.slice(finishStart, finishEnd),
+              /fieldRepairActive: false/,
+              'Mission completion must not leave repair marked active.',
+            );
+            assert.match(
+              storeSource,
+              /key === 'r' && !value[\s\S]{0,120}fieldRepairActive: false/,
+              'Releasing the repair control must clear its UI state immediately.',
+            );
+
+            assert.match(
+              floodingSource,
+              /FIELD_REPAIR_LIMITS\.breachStabilizationPerSecond/,
+            );
+            assert.match(directorSource, /result\.repairPenaltyPoints/);
+            assert.match(directorSource, /repairPenaltyPoints,/);
+            assert.match(
+              overlaySource,
+              /Field repair used/,
+              'Mission results must disclose field-repair use.',
+            );
+            assert.match(persistenceSource, /simFieldRepairSeconds/);
+
+            console.log('Field repair policy contract passed.');
+          ''').lstrip()
+          write('scripts/field-repair-policy-contract.mjs', repair_contract)
+
+          replace_once(
+              'SIMULATOR_STABILIZATION_PLAN.md',
+              "- [ ] Split vessel runtime, physics, collision, damage, telemetry, audio, and rendering responsibilities out of `Boat.tsx`.\n",
+              """- [ ] Split vessel runtime, physics, collision, damage, telemetry, audio, and rendering responsibilities out of `Boat.tsx`.
+                - [x] Extract component condition, engine thermal/flooding damage, and field-repair mutation into `VesselConditionRuntime`.
+                - [ ] Extract collision response and impact orchestration.
+                - [ ] Extract propulsion, steering, and hydrodynamic force orchestration.
+                - [ ] Extract telemetry/audio publication and move vessel meshes into dedicated render components.
+          """,
+          )
+
+          boat_source = read('components/Boat.tsx')
+          if 'applyVesselDamage' in boat_source:
+              raise SystemExit('Boat still imports or invokes applyVesselDamage directly.')
+          if 'applyFieldRepairStep' in boat_source:
+              raise SystemExit('Boat still invokes applyFieldRepairStep directly.')
+          if 'let targetTemp' in boat_source:
+              raise SystemExit('Boat still owns engine temperature integration.')
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate extracted condition authority
+        run: |
+          node --experimental-strip-types --no-warnings scripts/vessel-condition-runtime-contract.mjs
+          npm run validate
+
+      - name: Commit validated extraction
+        shell: bash
+        run: |
+          rm -f .github/workflows/extract-vessel-condition-runtime.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "refactor: extract vessel condition runtime"
+          git push origin HEAD:agent/simulator-stabilization
