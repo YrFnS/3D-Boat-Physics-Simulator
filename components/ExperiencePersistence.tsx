@@ -64,6 +64,28 @@ function writeDataset(state: SimState) {
   );
   dataset.simScenarioResult = state.scenarioResult?.outcome ?? '';
   dataset.simScenarioResultRunMode = state.scenarioResult?.runMode ?? '';
+  dataset.simHullHealth = String(state.hullHealth);
+  dataset.simEngineHealth = String(state.engineHealth);
+  dataset.simRudderHealth = String(state.rudderHealth);
+  dataset.simEngineTemperature = String(state.engineTemperature);
+  dataset.simFloodingRatio = String(state.floodingRatio);
+  dataset.simFieldRepairActive = state.fieldRepairActive ? '1' : '0';
+  dataset.simFieldRepairSeconds = String(state.fieldRepairSeconds);
+  dataset.simFieldRepairActivationCount = String(
+    state.fieldRepairActivationCount,
+  );
+  dataset.simFieldRepairEngineRestored = String(
+    state.fieldRepairEngineRestored,
+  );
+  dataset.simFieldRepairRudderRestored = String(
+    state.fieldRepairRudderRestored,
+  );
+  dataset.simFieldRepairPenaltyPoints = String(
+    state.fieldRepairPenaltyPoints,
+  );
+  dataset.simScenarioRepairPenaltyPoints = String(
+    state.scenarioResult?.repairPenaltyPoints ?? 0,
+  );
   dataset.simScenarioEntityCount = String(
     state.completedScenarioEntityIds.length,
   );

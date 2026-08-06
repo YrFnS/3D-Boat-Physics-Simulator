@@ -8,6 +8,7 @@ import {
   worldDirectionToHeadingDegrees,
 } from '@/sim/world/WorldDirection';
 import { sharedMissionRuntimeStatistics } from '@/sim/scenarios/MissionRuntimeStatistics';
+import { calculateFieldRepairPenalty } from '@/sim/vessels/FieldRepairPolicy';
 import {
   createIdleScenarioInteractionTelemetry,
   ScenarioInteractionRuntime,
@@ -74,7 +75,12 @@ function calculateScore(
 
   return Math.round(
     MathUtils.clamp(
-      1_000 - timePenalty - damagePenalty - contactPenalty - resetPenalty,
+      1_000 -
+        timePenalty -
+        damagePenalty -
+        contactPenalty -
+        resetPenalty -
+        result.repairPenaltyPoints,
       0,
       1_000,
     ),
@@ -219,6 +225,8 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
       const entitiesCompleted = requiredEntities.filter((entity) =>
         latestStore.completedScenarioEntityIds.includes(entity.id),
       ).length;
+      const repairPenaltyPoints =
+        calculateFieldRepairPenalty(missionStatistics);
       const baseResult = {
         runMode: latestStore.scenarioRunMode,
         assistanceReason:
@@ -233,6 +241,13 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
         rudderHealth: latestStore.rudderHealth,
         collisionCount,
         resetCount: latestStore.scenarioResetCount,
+        repairActiveSeconds: missionStatistics.repairActiveSeconds,
+        repairActivationCount: missionStatistics.repairActivationCount,
+        engineConditionRestored:
+          missionStatistics.engineConditionRestored,
+        rudderConditionRestored:
+          missionStatistics.rudderConditionRestored,
+        repairPenaltyPoints,
         maximumSpeedKnots: missionStatistics.maximumSpeedKnots,
         distanceTravelledM: missionStatistics.distanceTravelledM,
         checkpointLabel: latestStore.scenarioCheckpointLabel,

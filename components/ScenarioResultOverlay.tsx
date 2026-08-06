@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   Ship,
   Trophy,
+  Wrench,
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import {
@@ -251,6 +252,21 @@ export default function ScenarioResultOverlay({
             </div>
           </div>
         </div>
+
+        {result.repairActiveSeconds > 0 && (
+          <div className="mt-4 flex gap-3 rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.06] p-4 text-cyan-100">
+            <Wrench className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.18em]">
+                Field repair used · -{result.repairPenaltyPoints} score
+              </div>
+              <p className="mt-1 text-xs leading-5 text-slate-300">
+                {formatDuration(result.repairActiveSeconds)} active across{' '}
+                {result.repairActivationCount} stop{result.repairActivationCount === 1 ? '' : 's'}. Emergency restoration: engine +{result.engineConditionRestored.toFixed(1)}, rudder +{result.rudderConditionRestored.toFixed(1)}. Hull structure was not restored underway.
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="mt-4 flex flex-col gap-2 rounded-2xl border border-white/8 bg-white/[0.025] px-4 py-3 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
           <div>

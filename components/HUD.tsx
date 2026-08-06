@@ -30,6 +30,10 @@ import {
   X,
 } from 'lucide-react';
 import { useDebugMode } from '@/hooks/useDebugMode';
+import {
+  FIELD_REPAIR_LIMITS,
+  isFieldRepairEligible,
+} from '@/sim/vessels/FieldRepairPolicy';
 import type { ScenarioRunMode } from '@/sim/scenarios/ScoredScenarioAuthority';
 import {
   type BoatType,
@@ -382,6 +386,11 @@ export default function HUD() {
       scenarioRunStatus: store.scenarioRunStatus,
       scenarioRunMode: store.scenarioRunMode,
       scenarioAssistanceReason: store.scenarioAssistanceReason,
+      fieldRepairSeconds: store.fieldRepairSeconds,
+      fieldRepairActivationCount: store.fieldRepairActivationCount,
+      fieldRepairEngineRestored: store.fieldRepairEngineRestored,
+      fieldRepairRudderRestored: store.fieldRepairRudderRestored,
+      fieldRepairPenaltyPoints: store.fieldRepairPenaltyPoints,
       keys: store.keys,
       setTargetTime: store.setTargetTime,
       setTargetSeason: store.setTargetSeason,
@@ -396,14 +405,26 @@ export default function HUD() {
     })),
   );
 
-  const isRepairing =
-    state.keys.r &&
-    Math.abs(state.speedKnots) < 2 &&
-    state.engineThrust < 0.1 &&
-    !state.keys.w &&
-    !state.keys.s &&
-    !state.keys.arrowup &&
-    !state.keys.arrowdown;
+  const isRepairing = isFieldRepairEligible({
+    requested: state.keys.r,
+    speedKnots: state.speedKnots,
+    throttle: state.engineThrust,
+    propulsionInputActive:
+      state.keys.w ||
+      state.keys.s ||
+      state.keys.arrowup ||
+      state.keys.arrowdown,
+  });
+  const remainingEngineRepair = Math.max(
+    0,
+    FIELD_REPAIR_LIMITS.maximumEngineRestorePerRun -
+      state.fieldRepairEngineRestored,
+  );
+  const remainingRudderRepair = Math.max(
+    0,
+    FIELD_REPAIR_LIMITS.maximumRudderRestorePerRun -
+      state.fieldRepairRudderRestored,
+  );
 
   const environmentLocked =
     state.scenarioRunStatus === 'active' &&
@@ -472,7 +493,7 @@ export default function HUD() {
                     : 'transition hover:text-emerald-300'
                 }
               >
-                Hold [R] to repair
+                Hold [R] bilge / field repair
               </button>
             </div>
           </div>
@@ -578,8 +599,8 @@ export default function HUD() {
               }`}
             >
               {isRepairing
-                ? 'Active field repair'
-                : 'Slow down and cut throttle to repair'}
+                ? 'Bilge pump active · emergency repair logged'
+                : 'Slow below 2 kt and set neutral to repair'}
             </div>
           </div>
         )}
@@ -678,6 +699,28 @@ export default function HUD() {
               />
             </div>
 
+            {(
+              state.fieldRepairSeconds > 0 ||
+              state.hullHealth < 100 ||
+              state.engineHealth < 100 ||
+              state.rudderHealth < 100 ||
+              state.floodingRatio > 0
+            ) && (
+              <div className="mt-3 rounded-xl border border-cyan-300/15 bg-cyan-300/[0.05] p-3 text-[9px] leading-4 text-slate-400">
+                <div className="flex items-center gap-1.5 font-black uppercase tracking-wider text-cyan-200">
+                  <Wrench className="h-3 w-3" /> Field repair limits
+                </div>
+                <p className="mt-1">
+                  Bilge pumping and breach stabilization remain available. Hull structural condition cannot be restored underway. Engine recovery is capped at {FIELD_REPAIR_LIMITS.engineConditionCeiling}% with {remainingEngineRepair.toFixed(1)} points remaining; rudder recovery is capped at {FIELD_REPAIR_LIMITS.rudderConditionCeiling}% with {remainingRudderRepair.toFixed(1)} remaining.
+                </p>
+                {state.fieldRepairPenaltyPoints > 0 && (
+                  <div className="mt-1 font-mono text-cyan-200">
+                    {state.fieldRepairActivationCount} stop{state.fieldRepairActivationCount === 1 ? '' : 's'} · {state.fieldRepairSeconds.toFixed(1)}s · -{state.fieldRepairPenaltyPoints} score
+                  </div>
+                )}
+              </div>
+            )}
+
             {debugEnabled && (
               <button
                 type="button"
@@ -724,7 +767,7 @@ export default function HUD() {
             </button>
             <button
               type="button"
-              aria-label="Repair vessel"
+              aria-label="Activate bilge pump and emergency field repair"
               onPointerDown={(event) => holdKey(event, 'r', true)}
               onPointerUp={(event) => holdKey(event, 'r', false)}
               onPointerCancel={(event) => holdKey(event, 'r', false)}

@@ -39,6 +39,23 @@ function readExperienceState(page) {
       scenarioAssistanceReason:
         dataset.simScenarioAssistanceReason ?? '',
       scenarioResultRunMode: dataset.simScenarioResultRunMode ?? '',
+      hullHealth: Number(dataset.simHullHealth ?? '0'),
+      engineHealth: Number(dataset.simEngineHealth ?? '0'),
+      rudderHealth: Number(dataset.simRudderHealth ?? '0'),
+      fieldRepairActive: dataset.simFieldRepairActive ?? '0',
+      fieldRepairSeconds: Number(dataset.simFieldRepairSeconds ?? '0'),
+      fieldRepairActivationCount: Number(
+        dataset.simFieldRepairActivationCount ?? '0',
+      ),
+      fieldRepairEngineRestored: Number(
+        dataset.simFieldRepairEngineRestored ?? '0',
+      ),
+      fieldRepairRudderRestored: Number(
+        dataset.simFieldRepairRudderRestored ?? '0',
+      ),
+      fieldRepairPenaltyPoints: Number(
+        dataset.simFieldRepairPenaltyPoints ?? '0',
+      ),
       scenarioInteractionEntityId:
         dataset.simScenarioInteractionEntityId ?? '',
       scenarioInteractionStatus:
@@ -491,6 +508,101 @@ allPassed =
         interaction.scenarioInteractionMessage.includes('loading zone') &&
         (await page.getByText(/loading zone/i).count()) > 0;
     },
+  )) && allPassed;
+
+allPassed =
+  (await runFlow(
+    'field-repair-fairness-flow',
+    {
+      viewport: { width: 1280, height: 820 },
+      deviceScaleFactor: 1,
+      isMobile: false,
+      hasTouch: false,
+    },
+    async ({ page, checks }) => {
+      await page
+        .locator('button')
+        .filter({ hasText: 'Harbor Training' })
+        .first()
+        .click();
+      await waitForDataset(page, 'simScenario', 'harbor-training');
+      await page.getByRole('button', { name: /Begin passage/i }).click();
+      await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForCollisionRuntimeReady(page);
+      await page.waitForFunction(
+        () => {
+          const dataset = document.documentElement.dataset;
+          return (
+            Number(dataset.simHullHealth) <= 72.1 &&
+            Number(dataset.simEngineHealth) <= 35.1 &&
+            Number(dataset.simRudderHealth) <= 42.1
+          );
+        },
+        undefined,
+        { timeout: 60_000 },
+      );
+
+      const initial = await readExperienceState(page);
+      await page.keyboard.down('r');
+      await page.waitForFunction(
+        () =>
+          Number(
+            document.documentElement.dataset.simFieldRepairSeconds ??
+              '0',
+          ) >= 1.5,
+        undefined,
+        { timeout: 60_000 },
+      );
+      await page.keyboard.up('r');
+      await page.waitForFunction(
+        () =>
+          document.documentElement.dataset.simFieldRepairActive ===
+          '0',
+        undefined,
+        { timeout: 60_000 },
+      );
+
+      const repaired = await readExperienceState(page);
+      checks.hullNotRestored =
+        Math.abs(repaired.hullHealth - initial.hullHealth) < 0.15;
+      checks.emergencyRepairIsLimited =
+        repaired.engineHealth > initial.engineHealth + 0.5 &&
+        repaired.rudderHealth > initial.rudderHealth + 0.8 &&
+        repaired.engineHealth <= 55.01 &&
+        repaired.rudderHealth <= 65.01;
+      checks.repairUsageRecorded =
+        repaired.fieldRepairSeconds >= 1.5 &&
+        repaired.fieldRepairActivationCount === 1 &&
+        repaired.fieldRepairEngineRestored > 0.5 &&
+        repaired.fieldRepairRudderRestored > 0.8 &&
+        repaired.fieldRepairPenaltyPoints > 0;
+      checks.repairLimitsDisclosed =
+        (await page.getByText(
+          /Hull structural condition cannot be restored underway/i,
+        ).count()) > 0;
+
+      const resetBeforeRecovery = repaired.resetVesselTrigger;
+      await page.keyboard.press('Home');
+      await page.waitForFunction(
+        (previousReset) =>
+          Number(
+            document.documentElement.dataset.simResetVesselTrigger ??
+              '0',
+          ) > previousReset,
+        resetBeforeRecovery,
+        { timeout: 60_000 },
+      );
+      await waitForCollisionRuntimeReady(page);
+      await page.waitForTimeout(350);
+      const recovered = await readExperienceState(page);
+      checks.recoveryPreservesCondition =
+        Math.abs(recovered.hullHealth - repaired.hullHealth) < 0.25 &&
+        Math.abs(recovered.engineHealth - repaired.engineHealth) < 0.25 &&
+        Math.abs(recovered.rudderHealth - repaired.rudderHealth) < 0.25 &&
+        recovered.fieldRepairPenaltyPoints ===
+          repaired.fieldRepairPenaltyPoints;
+    },
+    '/?repairTest=1',
   )) && allPassed;
 
 allPassed =

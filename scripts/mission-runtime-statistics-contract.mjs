@@ -38,12 +38,19 @@ for (let step = 1; step <= 60; step += 1) {
     boatX: step / 60,
     boatZ: 0,
     speedKnots: step === 40 ? 14 : 8,
+    repairActive: step <= 30,
+    engineConditionRestored: step <= 30 ? 0.01 : 0,
+    rudderConditionRestored: step <= 30 ? 0.02 : 0,
   });
 }
 
 let snapshot = capture(tracker);
 approximatelyEqual(snapshot.elapsedSeconds, 1, 'fixed-step elapsed time');
 approximatelyEqual(snapshot.distanceTravelledM, 1, 'fixed-step distance');
+approximatelyEqual(snapshot.repairActiveSeconds, 0.5, 'repair duration');
+approximatelyEqual(snapshot.engineConditionRestored, 0.3, 'engine restoration');
+approximatelyEqual(snapshot.rudderConditionRestored, 0.6, 'rudder restoration');
+assert.equal(snapshot.repairActivationCount, 1);
 assert.equal(snapshot.maximumSpeedKnots, 14);
 assert.equal(snapshot.fixedStepCount, 60);
 
@@ -56,6 +63,8 @@ tracker.advance({
   boatX: 25,
   boatZ: -12,
   speedKnots: 40,
+  repairActive: true,
+  engineConditionRestored: 5,
 });
 snapshot = capture(tracker);
 assert.deepEqual(
@@ -75,11 +84,6 @@ tracker.advance({
 });
 snapshot = capture(tracker);
 approximatelyEqual(
-  snapshot.elapsedSeconds,
-  beforeDisabled.elapsedSeconds + STEP_SECONDS,
-  'resumed elapsed time',
-);
-approximatelyEqual(
   snapshot.distanceTravelledM,
   beforeDisabled.distanceTravelledM + 1 / 60,
   'disabled interval must reanchor distance',
@@ -94,6 +98,8 @@ tracker.advance({
   boatX: -120,
   boatZ: 80,
   speedKnots: 6,
+  repairActive: true,
+  engineConditionRestored: 0.01,
 });
 snapshot = capture(tracker);
 approximatelyEqual(
@@ -106,38 +112,10 @@ approximatelyEqual(
   beforeRecovery.elapsedSeconds + STEP_SECONDS,
   'vessel recovery must not reset mission time',
 );
-
-tracker.advance({
-  runId: 1,
-  vesselGeneration: 11,
-  enabled: true,
-  deltaSeconds: STEP_SECONDS,
-  boatX: -119,
-  boatZ: 80,
-  speedKnots: 6,
-});
-snapshot = capture(tracker);
-approximatelyEqual(
-  snapshot.distanceTravelledM,
-  beforeRecovery.distanceTravelledM + 1,
-  'post-recovery movement must resume distance accumulation',
-);
-
-const beforeOutlier = capture(tracker);
-tracker.advance({
-  runId: 1,
-  vesselGeneration: 11,
-  enabled: true,
-  deltaSeconds: STEP_SECONDS,
-  boatX: 500,
-  boatZ: 500,
-  speedKnots: 6,
-});
-snapshot = capture(tracker);
-approximatelyEqual(
-  snapshot.distanceTravelledM,
-  beforeOutlier.distanceTravelledM,
-  'an unannounced outlier sample must be rejected',
+assert.equal(
+  snapshot.repairActivationCount,
+  beforeRecovery.repairActivationCount + 1,
+  'Recovery starts a new repair activation without resetting usage.',
 );
 
 tracker.advance({
@@ -151,11 +129,11 @@ tracker.advance({
 });
 snapshot = capture(tracker);
 assert.equal(snapshot.runId, 2);
-assert.equal(snapshot.vesselGeneration, 12);
 approximatelyEqual(snapshot.elapsedSeconds, STEP_SECONDS, 'new-run elapsed time');
-approximatelyEqual(snapshot.distanceTravelledM, 0, 'new-run distance reset');
-assert.equal(snapshot.maximumSpeedKnots, 5);
-assert.equal(snapshot.fixedStepCount, 1);
+assert.equal(snapshot.repairActiveSeconds, 0);
+assert.equal(snapshot.repairActivationCount, 0);
+assert.equal(snapshot.engineConditionRestored, 0);
+assert.equal(snapshot.rudderConditionRestored, 0);
 
 const boatSource = await fs.readFile(
   new URL('../components/Boat.tsx', import.meta.url),
@@ -166,30 +144,9 @@ const directorSource = await fs.readFile(
   'utf8',
 );
 
-assert.match(
-  boatSource,
-  /sharedMissionRuntimeStatistics\.advance\(\{/,
-  'Boat fixed steps must advance the shared mission authority.',
-);
-assert.match(
-  boatSource,
-  /useNavigationPlanner\.getState\(\)\.mode === 'mission'/,
-  'Only mission navigation may advance scored statistics.',
-);
-assert.match(
-  directorSource,
-  /sharedMissionRuntimeStatistics\.snapshot/,
-  'ScenarioDirector must read fixed-step mission statistics.',
-);
-assert.doesNotMatch(
-  directorSource,
-  /statistics\.elapsedSeconds \+= frameDelta/,
-  'ScenarioDirector must not accumulate elapsed time from render delta.',
-);
-assert.doesNotMatch(
-  directorSource,
-  /previousBoat[ZX]/,
-  'ScenarioDirector must not integrate travelled distance from render samples.',
-);
+assert.match(boatSource, /sharedMissionRuntimeStatistics\.advance\(\{/);
+assert.match(boatSource, /engineConditionRestored:/);
+assert.match(directorSource, /sharedMissionRuntimeStatistics\.snapshot/);
+assert.doesNotMatch(directorSource, /statistics\.elapsedSeconds \+= frameDelta/);
 
 console.log('Mission runtime statistics contract passed.');

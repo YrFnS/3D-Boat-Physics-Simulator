@@ -84,6 +84,15 @@ export interface ScenarioCheckpointState {
   headingDeg: number;
 }
 
+export interface FieldRepairTelemetry {
+  active: boolean;
+  activeSeconds: number;
+  activationCount: number;
+  engineConditionRestored: number;
+  rudderConditionRestored: number;
+  penaltyPoints: number;
+}
+
 export interface ScenarioResult {
   outcome: 'completed' | 'failed';
   reason: string;
@@ -100,6 +109,11 @@ export interface ScenarioResult {
   rudderHealth: number;
   collisionCount: number;
   resetCount: number;
+  repairActiveSeconds: number;
+  repairActivationCount: number;
+  engineConditionRestored: number;
+  rudderConditionRestored: number;
+  repairPenaltyPoints: number;
   maximumSpeedKnots: number;
   distanceTravelledM: number;
   checkpointLabel: string;
@@ -155,6 +169,12 @@ function createScenarioGameplayState(
     navigationBoatZ: 0,
     scenarioResult: null as ScenarioResult | null,
     scenarioResetCount: 0,
+    fieldRepairActive: false,
+    fieldRepairSeconds: 0,
+    fieldRepairActivationCount: 0,
+    fieldRepairEngineRestored: 0,
+    fieldRepairRudderRestored: 0,
+    fieldRepairPenaltyPoints: 0,
     completedScenarioEntityIds: [] as string[],
     scenarioEventMessage: '',
     scenarioCheckpointId: null as string | null,
@@ -269,6 +289,12 @@ export interface SimState {
   navigationBoatZ: number;
   scenarioResult: ScenarioResult | null;
   scenarioResetCount: number;
+  fieldRepairActive: boolean;
+  fieldRepairSeconds: number;
+  fieldRepairActivationCount: number;
+  fieldRepairEngineRestored: number;
+  fieldRepairRudderRestored: number;
+  fieldRepairPenaltyPoints: number;
   completedScenarioEntityIds: string[];
   scenarioEventMessage: string;
   scenarioCheckpointId: string | null;
@@ -317,6 +343,7 @@ export interface SimState {
     floodingRatio: number,
     floodedVolumeM3: number,
   ) => void;
+  setFieldRepairTelemetry: (telemetry: FieldRepairTelemetry) => void;
   setKey: (key: string, value: boolean) => void;
   clearKeys: () => void;
   setTargetTime: (value: number) => void;
@@ -487,6 +514,27 @@ export const useSimStore = create<SimState>((set, get) => ({
       floodingRatio: Math.max(0, Math.min(1, floodingRatio)),
       floodedVolumeM3: Math.max(0, floodedVolumeM3),
     }),
+  setFieldRepairTelemetry: (telemetry) =>
+    set({
+      fieldRepairActive: telemetry.active,
+      fieldRepairSeconds: Math.max(0, telemetry.activeSeconds),
+      fieldRepairActivationCount: Math.max(
+        0,
+        Math.floor(telemetry.activationCount),
+      ),
+      fieldRepairEngineRestored: Math.max(
+        0,
+        telemetry.engineConditionRestored,
+      ),
+      fieldRepairRudderRestored: Math.max(
+        0,
+        telemetry.rudderConditionRestored,
+      ),
+      fieldRepairPenaltyPoints: Math.max(
+        0,
+        Math.round(telemetry.penaltyPoints),
+      ),
+    }),
   setKey: (key, value) =>
     set((state) => {
       if (!(key in state.keys)) return state;
@@ -497,7 +545,8 @@ export const useSimStore = create<SimState>((set, get) => ({
         },
       };
     }),
-  clearKeys: () => set({ keys: createEmptyKeys() }),
+  clearKeys: () =>
+    set({ keys: createEmptyKeys(), fieldRepairActive: false }),
   setTargetTime: (targetTime) =>
     set((state) =>
       canEditScenarioEnvironment(
@@ -742,7 +791,11 @@ export const useSimStore = create<SimState>((set, get) => ({
       scenarioInteractionStatus: 'idle',
       scenarioInteractionProgress: 0,
       scenarioInteractionMessage: '',
-      ...resetTelemetry(),
+      speedKnots: 0,
+      heading: state.scenarioSpawnHeadingDeg,
+      floodingRatio: 0,
+      floodedVolumeM3: 0,
+      fieldRepairActive: false,
     });
   },
   fireInstantRepair: () =>

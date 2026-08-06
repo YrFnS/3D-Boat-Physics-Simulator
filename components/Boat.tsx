@@ -29,6 +29,11 @@ import {
   type VesselDamageEvent,
 } from '@/sim/vessels/VesselDamagePolicy';
 import {
+  applyFieldRepairStep,
+  calculateFieldRepairPenalty,
+  isFieldRepairEligible,
+} from '@/sim/vessels/FieldRepairPolicy';
+import {
   setWorldVectorFromHeading,
   worldDirectionToHeadingDegrees,
 } from '@/sim/world/WorldDirection';
@@ -68,6 +73,7 @@ export default function Boat() {
   const environmentalForces = useRef(new EnvironmentalForces());
   const rapierCollisionWorld = useRef<RapierCollisionWorld | null>(null);
   const collisionTestEnabled = useRef(false);
+  const repairTestEnabled = useRef(false);
   const lastTerrainImpactTime = useRef(Number.NEGATIVE_INFINITY);
   const lastObstacleImpactTime = useRef(Number.NEGATIVE_INFINITY);
   const previousPosition = useRef(new Vector3());
@@ -135,11 +141,32 @@ export default function Boat() {
     [],
   );
   
-  // Phase 1: Health tracking refs
-  const hullHealth = useRef(100);
-  const engineHealth = useRef(100);
-  const engineTemperature = useRef(20);
-  const rudderHealth = useRef(100);
+  const initialCondition = useMemo(() => {
+    const state = useSimStore.getState();
+    const preserveConditionAcrossRecovery =
+      state.sessionPhase !== 'menu' &&
+      state.scenarioRunStatus === 'active';
+    return preserveConditionAcrossRecovery
+      ? {
+          hullHealth: state.hullHealth,
+          engineHealth: state.engineHealth,
+          engineTemperature: state.engineTemperature,
+          rudderHealth: state.rudderHealth,
+        }
+      : {
+          hullHealth: 100,
+          engineHealth: 100,
+          engineTemperature: 20,
+          rudderHealth: 100,
+        };
+  }, []);
+
+  // Component condition survives a recovery remount, while a fresh scenario
+  // still enters through the store's reset telemetry at 100%.
+  const hullHealth = useRef(initialCondition.hullHealth);
+  const engineHealth = useRef(initialCondition.engineHealth);
+  const engineTemperature = useRef(initialCondition.engineTemperature);
+  const rudderHealth = useRef(initialCondition.rudderHealth);
 
   const applyDamage = (event: VesselDamageEvent) => {
     const nextHealth = applyVesselDamage(
@@ -272,8 +299,23 @@ export default function Boat() {
 
   useEffect(() => {
     let cancelled = false;
-    collisionTestEnabled.current =
-      new URLSearchParams(window.location.search).get('collisionTest') === '1';
+    const searchParams = new URLSearchParams(window.location.search);
+    collisionTestEnabled.current = searchParams.get('collisionTest') === '1';
+    repairTestEnabled.current = searchParams.get('repairTest') === '1';
+
+    const repairTestStore = useSimStore.getState();
+    if (
+      repairTestEnabled.current &&
+      repairTestStore.hullHealth >= 99.9 &&
+      repairTestStore.engineHealth >= 99.9 &&
+      repairTestStore.rudderHealth >= 99.9
+    ) {
+      hullHealth.current = 72;
+      engineHealth.current = 35;
+      rudderHealth.current = 42;
+      engineTemperature.current = 78;
+      repairTestStore.setTelemetry(0, 0, 72, 35, 78, 42);
+    }
 
     sharedPhysics.collisionReady = 0;
     sharedPhysics.collisionSequence = 0;
@@ -329,6 +371,7 @@ export default function Boat() {
       resetVesselTrigger,
       setTelemetry,
       setFloodingTelemetry,
+      setFieldRepairTelemetry,
     } = useSimStore.getState();
 
     const vessel = getVesselConfig(activeBoat);
@@ -365,18 +408,26 @@ export default function Boat() {
     const currentSpeedKnots =
       Math.hypot(body.linearVelocity.x, body.linearVelocity.z) /
       0.514444;
-    const activePump =
+    const propulsionInputActive =
+      keys.w ||
+      keys.s ||
+      keys.arrowup ||
+      keys.arrowdown;
+    const activeFieldRepair =
       !calibration &&
-      keys.r &&
-      currentSpeedKnots < 2 &&
-      Math.abs(thrustRaw) < 0.1;
+      isFieldRepairEligible({
+        requested: keys.r,
+        speedKnots: currentSpeedKnots,
+        throttle: thrustRaw,
+        propulsionInputActive,
+      });
     const floodingResult = floodingModel.current.step({
       vessel,
       deltaSeconds: dt,
       hullHealth: calibration ? 100 : hullHealth.current,
       engineHealth: engineHealth.current,
       compartmentExposure: previousCompartmentExposure.current,
-      activePump,
+      activePump: activeFieldRepair,
       winterFactor: calibration ? 0 : isWinter,
     });
 
@@ -1052,21 +1103,6 @@ export default function Boat() {
       forwardDir.z,
     );
 
-    if (!calibration) {
-      sharedMissionRuntimeStatistics.advance({
-        runId: scenarioRunId,
-        vesselGeneration: resetVesselTrigger,
-        enabled:
-          canAdvanceAuthoritativeSimulation(sessionPhase) &&
-          scenarioRunStatus === 'active' &&
-          useNavigationPlanner.getState().mode === 'mission',
-        deltaSeconds: dt,
-        boatX: body.position.x,
-        boatZ: body.position.z,
-        speedKnots,
-      });
-    }
-
     const calibrationResult = calibration?.recordStep(time, {
       body,
       submergedRatio,
@@ -1173,16 +1209,49 @@ export default function Boat() {
     // only through the explicit impact, slamming, hazard, flooding, and
     // overheating paths above.
     
-    // --- Phase 5: Active Repair / Bilge Mechanics ---
-    if (activePump) {
-        hullHealth.current = Math.min(100, hullHealth.current + 8.0 * dt);
-        engineHealth.current = Math.min(100, engineHealth.current + 12.0 * dt);
-        rudderHealth.current = Math.min(100, rudderHealth.current + 15.0 * dt);
-        
-        // The compartment model performs the actual active pump-down. Repair
-        // also cools the stopped engine and reduces breach severity over time.
-        engineTemperature.current = Math.max(20, engineTemperature.current - 5.0 * dt);
-    }
+    // --- Bilge pump and limited emergency field repair ---
+    const repairStatisticsBeforeStep =
+      sharedMissionRuntimeStatistics.snapshot;
+    const repairUsageMatchesRun =
+      repairStatisticsBeforeStep.runId === scenarioRunId;
+    const fieldRepairResult = applyFieldRepairStep({
+      active: activeFieldRepair,
+      deltaSeconds: dt,
+      hullHealth: hullHealth.current,
+      engineHealth: engineHealth.current,
+      rudderHealth: rudderHealth.current,
+      engineTemperatureC: engineTemperature.current,
+      engineConditionRestoredThisRun: repairUsageMatchesRun
+        ? repairStatisticsBeforeStep.engineConditionRestored
+        : 0,
+      rudderConditionRestoredThisRun: repairUsageMatchesRun
+        ? repairStatisticsBeforeStep.rudderConditionRestored
+        : 0,
+    });
+    hullHealth.current = fieldRepairResult.hullHealth;
+    engineHealth.current = fieldRepairResult.engineHealth;
+    rudderHealth.current = fieldRepairResult.rudderHealth;
+    engineTemperature.current = fieldRepairResult.engineTemperatureC;
+
+    const missionStatistics = !calibration
+      ? sharedMissionRuntimeStatistics.advance({
+          runId: scenarioRunId,
+          vesselGeneration: resetVesselTrigger,
+          enabled:
+            canAdvanceAuthoritativeSimulation(sessionPhase) &&
+            scenarioRunStatus === 'active' &&
+            useNavigationPlanner.getState().mode === 'mission',
+          deltaSeconds: dt,
+          boatX: body.position.x,
+          boatZ: body.position.z,
+          speedKnots,
+          repairActive: activeFieldRepair,
+          engineConditionRestored:
+            fieldRepairResult.engineConditionRestored,
+          rudderConditionRestored:
+            fieldRepairResult.rudderConditionRestored,
+        })
+      : sharedMissionRuntimeStatistics.snapshot;
 
     // Publish telemetry at a deterministic 10 Hz, independent of render FPS.
     if (!calibration) {
@@ -1201,6 +1270,16 @@ export default function Boat() {
           floodingResult.floodingRatio,
           floodingResult.totalFloodedVolumeM3,
         );
+        setFieldRepairTelemetry({
+          active: activeFieldRepair,
+          activeSeconds: missionStatistics.repairActiveSeconds,
+          activationCount: missionStatistics.repairActivationCount,
+          engineConditionRestored:
+            missionStatistics.engineConditionRestored,
+          rudderConditionRestored:
+            missionStatistics.rudderConditionRestored,
+          penaltyPoints: calculateFieldRepairPenalty(missionStatistics),
+        });
       }
     }
 

@@ -6,6 +6,9 @@ export interface MissionRuntimeStatisticsStep {
   boatX: number;
   boatZ: number;
   speedKnots: number;
+  repairActive?: boolean;
+  engineConditionRestored?: number;
+  rudderConditionRestored?: number;
 }
 
 export interface MissionRuntimeStatisticsSnapshot {
@@ -15,6 +18,10 @@ export interface MissionRuntimeStatisticsSnapshot {
   distanceTravelledM: number;
   maximumSpeedKnots: number;
   fixedStepCount: number;
+  repairActiveSeconds: number;
+  repairActivationCount: number;
+  engineConditionRestored: number;
+  rudderConditionRestored: number;
 }
 
 export const DEFAULT_MAXIMUM_MISSION_SAMPLE_DISTANCE_M = 60;
@@ -23,14 +30,18 @@ function normalizeIdentity(value: number) {
   return Number.isFinite(value) ? Math.trunc(value) : -1;
 }
 
+function finiteNonNegative(value: number | undefined) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, value)
+    : 0;
+}
+
 /**
- * Fixed-step authority for scored mission time and travelled distance.
+ * Fixed-step authority for scored mission movement and repair use.
  *
- * The tracker is shared across vessel remounts. A new scenario run
- * resets every statistic, while a vessel recovery generation only
- * reanchors the position sample so a teleport cannot become distance.
- * Disabled steps also reanchor without advancing mission time, which
- * keeps free-navigation and non-running frames out of scored results.
+ * A new scenario run resets every statistic. Vessel recovery only
+ * reanchors position and repair activation state, preserving elapsed
+ * time, travelled distance, and already-consumed repair allowance.
  */
 export class MissionRuntimeStatistics {
   private readonly state: MissionRuntimeStatisticsSnapshot = {
@@ -40,10 +51,15 @@ export class MissionRuntimeStatistics {
     distanceTravelledM: 0,
     maximumSpeedKnots: 0,
     fixedStepCount: 0,
+    repairActiveSeconds: 0,
+    repairActivationCount: 0,
+    engineConditionRestored: 0,
+    rudderConditionRestored: 0,
   };
   private previousBoatX = 0;
   private previousBoatZ = 0;
   private hasPreviousPosition = false;
+  private repairWasActive = false;
   readonly maximumSampleDistanceM: number;
 
   constructor(
@@ -68,12 +84,16 @@ export class MissionRuntimeStatistics {
     boatZ = Number.NaN,
   ) {
     this.state.runId = normalizeIdentity(runId);
-    this.state.vesselGeneration =
-      normalizeIdentity(vesselGeneration);
+    this.state.vesselGeneration = normalizeIdentity(vesselGeneration);
     this.state.elapsedSeconds = 0;
     this.state.distanceTravelledM = 0;
     this.state.maximumSpeedKnots = 0;
     this.state.fixedStepCount = 0;
+    this.state.repairActiveSeconds = 0;
+    this.state.repairActivationCount = 0;
+    this.state.engineConditionRestored = 0;
+    this.state.rudderConditionRestored = 0;
+    this.repairWasActive = false;
     this.reanchor(boatX, boatZ);
     return this.state;
   }
@@ -97,13 +117,13 @@ export class MissionRuntimeStatistics {
       this.state.vesselGeneration !== vesselGeneration
     ) {
       this.state.vesselGeneration = vesselGeneration;
+      this.repairWasActive = false;
       this.reanchor(step.boatX, step.boatZ);
     }
 
-    const deltaSeconds = Number.isFinite(step.deltaSeconds)
-      ? Math.max(0, step.deltaSeconds)
-      : 0;
+    const deltaSeconds = finiteNonNegative(step.deltaSeconds);
     if (!step.enabled || deltaSeconds <= 0) {
+      this.repairWasActive = false;
       this.reanchor(step.boatX, step.boatZ);
       return this.state;
     }
@@ -116,6 +136,21 @@ export class MissionRuntimeStatistics {
         Math.abs(step.speedKnots),
       );
     }
+
+    const repairActive = step.repairActive === true;
+    if (repairActive) {
+      this.state.repairActiveSeconds += deltaSeconds;
+      if (!this.repairWasActive) {
+        this.state.repairActivationCount += 1;
+      }
+    }
+    this.repairWasActive = repairActive;
+    this.state.engineConditionRestored += finiteNonNegative(
+      step.engineConditionRestored,
+    );
+    this.state.rudderConditionRestored += finiteNonNegative(
+      step.rudderConditionRestored,
+    );
 
     if (
       Number.isFinite(step.boatX) &&
