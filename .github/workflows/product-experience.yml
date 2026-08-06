@@ -255,6 +255,20 @@ jobs:
               1,
           )
 
+          flooding_import_anchor = (
+              "              \"} from '@/sim/vessels/VesselConfig';\\nimport { FIELD_REPAIR_LIMITS } from '@/sim/vessels/FieldRepairPolicy';\\n\",\n"
+          )
+          flooding_import_replacement = (
+              "              \"} from '@/sim/vessels/VesselConfig';\\nimport { FIELD_REPAIR_LIMITS } from './FieldRepairPolicy.ts';\\n\",\n"
+          )
+          if source.count(flooding_import_anchor) != 1:
+              raise SystemExit('Unable to locate FloodingModel repair-policy import.')
+          source = source.replace(
+              flooding_import_anchor,
+              flooding_import_replacement,
+              1,
+          )
+
           start_marker = "          python - <<'PY'\n"
           end_marker = "\n          PY\n\n      - name: Set up Node.js"
           start = source.index(start_marker) + len(start_marker)
