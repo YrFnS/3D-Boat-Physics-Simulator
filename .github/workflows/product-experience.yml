@@ -193,54 +193,58 @@ jobs:
           path = Path('scripts/product-experience-smoke.mjs')
           source = path.read_text(encoding='utf-8')
 
-          old_capture = """      await waitForDataset(page, 'simSessionPhase', 'running');
-      const conditionBeforeRecovery =
-        await readExperienceState(page);
-"""
-          new_capture = """      await waitForDataset(page, 'simSessionPhase', 'running');
-      await waitForDataset(page, 'simFieldRepairActive', '0');
-      // Health telemetry publishes at 10 Hz. Let the final pre-pause repair
-      // step settle before capturing the condition that recovery must preserve.
-      await page.waitForTimeout(350);
-      const conditionBeforeRecovery =
-        await readExperienceState(page);
-"""
+          old_capture = (
+              "      await waitForDataset(page, 'simSessionPhase', 'running');\n"
+              "      const conditionBeforeRecovery =\n"
+              "        await readExperienceState(page);\n"
+          )
+          new_capture = (
+              "      await waitForDataset(page, 'simSessionPhase', 'running');\n"
+              "      await waitForDataset(page, 'simFieldRepairActive', '0');\n"
+              "      // Health telemetry publishes at 10 Hz. Let the final pre-pause repair\n"
+              "      // step settle before capturing the condition that recovery must preserve.\n"
+              "      await page.waitForTimeout(350);\n"
+              "      const conditionBeforeRecovery =\n"
+              "        await readExperienceState(page);\n"
+          )
           if old_capture in source:
               source = source.replace(old_capture, new_capture, 1)
           elif new_capture not in source:
               raise SystemExit('Unable to locate pre-recovery snapshot block.')
 
-          old_assertion = """      checks.recoveryPreservesCondition =
-        Math.abs(
-          recovered.hullHealth - conditionBeforeRecovery.hullHealth,
-        ) < 0.25 &&
-        Math.abs(
-          recovered.engineHealth - conditionBeforeRecovery.engineHealth,
-        ) < 0.25 &&
-        Math.abs(
-          recovered.rudderHealth - conditionBeforeRecovery.rudderHealth,
-        ) < 0.25 &&
-        recovered.fieldRepairPenaltyPoints ===
-          conditionBeforeRecovery.fieldRepairPenaltyPoints;
-"""
-          new_assertion = """      checks.recoveryPreservesCondition =
-        // Recovery may republish condition on a different 10 Hz telemetry
-        // boundary, but it must never erase meaningful damage or repair cost.
-        recovered.hullHealth < 90 &&
-        recovered.engineHealth < 60 &&
-        recovered.rudderHealth < 70 &&
-        Math.abs(
-          recovered.hullHealth - conditionBeforeRecovery.hullHealth,
-        ) < 0.75 &&
-        Math.abs(
-          recovered.engineHealth - conditionBeforeRecovery.engineHealth,
-        ) < 0.75 &&
-        Math.abs(
-          recovered.rudderHealth - conditionBeforeRecovery.rudderHealth,
-        ) < 0.75 &&
-        recovered.fieldRepairPenaltyPoints ===
-          conditionBeforeRecovery.fieldRepairPenaltyPoints;
-"""
+          old_assertion = (
+              "      checks.recoveryPreservesCondition =\n"
+              "        Math.abs(\n"
+              "          recovered.hullHealth - conditionBeforeRecovery.hullHealth,\n"
+              "        ) < 0.25 &&\n"
+              "        Math.abs(\n"
+              "          recovered.engineHealth - conditionBeforeRecovery.engineHealth,\n"
+              "        ) < 0.25 &&\n"
+              "        Math.abs(\n"
+              "          recovered.rudderHealth - conditionBeforeRecovery.rudderHealth,\n"
+              "        ) < 0.25 &&\n"
+              "        recovered.fieldRepairPenaltyPoints ===\n"
+              "          conditionBeforeRecovery.fieldRepairPenaltyPoints;\n"
+          )
+          new_assertion = (
+              "      checks.recoveryPreservesCondition =\n"
+              "        // Recovery may republish condition on a different 10 Hz telemetry\n"
+              "        // boundary, but it must never erase meaningful damage or repair cost.\n"
+              "        recovered.hullHealth < 90 &&\n"
+              "        recovered.engineHealth < 60 &&\n"
+              "        recovered.rudderHealth < 70 &&\n"
+              "        Math.abs(\n"
+              "          recovered.hullHealth - conditionBeforeRecovery.hullHealth,\n"
+              "        ) < 0.75 &&\n"
+              "        Math.abs(\n"
+              "          recovered.engineHealth - conditionBeforeRecovery.engineHealth,\n"
+              "        ) < 0.75 &&\n"
+              "        Math.abs(\n"
+              "          recovered.rudderHealth - conditionBeforeRecovery.rudderHealth,\n"
+              "        ) < 0.75 &&\n"
+              "        recovered.fieldRepairPenaltyPoints ===\n"
+              "          conditionBeforeRecovery.fieldRepairPenaltyPoints;\n"
+          )
           if old_assertion in source:
               source = source.replace(old_assertion, new_assertion, 1)
           elif new_assertion not in source:
