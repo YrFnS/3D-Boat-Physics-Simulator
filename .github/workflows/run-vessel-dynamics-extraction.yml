@@ -51,6 +51,39 @@ jobs:
           exec(compile(staged_script, '<dynamics-extraction>', 'exec'))
           PY
 
+      - name: Normalize Node-compatible dynamics imports
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              'sim/vessels/EnvironmentalForces.ts': {
+                  "@/sim/core/SixDofBody": "../core/SixDofBody.ts",
+                  "@/sim/core/SeededRandom": "../core/SeededRandom.ts",
+                  "@/sim/vessels/VesselConfig": "./VesselConfig.ts",
+                  "@/sim/vessels/PhysicsCorrectness": "./PhysicsCorrectness.ts",
+              },
+              'sim/vessels/SectionalHydrostatics.ts': {
+                  "@/sim/core/SixDofBody": "../core/SixDofBody.ts",
+                  "@/sim/vessels/VesselConfig": "./VesselConfig.ts",
+                  "@/sim/water/WaterSurface": "../water/WaterSurface.ts",
+                  "@/sim/vessels/HydrostaticsMath": "./HydrostaticsMath.ts",
+              },
+          }
+
+          for file_name, file_replacements in replacements.items():
+              path = Path(file_name)
+              source = path.read_text(encoding='utf-8')
+              for old, new in file_replacements.items():
+                  if old not in source:
+                      raise SystemExit(
+                          f'{file_name}: missing expected import {old}'
+                      )
+                  source = source.replace(old, new)
+              path.write_text(source, encoding='utf-8')
+          PY
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
