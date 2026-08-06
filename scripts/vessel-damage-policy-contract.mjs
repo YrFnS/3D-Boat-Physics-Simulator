@@ -74,8 +74,15 @@ const conditionRuntimeSource = await fs.readFile(
   ),
   'utf8',
 );
+const collisionRuntimeSource = await fs.readFile(
+  new URL(
+    '../sim/collision/VesselCollisionRuntime.ts',
+    import.meta.url,
+  ),
+  'utf8',
+);
 const integratedDamageSource =
-  `${boatSource}\n${conditionRuntimeSource}`;
+  `${boatSource}\n${conditionRuntimeSource}\n${collisionRuntimeSource}`;
 
 assert.match(
   conditionRuntimeSource,

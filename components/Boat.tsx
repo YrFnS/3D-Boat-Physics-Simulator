@@ -38,6 +38,7 @@ import {
   waterRelativeSurgeSpeed,
 } from '@/sim/vessels/PhysicsCorrectness';
 import { RapierCollisionWorld } from '@/sim/collision/RapierCollisionWorld';
+import { VesselCollisionRuntime } from '@/sim/collision/VesselCollisionRuntime';
 import { sharedMissionRuntimeStatistics } from '@/sim/scenarios/MissionRuntimeStatistics';
 import { useNavigationPlanner } from '@/store/useNavigationPlanner';
 import {
@@ -68,10 +69,9 @@ export default function Boat() {
   const addedInertia = useRef<[number, number, number]>([0, 0, 0]);
   const environmentalForces = useRef(new EnvironmentalForces());
   const rapierCollisionWorld = useRef<RapierCollisionWorld | null>(null);
+  const collisionRuntime = useRef(new VesselCollisionRuntime());
   const collisionTestEnabled = useRef(false);
   const repairTestEnabled = useRef(false);
-  const lastTerrainImpactTime = useRef(Number.NEGATIVE_INFINITY);
-  const lastObstacleImpactTime = useRef(Number.NEGATIVE_INFINITY);
   const previousPosition = useRef(new Vector3());
   const currentPosition = useRef(new Vector3());
   const previousQuaternion = useRef(new Quaternion());
@@ -279,6 +279,7 @@ export default function Boat() {
 
   useEffect(() => {
     let cancelled = false;
+    const activeCollisionRuntime = collisionRuntime.current;
     const searchParams = new URLSearchParams(window.location.search);
     collisionTestEnabled.current = searchParams.get('collisionTest') === '1';
     repairTestEnabled.current = searchParams.get('repairTest') === '1';
@@ -299,14 +300,7 @@ export default function Boat() {
       repairTestStore.setTelemetry(0, 0, 72, 35, 78, 42);
     }
 
-    sharedPhysics.collisionReady = 0;
-    sharedPhysics.collisionSequence = 0;
-    sharedPhysics.terrainCollisionSequence = 0;
-    sharedPhysics.obstacleCollisionSequence = 0;
-    sharedPhysics.debugProbeCollisionSequence = 0;
-    sharedPhysics.collisionMaxImpactSpeed = 0;
-    sharedPhysics.collisionMaxImpulse = 0;
-    sharedPhysics.collisionMaxPenetration = 0;
+    activeCollisionRuntime.reset(sharedPhysics);
 
     void RapierCollisionWorld.create()
       .then((collisionWorld) => {
@@ -315,7 +309,7 @@ export default function Boat() {
           return;
         }
         rapierCollisionWorld.current = collisionWorld;
-        sharedPhysics.collisionReady = 1;
+        activeCollisionRuntime.setReady(sharedPhysics, true);
       })
       .catch((error: unknown) => {
         console.error('Failed to initialize Rapier collision world.', error);
@@ -325,7 +319,7 @@ export default function Boat() {
       cancelled = true;
       rapierCollisionWorld.current?.dispose();
       rapierCollisionWorld.current = null;
-      sharedPhysics.collisionReady = 0;
+      activeCollisionRuntime.setReady(sharedPhysics, false);
     };
   }, []);
 
@@ -946,125 +940,23 @@ export default function Boat() {
     // and validate the authoritative post-solve state.
     body.enforceMotionLimits(motionLimits.current);
 
-    if (collisionSummary) {
-      sharedPhysics.collisionReady = 1;
-      sharedPhysics.collisionMaxImpactSpeed = Math.max(
-        sharedPhysics.collisionMaxImpactSpeed,
-        collisionSummary.maxTerrainImpactSpeedMps,
-        collisionSummary.maxObstacleImpactSpeedMps,
-      );
-      sharedPhysics.collisionMaxImpulse = Math.max(
-        sharedPhysics.collisionMaxImpulse,
-        collisionSummary.maxTerrainImpulseNs,
-        collisionSummary.maxObstacleImpulseNs,
-      );
-      sharedPhysics.collisionMaxPenetration = Math.max(
-        sharedPhysics.collisionMaxPenetration,
-        collisionSummary.maxPenetrationM,
-      );
 
-      // Gameplay and mission scoring count external contact starts.
-      // Raw manifold points remain available on the collision summary for
-      // calibration and impact diagnostics, but cannot multiply one sustained
-      // grounding into a collision every fixed step.
-      if (collisionSummary.contactStartCount > 0) {
-        sharedPhysics.collisionSequence +=
-          collisionSummary.contactStartCount;
-      }
-      if (collisionSummary.terrainContactStartCount > 0) {
-        sharedPhysics.terrainCollisionSequence +=
-          collisionSummary.terrainContactStartCount;
-      }
-      if (collisionSummary.obstacleContactStartCount > 0) {
-        sharedPhysics.obstacleCollisionSequence +=
-          collisionSummary.obstacleContactStartCount;
-      }
-      if (collisionSummary.debugProbeContactStartCount > 0) {
-        sharedPhysics.debugProbeCollisionSequence +=
-          collisionSummary.debugProbeContactStartCount;
-      }
-
-      const terrainImpact = collisionSummary.maxTerrainImpactSpeedMps;
-      if (
-        terrainImpact > 1.8 &&
-        time - lastTerrainImpactTime.current >= 0.25
-      ) {
-        lastTerrainImpactTime.current = time;
-        const normalizedImpulse =
-          collisionSummary.maxTerrainImpulseNs / mass;
-        const severity = terrainImpact - 1.8;
-        const damage = Math.min(
-          24,
-          severity * 3.6 + normalizedImpulse * 0.42,
-        );
-        conditionRuntime.current.applyDamage({
-          source: 'terrain-impact',
-          hullDamage: damage,
-          engineDamage: severity > 2.5 ? damage * 0.22 : 0,
-          rudderDamage: severity > 2.5 ? damage * 0.32 : 0,
-        });
-        floodingModel.current.registerBreach(
-          vessel,
-          vRelForward >= 0
-            ? 'bow'
-            : vessel.type === 'trawler'
-              ? 'machinery'
-              : 'engine',
-          MathUtils.clamp(damage / 180, 0, 0.2),
-        );
-        audio.playImpact(terrainImpact, 'terrain');
-      }
-
-      const obstacleImpact = collisionSummary.maxObstacleImpactSpeedMps;
-      if (
-        obstacleImpact > 0.65 &&
-        time - lastObstacleImpactTime.current >= 0.2
-      ) {
-        lastObstacleImpactTime.current = time;
-        const normalizedImpulse =
-          collisionSummary.maxObstacleImpulseNs / mass;
-        const severity = obstacleImpact - 0.65;
-        const headOnFactor =
-          collisionSummary.maxObstacleHeadOnFactor;
-        const damage = Math.min(
-          28,
-          severity * 1.75 + normalizedImpulse * 0.28,
-        );
-        const glancingFactor = 1 - headOnFactor;
-        const glancingRudderStrike =
-          severity > 2.1 &&
-          glancingFactor > 0.3 &&
-          normalizedImpulse > 1;
-        conditionRuntime.current.applyDamage({
-          source: 'obstacle-impact',
-          hullDamage: damage,
-          engineDamage:
-            severity > 4 && headOnFactor > 0.35
-              ? damage * 0.18 * headOnFactor
-              : 0,
-          rudderDamage:
-            severity > 2.5 || glancingRudderStrike
-              ? damage * 0.2 * (1 - headOnFactor * 0.35)
-              : 0,
-        });
-        const impactCompartment =
-          headOnFactor > 0.45
-            ? 'bow'
-            : vessel.type === 'trawler'
-              ? simulationRandom.current.next() < 0.5
-                ? 'port'
-                : 'starboard'
-              : simulationRandom.current.next() < 0.5
-                ? 'cockpit-port'
-                : 'cockpit-starboard';
-        floodingModel.current.registerBreach(
-          vessel,
-          impactCompartment,
-          MathUtils.clamp(damage / 200, 0, 0.18),
-        );
-        audio.playImpact(obstacleImpact, 'obstacle');
-      }
-    }
+if (collisionSummary) {
+  collisionRuntime.current.process({
+    summary: collisionSummary,
+    scenarioRunId,
+    vesselGeneration: resetVesselTrigger,
+    simulationTimeSeconds: time,
+    effectiveMassKg: mass,
+    forwardWaterRelativeSpeedMps: vRelForward,
+    vessel,
+    condition: conditionRuntime.current,
+    flooding: floodingModel.current,
+    telemetry: sharedPhysics,
+    random: simulationRandom.current,
+    audio,
+  });
+}
 
     forwardDir.set(0, 0, -1).applyQuaternion(body.quaternion);
     forwardDir.y = 0;

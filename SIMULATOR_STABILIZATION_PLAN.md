@@ -50,7 +50,7 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
 
 - [ ] Split vessel runtime, physics, collision, damage, telemetry, audio, and rendering responsibilities out of `Boat.tsx`.
       - [x] Extract component condition, engine thermal/flooding damage, and field-repair mutation into `VesselConditionRuntime`.
-      - [ ] Extract collision response and impact orchestration.
+      - [x] Extract Rapier contact-summary response, impact damage, breach selection, collision telemetry, and impact-audio orchestration into `VesselCollisionRuntime`.
       - [ ] Extract propulsion, steering, and hydrodynamic force orchestration.
       - [ ] Extract telemetry/audio publication and move vessel meshes into dedicated render components.
 - [ ] Version obstacle data and synchronize Rapier colliders only when obstacle state changes.

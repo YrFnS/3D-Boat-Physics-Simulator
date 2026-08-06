@@ -131,6 +131,13 @@ const boatSource = await fs.readFile(
   new URL('../components/Boat.tsx', import.meta.url),
   'utf8',
 );
+const collisionRuntimeSource = await fs.readFile(
+  new URL(
+    '../sim/collision/VesselCollisionRuntime.ts',
+    import.meta.url,
+  ),
+  'utf8',
+);
 const calibrationSource = await fs.readFile(
   new URL(
     '../sim/calibration/CollisionCalibration.ts',
@@ -150,13 +157,18 @@ assert.match(
   'Rapier contact pairs must feed the lifecycle tracker every step.',
 );
 assert.match(
-  boatSource,
-  /collisionSummary\.contactStartCount/,
+  collisionRuntimeSource,
+  /summary\.contactStartCount/,
   'Gameplay sequences must consume contact-start events.',
 );
-assert.doesNotMatch(
+assert.match(
   boatSource,
-  /collisionSequence \+= collisionSummary\.contactCount/,
+  /collisionRuntime\.current\.process\(\{/,
+  'Boat must delegate lifecycle consumption to collision runtime.',
+);
+assert.doesNotMatch(
+  `${boatSource}\n${collisionRuntimeSource}`,
+  /collisionSequence \+= (?:collisionSummary|summary)\.contactCount/,
   'Gameplay scoring must not accumulate raw contact points.',
 );
 assert.match(
