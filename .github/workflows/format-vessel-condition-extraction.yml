@@ -36,70 +36,57 @@ jobs:
           path = Path('components/Boat.tsx')
           source = path.read_text(encoding='utf-8')
 
-          old = """    // --- Component temperature and explicit condition damage ---
-          conditionRuntime.current.stepThermalAndFlooding({
-            deltaSeconds: dt,
-            engineRpm: propulsionResult.engineRpm,
-            ratedEngineRpm: vessel.engine.ratedRpm,
-            absorbedShaftPowerW: propulsionResult.absorbedShaftPowerW,
-            ratedEnginePowerW: vessel.engine.ratedPowerW,
-            ventilationFactor: propulsionResult.ventilationFactor,
-            submergedRatio,
-            engineCompartmentFloodingRatio:
-              floodingResult.engineCompartmentFloodingRatio,
-            simulationTimeSeconds: time,
-          });
+          thermal_start_marker = (
+              '    // --- Component temperature and explicit condition damage ---\n'
+          )
+          thermal_end_marker = (
+              '    // --- Bilge pump and limited emergency field repair ---\n'
+          )
+          if source.count(thermal_start_marker) != 1:
+              raise SystemExit('Unable to locate thermal condition start marker.')
+          thermal_start = source.index(thermal_start_marker)
+          thermal_end = source.index(thermal_end_marker, thermal_start)
+          thermal_block = (
+              '    // --- Component temperature and explicit condition damage ---\n'
+              '    conditionRuntime.current.stepThermalAndFlooding({\n'
+              '      deltaSeconds: dt,\n'
+              '      engineRpm: propulsionResult.engineRpm,\n'
+              '      ratedEngineRpm: vessel.engine.ratedRpm,\n'
+              '      absorbedShaftPowerW: propulsionResult.absorbedShaftPowerW,\n'
+              '      ratedEnginePowerW: vessel.engine.ratedPowerW,\n'
+              '      ventilationFactor: propulsionResult.ventilationFactor,\n'
+              '      submergedRatio,\n'
+              '      engineCompartmentFloodingRatio:\n'
+              '        floodingResult.engineCompartmentFloodingRatio,\n'
+              '      simulationTimeSeconds: time,\n'
+              '    });\n\n'
+          )
+          source = (
+              source[:thermal_start]
+              + thermal_block
+              + source[thermal_end:]
+          )
 
-          """
-          new = """    // --- Component temperature and explicit condition damage ---
-              conditionRuntime.current.stepThermalAndFlooding({
-                deltaSeconds: dt,
-                engineRpm: propulsionResult.engineRpm,
-                ratedEngineRpm: vessel.engine.ratedRpm,
-                absorbedShaftPowerW: propulsionResult.absorbedShaftPowerW,
-                ratedEnginePowerW: vessel.engine.ratedPowerW,
-                ventilationFactor: propulsionResult.ventilationFactor,
-                submergedRatio,
-                engineCompartmentFloodingRatio:
-                  floodingResult.engineCompartmentFloodingRatio,
-                simulationTimeSeconds: time,
-              });
-
-          """
-          if source.count(old) != 1:
-              raise SystemExit('Unable to locate thermal condition block.')
-          source = source.replace(old, new, 1)
-
-          old = """    const fieldRepairResult =
-              conditionRuntime.current.applyFieldRepair({
-                active: activeFieldRepair,
-                deltaSeconds: dt,
-                engineConditionRestoredThisRun: repairUsageMatchesRun
-                  ? repairStatisticsBeforeStep.engineConditionRestored
-                  : 0,
-                rudderConditionRestoredThisRun: repairUsageMatchesRun
-                  ? repairStatisticsBeforeStep.rudderConditionRestored
-                  : 0,
-              });
-
-
-              const missionStatistics"""
-          new = """    const fieldRepairResult =
-              conditionRuntime.current.applyFieldRepair({
-                active: activeFieldRepair,
-                deltaSeconds: dt,
-                engineConditionRestoredThisRun: repairUsageMatchesRun
-                  ? repairStatisticsBeforeStep.engineConditionRestored
-                  : 0,
-                rudderConditionRestoredThisRun: repairUsageMatchesRun
-                  ? repairStatisticsBeforeStep.rudderConditionRestored
-                  : 0,
-              });
-
-              const missionStatistics"""
-          if source.count(old) != 1:
-              raise SystemExit('Unable to locate field-repair orchestration block.')
-          source = source.replace(old, new, 1)
+          repair_start_marker = '    const fieldRepairResult =\n'
+          repair_end_marker = '    const missionStatistics'
+          if source.count(repair_start_marker) != 1:
+              raise SystemExit('Unable to locate field-repair start marker.')
+          repair_start = source.index(repair_start_marker)
+          repair_end = source.index(repair_end_marker, repair_start)
+          repair_block = (
+              '    const fieldRepairResult =\n'
+              '      conditionRuntime.current.applyFieldRepair({\n'
+              '        active: activeFieldRepair,\n'
+              '        deltaSeconds: dt,\n'
+              '        engineConditionRestoredThisRun: repairUsageMatchesRun\n'
+              '          ? repairStatisticsBeforeStep.engineConditionRestored\n'
+              '          : 0,\n'
+              '        rudderConditionRestoredThisRun: repairUsageMatchesRun\n'
+              '          ? repairStatisticsBeforeStep.rudderConditionRestored\n'
+              '          : 0,\n'
+              '      });\n\n'
+          )
+          source = source[:repair_start] + repair_block + source[repair_end:]
 
           path.write_text(source, encoding='utf-8')
           PY
