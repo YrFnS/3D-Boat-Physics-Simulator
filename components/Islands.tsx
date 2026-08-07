@@ -7,10 +7,14 @@ import {
   Color,
   Mesh,
   MeshStandardMaterial,
-  PlaneGeometry,
+  BufferGeometry,
   Vector3,
 } from 'three';
-import { getTerrainHeight } from '@/lib/terrain';
+import {
+  getSharedTerrainHeightfield,
+  sampleTerrainHeightfield,
+} from '@/sim/terrain/TerrainHeightfield';
+import { setWorldVectorFromHeading } from '@/sim/world/WorldDirection';
 import {
   type RenderQuality,
   sharedPhysics,
@@ -18,8 +22,6 @@ import {
 } from '@/store/useSimStore';
 
 interface IslandQualityConfig {
-  segments: number;
-  snowDisplacement: number;
   snowDetail: number;
   receiveShadow: boolean;
   castTerrainShadows: boolean;
@@ -29,8 +31,6 @@ interface IslandQualityConfig {
 
 const QUALITY_CONFIG: Record<RenderQuality, IslandQualityConfig> = {
   low: {
-    segments: 80,
-    snowDisplacement: 0,
     snowDetail: 0.2,
     receiveShadow: false,
     castTerrainShadows: false,
@@ -38,8 +38,6 @@ const QUALITY_CONFIG: Record<RenderQuality, IslandQualityConfig> = {
     shaderUpdateHz: 12,
   },
   medium: {
-    segments: 128,
-    snowDisplacement: 1.25,
     snowDetail: 0.45,
     receiveShadow: true,
     castTerrainShadows: false,
@@ -47,8 +45,6 @@ const QUALITY_CONFIG: Record<RenderQuality, IslandQualityConfig> = {
     shaderUpdateHz: 20,
   },
   high: {
-    segments: 192,
-    snowDisplacement: 2.75,
     snowDetail: 0.75,
     receiveShadow: true,
     castTerrainShadows: true,
@@ -56,8 +52,6 @@ const QUALITY_CONFIG: Record<RenderQuality, IslandQualityConfig> = {
     shaderUpdateHz: 30,
   },
   ultra: {
-    segments: 256,
-    snowDisplacement: 4,
     snowDetail: 1,
     receiveShadow: true,
     castTerrainShadows: true,
@@ -76,32 +70,32 @@ const COLOR_SAND = new Color('#e1c699');
 const COLOR_GRASS = new Color('#4a7023');
 const COLOR_ROCK = new Color('#5a5a5a');
 const COLOR_SNOW = new Color('#ffffff');
-const TERRAIN_SIZE = 3000;
 
-function createTerrainGeometry(segments: number) {
-  const geometry = new PlaneGeometry(
-    TERRAIN_SIZE,
-    TERRAIN_SIZE,
-    segments,
-    segments,
+function createTerrainGeometry() {
+  const terrain = getSharedTerrainHeightfield();
+  const geometry = new BufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new BufferAttribute(terrain.vertices, 3),
   );
-  geometry.rotateX(-Math.PI / 2);
+  geometry.setIndex(new BufferAttribute(terrain.indices, 1));
 
   const positions = geometry.attributes.position;
   const colors = new Float32Array(positions.count * 3);
   const workingColor = new Color();
 
   for (let index = 0; index < positions.count; index += 1) {
-    const x = positions.getX(index);
-    const z = positions.getZ(index);
-    const height = getTerrainHeight(x, z);
-    positions.setY(index, height);
+    const height = positions.getY(index);
 
     if (height < 2) {
       workingColor.copy(COLOR_SAND);
     } else if (height < 20) {
       const factor = Math.min(1, ((height - 2) / 18) * 2);
-      workingColor.lerpColors(COLOR_SAND, COLOR_GRASS, factor);
+      workingColor.lerpColors(
+        COLOR_SAND,
+        COLOR_GRASS,
+        factor,
+      );
     } else if (height < 45) {
       workingColor.lerpColors(
         COLOR_GRASS,
@@ -122,7 +116,10 @@ function createTerrainGeometry(segments: number) {
     colors[colorOffset + 2] = workingColor.b;
   }
 
-  geometry.setAttribute('color', new BufferAttribute(colors, 3));
+  geometry.setAttribute(
+    'color',
+    new BufferAttribute(colors, 3),
+  );
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
   return geometry;
@@ -136,9 +133,6 @@ function configureIslandShader(
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uSeason = { value: 0 };
     shader.uniforms.uWindDir = { value: new Vector3(1, 0, 0) };
-    shader.uniforms.uSnowDisplacement = {
-      value: QUALITY_CONFIG[quality].snowDisplacement,
-    };
     shader.uniforms.uSnowDetail = {
       value: QUALITY_CONFIG[quality].snowDetail,
     };
@@ -146,7 +140,6 @@ function configureIslandShader(
     shader.vertexShader = `
       uniform float uSeason;
       uniform vec3 uWindDir;
-      uniform float uSnowDisplacement;
       uniform float uSnowDetail;
       varying vec3 vIslandWorldPosition;
       varying float vSnowAccumulation;
@@ -194,9 +187,7 @@ function configureIslandShader(
           1.0
         ) *
         (islandSnowNoise * 0.6 + islandMicroNoise * 0.4);
-      transformed +=
-        objectNormal *
-        (vSnowAccumulation * uSnowDisplacement);`,
+`,
     );
 
     shader.vertexShader = shader.vertexShader.replace(
@@ -271,13 +262,13 @@ function configureIslandShader(
 }
 
 function hasNearbyLand(centerX: number, centerZ: number, radius: number) {
-  if (getTerrainHeight(centerX, centerZ) > -10) return true;
+  if (sampleTerrainHeightfield(centerX, centerZ) > -10) return true;
 
   for (let index = 0; index < 8; index += 1) {
     const angle = (index / 8) * Math.PI * 2;
     const x = centerX + Math.cos(angle) * radius;
     const z = centerZ + Math.sin(angle) * radius;
-    if (getTerrainHeight(x, z) > -10) return true;
+    if (sampleTerrainHeightfield(x, z) > -10) return true;
   }
 
   return false;
@@ -291,10 +282,7 @@ export default function Islands() {
   const renderQuality = useSimStore((state) => state.renderQuality);
   const config = QUALITY_CONFIG[renderQuality];
 
-  const geometry = useMemo(
-    () => createTerrainGeometry(config.segments),
-    [config.segments],
-  );
+  const geometry = useMemo(() => createTerrainGeometry(), []);
   const material = useMemo(() => {
     const nextMaterial = new MeshStandardMaterial({
       vertexColors: true,
@@ -331,15 +319,12 @@ export default function Islands() {
       const shader = shaderRef.current;
       if (shader) {
         shader.uniforms.uSeason.value = sharedPhysics.season;
-        shader.uniforms.uSnowDisplacement.value = config.snowDisplacement;
         shader.uniforms.uSnowDetail.value = config.snowDetail;
 
-        const windDirection = useSimStore.getState().windDir * (Math.PI / 180);
         const uniform = shader.uniforms.uWindDir.value as Vector3;
-        uniform.set(
-          Math.cos(windDirection),
-          0,
-          Math.sin(windDirection),
+        setWorldVectorFromHeading(
+          uniform,
+          useSimStore.getState().windDir,
         );
       }
     }

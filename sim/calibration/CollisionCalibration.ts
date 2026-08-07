@@ -183,6 +183,9 @@ export class CollisionCalibrationRunner {
   private contactCount = 0;
   private terrainContactCount = 0;
   private obstacleContactCount = 0;
+  private contactStartCount = 0;
+  private terrainContactStartCount = 0;
+  private obstacleContactStartCount = 0;
   private firstContactTimeSeconds: number | null = null;
   private lastContactTimeSeconds: number | null = null;
   private maximumImpactSpeedMps = 0;
@@ -274,6 +277,14 @@ export class CollisionCalibrationRunner {
 
     const collision = metrics.collisionSummary;
     const stepContactCount = collision?.contactCount ?? 0;
+    const stepContactStartCount = collision?.contactStartCount ?? 0;
+    if (stepContactStartCount > 0) {
+      this.contactStartCount += stepContactStartCount;
+      this.terrainContactStartCount +=
+        collision?.terrainContactStartCount ?? 0;
+      this.obstacleContactStartCount +=
+        collision?.obstacleContactStartCount ?? 0;
+    }
     if (stepContactCount > 0) {
       this.contactCount += stepContactCount;
       this.terrainContactCount += collision?.terrainContactCount ?? 0;
@@ -354,6 +365,10 @@ export class CollisionCalibrationRunner {
       collisionClassRecorded: expectedTerrain
         ? this.terrainContactCount > 0
         : this.obstacleContactCount > 0,
+      collisionEventRecorded: this.contactStartCount > 0,
+      collisionClassEventRecorded: expectedTerrain
+        ? this.terrainContactStartCount > 0
+        : this.obstacleContactStartCount > 0,
       impactSpeedWithinEnvelope: rangeContains(
         targets.impactSpeedMps,
         this.maximumImpactSpeedMps,

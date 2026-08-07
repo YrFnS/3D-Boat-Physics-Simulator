@@ -1,4 +1,5 @@
 import { Object3D, Quaternion, Vector3 } from 'three';
+import { headingDegreesToYawRadians } from '../world/WorldDirection.ts';
 
 const EPSILON = 1e-8;
 const MAX_ANGULAR_SPEED_RAD_PER_SECOND = Math.PI * 4;
@@ -135,7 +136,7 @@ export class SixDofBody extends Object3D {
       this.position.set(spawn.x, spawn.y, spawn.z);
       this.quaternion.setFromAxisAngle(
         WORLD_UP,
-        (-spawn.headingDeg * Math.PI) / 180,
+        headingDegreesToYawRadians(spawn.headingDeg),
       );
     }
     this.captureValidState();

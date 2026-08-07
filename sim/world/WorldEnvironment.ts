@@ -1,0 +1,15 @@
+export const WHIRLPOOL_BASIN_CENTER_X_M = -400;
+export const WHIRLPOOL_BASIN_CENTER_Z_M = -400;
+export const WHIRLPOOL_ORBIT_RADIUS_M = 20;
+export const WHIRLPOOL_MIN_ROUTE_DISTANCE_FROM_HAZARD_M = 230;
+export const WHIRLPOOL_ROUTE_CLEARANCE_RADIUS_M =
+  WHIRLPOOL_MIN_ROUTE_DISTANCE_FROM_HAZARD_M +
+  WHIRLPOOL_ORBIT_RADIUS_M;
+export const WHIRLPOOL_TERRAIN_CLEARANCE_RADIUS_M = 250;
+
+export function distanceToWhirlpoolBasinCenterM(x: number, z: number) {
+  return Math.hypot(
+    x - WHIRLPOOL_BASIN_CENTER_X_M,
+    z - WHIRLPOOL_BASIN_CENTER_Z_M,
+  );
+}

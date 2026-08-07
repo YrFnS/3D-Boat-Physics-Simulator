@@ -18,6 +18,8 @@ import {
   sharedPhysics,
   useSimStore,
 } from '@/store/useSimStore';
+import { canAdvanceAuthoritativeSimulation } from '@/sim/core/SimulationRuntimeAuthority';
+import { setWorldXZFromHeading } from '@/sim/world/WorldDirection';
 
 const MAX_RAIN = 12_000;
 
@@ -33,6 +35,7 @@ attribute vec4 aSeed;
 
 uniform float uTime;
 uniform float uStormIntensity;
+uniform float uSnowBlend;
 uniform vec3 uCameraPosition;
 uniform vec2 uWind;
 uniform float uArea;
@@ -64,7 +67,10 @@ void main() {
   }
 
   float randomSpeed = hash11(aSeed.x * 97.0 + aSeed.z * 211.0);
-  float fallSpeed = mix(16.0, 34.0, randomSpeed) * mix(1.0, 1.7, uStormIntensity);
+  float rainFallSpeed =
+    mix(16.0, 34.0, randomSpeed) * mix(1.0, 1.7, uStormIntensity);
+  float snowFallSpeed = mix(2.2, 6.5, randomSpeed);
+  float fallSpeed = mix(rainFallSpeed, snowFallSpeed, uSnowBlend);
   float cycle = mod(uTime * fallSpeed + aSeed.y * uHeight, uHeight);
   float localY = uHeight * 0.5 - cycle;
   float fallAge = cycle / max(fallSpeed, 0.001);
@@ -73,7 +79,7 @@ void main() {
     (aSeed.x - 0.5) * uArea,
     (aSeed.z - 0.5) * uArea
   );
-  localXZ += uWind * fallAge;
+  localXZ += uWind * fallAge * mix(1.0, 1.45, uSnowBlend);
   localXZ.x = wrapRange(localXZ.x, uArea);
   localXZ.y = wrapRange(localXZ.y, uArea);
 
@@ -84,8 +90,11 @@ void main() {
   vec2 streakDirection = normalize(viewVelocity.xy + vec2(0.0001));
   vec2 streakSide = vec2(-streakDirection.y, streakDirection.x);
 
-  float streakWidth = mix(0.01, 0.035, uStormIntensity);
-  float streakLength = mix(0.28, 1.25, uStormIntensity);
+  float rainWidth = mix(0.01, 0.035, uStormIntensity);
+  float rainLength = mix(0.28, 1.25, uStormIntensity);
+  float snowSize = mix(0.07, 0.16, uStormIntensity);
+  float streakWidth = mix(rainWidth, snowSize, uSnowBlend);
+  float streakLength = mix(rainLength, snowSize, uSnowBlend);
   mvPosition.xy +=
     streakSide * position.x * streakWidth +
     streakDirection * position.y * streakLength;
@@ -100,6 +109,8 @@ void main() {
 const rainFragmentShader = `
 precision highp float;
 
+uniform float uSnowBlend;
+
 varying vec2 vUv;
 varying float vAlpha;
 
@@ -109,12 +120,20 @@ void main() {
   float across = 1.0 - smoothstep(0.28, 0.5, abs(vUv.x - 0.5));
   float headFade = smoothstep(0.0, 0.15, vUv.y);
   float tailFade = 1.0 - smoothstep(0.72, 1.0, vUv.y);
-  float alpha = across * headFade * tailFade * vAlpha;
+  float rainAlpha = across * headFade * tailFade;
+  float snowAlpha =
+    1.0 - smoothstep(0.24, 0.5, length(vUv - vec2(0.5)));
+  float alpha = mix(rainAlpha, snowAlpha, uSnowBlend) * vAlpha;
 
   if (alpha < 0.01) discard;
 
-  vec3 rainColor = mix(vec3(0.55, 0.72, 0.86), vec3(0.92, 0.97, 1.0), vUv.y);
-  gl_FragColor = vec4(rainColor, alpha);
+  vec3 rainColor = mix(
+    vec3(0.55, 0.72, 0.86),
+    vec3(0.92, 0.97, 1.0),
+    vUv.y
+  );
+  vec3 snowColor = vec3(0.94, 0.98, 1.0);
+  gl_FragColor = vec4(mix(rainColor, snowColor, uSnowBlend), alpha);
 
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -179,6 +198,7 @@ function createRainGeometry() {
 }
 
 export default function WeatherEffects() {
+  const sessionPhase = useSimStore((state) => state.sessionPhase);
   const audioContextRef = useRef<AudioContext | null>(null);
   const windGainRef = useRef<GainNode | null>(null);
   const windFilterRef = useRef<BiquadFilterNode | null>(null);
@@ -186,6 +206,9 @@ export default function WeatherEffects() {
   const thunderFilterRef = useRef<BiquadFilterNode | null>(null);
   const rumbleGainRef = useRef<GainNode | null>(null);
   const lightningFlashRef = useRef(0);
+  const precipitationTimeRef = useRef(0);
+  const precipitationWindRef = useRef(new Vector2());
+  const windSourceOffsetRef = useRef(new Vector2());
   const cameraDirection = useRef(new Vector3());
   const cameraUp = useRef(new Vector3());
 
@@ -200,6 +223,7 @@ export default function WeatherEffects() {
           {
             uTime: { value: 0 },
             uStormIntensity: { value: 0 },
+            uSnowBlend: { value: 0 },
             uCameraPosition: { value: new Vector3() },
             uWind: { value: new Vector2() },
             uArea: { value: 90 },
@@ -309,23 +333,61 @@ export default function WeatherEffects() {
     };
   }, []);
 
+  useEffect(() => {
+    if (sessionPhase === 'running') return;
+
+    const context = audioContextRef.current;
+    if (!context || context.state === 'closed') return;
+    const now = context.currentTime;
+    windGainRef.current?.gain.cancelScheduledValues(now);
+    windGainRef.current?.gain.setTargetAtTime(0, now, 0.05);
+    rumbleGainRef.current?.gain.cancelScheduledValues(now);
+    rumbleGainRef.current?.gain.setTargetAtTime(0, now, 0.05);
+
+    if (sessionPhase === 'menu') {
+      lightningFlashRef.current = 0;
+      sharedPhysics.lightningFlash = 0;
+    }
+  }, [sessionPhase]);
+
   useFrame((state, delta) => {
-    const safeDelta = Math.min(delta, 0.1);
-    const { windSpeed, windDir, renderQuality } = useSimStore.getState();
+    const store = useSimStore.getState();
+    const simulationRunning = canAdvanceAuthoritativeSimulation(
+      store.sessionPhase,
+    );
+    const simulationDelta = simulationRunning
+      ? Math.min(delta, 0.1)
+      : 0;
+    const { windSpeed, windDir, renderQuality } = store;
     const stormIntensity = MathUtils.clamp((windSpeed - 15) / 35, 0, 1);
-    const windRadians = MathUtils.degToRad(windDir);
-    const windX = Math.cos(windRadians) * windSpeed * 0.4;
-    const windZ = Math.sin(windRadians) * windSpeed * 0.4;
+    const winter = MathUtils.clamp(
+      1 - Math.abs(sharedPhysics.season - 0.75) * 4,
+      0,
+      1,
+    );
+    const snowBlend =
+      winter * MathUtils.clamp((windSpeed + 2) / 20, 0.15, 1);
+    const precipitationIntensity = Math.max(
+      stormIntensity,
+      snowBlend * MathUtils.clamp(windSpeed / 22, 0.18, 0.72),
+    );
+    precipitationTimeRef.current += simulationDelta;
+    setWorldXZFromHeading(
+      precipitationWindRef.current,
+      windDir,
+      windSpeed * MathUtils.lerp(0.4, 0.62, snowBlend),
+    );
 
     rainGeometry.instanceCount = RAIN_COUNT_BY_QUALITY[renderQuality];
-    rainMaterial.uniforms.uTime.value = state.clock.elapsedTime;
-    rainMaterial.uniforms.uStormIntensity.value = stormIntensity;
+    rainMaterial.uniforms.uTime.value = precipitationTimeRef.current;
+    rainMaterial.uniforms.uStormIntensity.value = precipitationIntensity;
+    rainMaterial.uniforms.uSnowBlend.value = snowBlend;
     rainMaterial.uniforms.uCameraPosition.value.copy(state.camera.position);
-    rainMaterial.uniforms.uWind.value.set(windX, windZ);
+    rainMaterial.uniforms.uWind.value.copy(precipitationWindRef.current);
 
     const strikesPerSecond =
       MathUtils.lerp(0.02, 0.9, stormIntensity) * stormIntensity;
-    const strikeProbability = 1 - Math.exp(-strikesPerSecond * safeDelta);
+    const strikeProbability = 1 - Math.exp(-strikesPerSecond * simulationDelta);
 
     if (
       stormIntensity > 0.1 &&
@@ -352,7 +414,7 @@ export default function WeatherEffects() {
 
     lightningFlashRef.current = Math.max(
       0,
-      lightningFlashRef.current - safeDelta * 3,
+      lightningFlashRef.current - simulationDelta * 3,
     );
     sharedPhysics.lightningFlash = lightningFlashRef.current;
 
@@ -369,7 +431,9 @@ export default function WeatherEffects() {
     ) {
       const now = context.currentTime;
       windGain.gain.setTargetAtTime(
-        MathUtils.clamp(stormIntensity * 0.7, 0, 0.7),
+        simulationRunning
+          ? MathUtils.clamp(stormIntensity * 0.7, 0, 0.7)
+          : 0,
         now,
         0.5,
       );
@@ -398,15 +462,20 @@ export default function WeatherEffects() {
       }
 
       const pannerDistance = 50;
+      setWorldXZFromHeading(
+        windSourceOffsetRef.current,
+        windDir,
+        pannerDistance,
+      );
       if (windPanner.positionX) {
         windPanner.positionX.setTargetAtTime(
-          cameraPosition.x - Math.cos(windRadians) * pannerDistance,
+          cameraPosition.x - windSourceOffsetRef.current.x,
           now,
           0.1,
         );
         windPanner.positionY.setTargetAtTime(cameraPosition.y, now, 0.1);
         windPanner.positionZ.setTargetAtTime(
-          cameraPosition.z - Math.sin(windRadians) * pannerDistance,
+          cameraPosition.z - windSourceOffsetRef.current.y,
           now,
           0.1,
         );

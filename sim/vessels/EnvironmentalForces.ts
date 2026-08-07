@@ -1,8 +1,8 @@
 import { MathUtils, Vector3 } from 'three';
-import type { SixDofBody } from '@/sim/core/SixDofBody';
-import type { SeededRandom } from '@/sim/core/SeededRandom';
-import type { VesselConfig } from '@/sim/vessels/VesselConfig';
-import { referenceForceForAcceleration } from '@/sim/vessels/PhysicsCorrectness';
+import type { SixDofBody } from '../core/SixDofBody.ts';
+import type { SeededRandom } from '../core/SeededRandom.ts';
+import type { VesselConfig } from './VesselConfig.ts';
+import { referenceForceForAcceleration } from './PhysicsCorrectness.ts';
 
 const EPSILON = 1e-8;
 const REFERENCE_YAW_INERTIA_KG_M2 = 2_000;

@@ -33,6 +33,43 @@ function readExperienceState(page) {
       activeBoat: dataset.simActiveBoat ?? '',
       resetVesselTrigger: Number(dataset.simResetVesselTrigger ?? '0'),
       scenarioRunStatus: dataset.simScenarioRunStatus ?? '',
+      scenarioRunMode: dataset.simScenarioRunMode ?? '',
+      scenarioEnvironmentLocked:
+        dataset.simScenarioEnvironmentLocked ?? '',
+      scenarioAssistanceReason:
+        dataset.simScenarioAssistanceReason ?? '',
+      scenarioResultRunMode: dataset.simScenarioResultRunMode ?? '',
+      hullHealth: Number(dataset.simHullHealth ?? '0'),
+      engineHealth: Number(dataset.simEngineHealth ?? '0'),
+      rudderHealth: Number(dataset.simRudderHealth ?? '0'),
+      fieldRepairActive: dataset.simFieldRepairActive ?? '0',
+      fieldRepairSeconds: Number(dataset.simFieldRepairSeconds ?? '0'),
+      fieldRepairActivationCount: Number(
+        dataset.simFieldRepairActivationCount ?? '0',
+      ),
+      fieldRepairEngineRestored: Number(
+        dataset.simFieldRepairEngineRestored ?? '0',
+      ),
+      fieldRepairRudderRestored: Number(
+        dataset.simFieldRepairRudderRestored ?? '0',
+      ),
+      fieldRepairPenaltyPoints: Number(
+        dataset.simFieldRepairPenaltyPoints ?? '0',
+      ),
+      scenarioInteractionEntityId:
+        dataset.simScenarioInteractionEntityId ?? '',
+      scenarioInteractionStatus:
+        dataset.simScenarioInteractionStatus ?? '',
+      scenarioInteractionProgress: Number(
+        dataset.simScenarioInteractionProgress ?? '0',
+      ),
+      scenarioInteractionMessage:
+        dataset.simScenarioInteractionMessage ?? '',
+      scenarioEntityCount: Number(dataset.simScenarioEntityCount ?? '0'),
+      windSpeed: Number(dataset.simWindSpeed ?? '0'),
+      assistedHistoryAttempts: Number(
+        dataset.simScenarioHistoryAssistedAttempts ?? '0',
+      ),
       activeWaypointIndex: Number(dataset.simActiveWaypointIndex ?? '0'),
       scenarioProgress: Number(dataset.simScenarioProgress ?? '0'),
       scenarioElapsedSeconds: Number(
@@ -52,6 +89,10 @@ async function waitForDataset(page, key, value) {
     { datasetKey: key, expected: value },
     { timeout: 60_000 },
   );
+}
+
+async function waitForCollisionRuntimeReady(page) {
+  await waitForDataset(page, 'simCollisionRuntimeStatus', 'ready');
 }
 
 async function waitForCanvasReady(page) {
@@ -198,6 +239,7 @@ async function runFlow(
     await waitForCanvasReady(page);
     await waitForDataset(page, 'simSessionPhase', 'menu');
     await page.getByRole('heading', { name: 'Choose your passage.' }).waitFor();
+    await waitForCollisionRuntimeReady(page);
 
     checks.briefingVisible = true;
     checks.scenarioCardsVisible =
@@ -268,10 +310,12 @@ allPassed =
 
       await page.getByRole('button', { name: /speedboat/i }).first().click();
       await waitForDataset(page, 'simActiveBoat', 'speedboat');
+      await waitForCollisionRuntimeReady(page);
       checks.vesselSelection = true;
 
       await page.getByRole('button', { name: /Begin passage/i }).click();
       await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForCollisionRuntimeReady(page);
       await waitForNavigationReady(page);
       await page.locator('[aria-label="Marine navigation chart"]').waitFor();
       checks.launch = true;
@@ -279,6 +323,12 @@ allPassed =
       const launched = await readExperienceState(page);
       checks.navigationChartVisible = true;
       checks.navigationState = navigationStateIsValid(launched);
+      checks.standardEnvironmentLocked =
+        launched.scenarioRunMode === 'standard' &&
+        launched.scenarioEnvironmentLocked === '1' &&
+        (await page.getByLabel('Wind speed').isDisabled()) &&
+        (await page.getByLabel('Current speed').isDisabled()) &&
+        (await page.getByRole('button', { name: 'Dawn' }).isDisabled());
 
       await page.keyboard.press('c');
       await waitForDataset(page, 'simCameraMode', 'helm');
@@ -299,19 +349,41 @@ allPassed =
         launched.resetVesselTrigger,
         { timeout: 60_000 },
       );
+      await waitForCollisionRuntimeReady(page);
       const afterReset = await readExperienceState(page);
       checks.vesselReset =
         afterReset.scenarioRunStatus === 'active' &&
         afterReset.scenarioResult === '';
+      checks.missionClockSurvivesRecovery =
+        afterReset.scenarioElapsedSeconds >=
+        launched.scenarioElapsedSeconds - 0.12;
 
+      const beforePause = await readExperienceState(page);
       await page.keyboard.press('Escape');
       await waitForDataset(page, 'simSessionPhase', 'paused');
       await page.getByRole('heading', { name: 'Storm Passage' }).waitFor();
+      await page.waitForTimeout(500);
+      const duringPause = await readExperienceState(page);
       checks.pause = true;
+      checks.pauseFreezesMissionClock =
+        Math.abs(
+          duringPause.scenarioElapsedSeconds -
+            beforePause.scenarioElapsedSeconds,
+        ) <= 0.12;
 
       await page.getByRole('button', { name: /Resume passage/i }).click();
       await waitForDataset(page, 'simSessionPhase', 'running');
+      await page.waitForFunction(
+        (pausedElapsed) =>
+          Number(
+            document.documentElement.dataset.simScenarioElapsedSeconds ?? '0',
+          ) >=
+          pausedElapsed + 0.15,
+        duringPause.scenarioElapsedSeconds,
+        { timeout: 60_000 },
+      );
       checks.resume = true;
+      checks.resumeAdvancesMissionClock = true;
 
       await page.keyboard.press('Escape');
       await waitForDataset(page, 'simSessionPhase', 'paused');
@@ -324,6 +396,7 @@ allPassed =
         afterReset.resetVesselTrigger,
         { timeout: 60_000 },
       );
+      await waitForCollisionRuntimeReady(page);
       await waitForNavigationReady(page);
       const afterRestart = await readExperienceState(page);
       checks.restart =
@@ -342,6 +415,7 @@ allPassed =
       await page.waitForSelector('canvas', { timeout: 60_000 });
       await waitForCanvasReady(page);
       await waitForDataset(page, 'simSessionPhase', 'menu');
+      await waitForCollisionRuntimeReady(page);
       const restored = await readExperienceState(page);
       checks.preferencePersistence =
         restored.scenario === 'storm-passage' &&
@@ -364,6 +438,7 @@ allPassed =
     async ({ page, checks }) => {
       await page.getByRole('button', { name: /Begin passage/i }).click();
       await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForCollisionRuntimeReady(page);
       await waitForNavigationReady(page);
       await page.locator('[aria-label="Marine navigation chart"]').waitFor();
       const launched = await readExperienceState(page);
@@ -396,6 +471,261 @@ allPassed =
 
 allPassed =
   (await runFlow(
+    'typed-interaction-guidance-flow',
+    {
+      viewport: { width: 1280, height: 820 },
+      deviceScaleFactor: 1,
+      isMobile: false,
+      hasTouch: false,
+    },
+    async ({ page, checks }) => {
+      await page
+        .locator('button')
+        .filter({ hasText: 'Harbor Training' })
+        .first()
+        .click();
+      await waitForDataset(page, 'simScenario', 'harbor-training');
+      await page.getByRole('button', { name: /Begin passage/i }).click();
+      await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForCollisionRuntimeReady(page);
+      await waitForNavigationReady(page);
+      await waitForDataset(
+        page,
+        'simScenarioInteractionEntityId',
+        'harbor-supply-pickup',
+      );
+      await waitForDataset(page, 'simScenarioInteractionStatus', 'approach');
+
+      const interaction = await readExperienceState(page);
+      checks.typedPickupActive =
+        interaction.scenarioInteractionEntityId ===
+          'harbor-supply-pickup' &&
+        interaction.scenarioInteractionStatus === 'approach' &&
+        interaction.scenarioEntityCount === 0;
+      checks.noGenericRadiusCompletion =
+        interaction.scenarioInteractionProgress === 0;
+      checks.typedGuidanceVisible =
+        interaction.scenarioInteractionMessage.includes('loading zone') &&
+        (await page.getByText(/loading zone/i).count()) > 0;
+    },
+  )) && allPassed;
+
+allPassed =
+  (await runFlow(
+    'field-repair-fairness-flow',
+    {
+      viewport: { width: 1280, height: 820 },
+      deviceScaleFactor: 1,
+      isMobile: false,
+      hasTouch: false,
+    },
+    async ({ page, checks }) => {
+      await page
+        .locator('button')
+        .filter({ hasText: 'Harbor Training' })
+        .first()
+        .click();
+      await waitForDataset(page, 'simScenario', 'harbor-training');
+      await page.getByRole('button', { name: /Begin passage/i }).click();
+      await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForCollisionRuntimeReady(page);
+      await page.waitForFunction(
+        () => {
+          const dataset = document.documentElement.dataset;
+          return (
+            Number(dataset.simHullHealth) <= 72.1 &&
+            Number(dataset.simEngineHealth) <= 35.1 &&
+            Number(dataset.simRudderHealth) <= 42.1
+          );
+        },
+        undefined,
+        { timeout: 60_000 },
+      );
+
+      const initial = await readExperienceState(page);
+      await page.keyboard.down('r');
+      await page.waitForFunction(
+        () =>
+          Number(
+            document.documentElement.dataset.simFieldRepairSeconds ??
+              '0',
+          ) >= 1.5,
+        undefined,
+        { timeout: 60_000 },
+      );
+      await page.keyboard.up('r');
+      await page.waitForFunction(
+        () =>
+          document.documentElement.dataset.simFieldRepairActive ===
+          '0',
+        undefined,
+        { timeout: 60_000 },
+      );
+
+      const repaired = await readExperienceState(page);
+      checks.hullNotRestored =
+        Math.abs(repaired.hullHealth - initial.hullHealth) < 0.15;
+      checks.emergencyRepairIsLimited =
+        repaired.engineHealth > initial.engineHealth + 0.5 &&
+        repaired.rudderHealth > initial.rudderHealth + 0.8 &&
+        repaired.engineHealth <= 55.01 &&
+        repaired.rudderHealth <= 65.01;
+      checks.repairUsageRecorded =
+        repaired.fieldRepairSeconds >= 1.5 &&
+        repaired.fieldRepairActivationCount === 1 &&
+        repaired.fieldRepairEngineRestored > 0.5 &&
+        repaired.fieldRepairRudderRestored > 0.8 &&
+        repaired.fieldRepairPenaltyPoints > 0;
+      checks.repairLimitsDisclosed =
+        (await page.getByText(
+          /Hull structural condition cannot be restored underway/i,
+        ).count()) > 0;
+
+      await page
+        .getByRole('button', { name: 'Open free route plotter' })
+        .click();
+      await waitForDataset(page, 'simNavigationMode', 'free');
+      await page.keyboard.down('r');
+      await page.waitForFunction(
+        (minimumSeconds) =>
+          Number(
+            document.documentElement.dataset.simFieldRepairSeconds ??
+              '0',
+          ) >= minimumSeconds,
+        repaired.fieldRepairSeconds + 0.75,
+        { timeout: 60_000 },
+      );
+      await page.keyboard.up('r');
+      await waitForDataset(page, 'simFieldRepairActive', '0');
+      const freeRepaired = await readExperienceState(page);
+      checks.freeNavigationRepairTracked =
+        freeRepaired.fieldRepairSeconds >=
+          repaired.fieldRepairSeconds + 0.75 &&
+        freeRepaired.fieldRepairActivationCount ===
+          repaired.fieldRepairActivationCount + 1 &&
+        freeRepaired.fieldRepairEngineRestored >
+          repaired.fieldRepairEngineRestored &&
+        freeRepaired.fieldRepairRudderRestored >
+          repaired.fieldRepairRudderRestored &&
+        freeRepaired.fieldRepairPenaltyPoints >
+          repaired.fieldRepairPenaltyPoints;
+
+      await page
+        .getByRole('button', { name: 'Return to mission route' })
+        .click();
+      await waitForDataset(page, 'simNavigationMode', 'mission');
+      await page.keyboard.down('r');
+      await waitForDataset(page, 'simFieldRepairActive', '1');
+      await page.keyboard.press('Escape');
+      await waitForDataset(page, 'simSessionPhase', 'paused');
+      await waitForDataset(page, 'simFieldRepairActive', '0');
+      await page.keyboard.up('r');
+      checks.pauseClearsRepairState = true;
+      await page
+        .getByRole('button', { name: /Resume passage/i })
+        .click();
+      await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForDataset(page, 'simFieldRepairActive', '0');
+      // Health telemetry publishes at 10 Hz. Let the final pre-pause repair
+      // step settle before capturing the condition that recovery must preserve.
+      await page.waitForTimeout(350);
+      const conditionBeforeRecovery =
+        await readExperienceState(page);
+
+      const resetBeforeRecovery =
+        conditionBeforeRecovery.resetVesselTrigger;
+      await page.keyboard.press('Home');
+      await page.waitForFunction(
+        (previousReset) =>
+          Number(
+            document.documentElement.dataset.simResetVesselTrigger ??
+              '0',
+          ) > previousReset,
+        resetBeforeRecovery,
+        { timeout: 60_000 },
+      );
+      await waitForCollisionRuntimeReady(page);
+      await page.waitForTimeout(350);
+      const recovered = await readExperienceState(page);
+      checks.recoveryPreservesCondition =
+        // Recovery may republish condition on a different 10 Hz telemetry
+        // boundary, but it must never erase meaningful damage or repair cost.
+        recovered.hullHealth < 90 &&
+        recovered.engineHealth < 60 &&
+        recovered.rudderHealth < 70 &&
+        Math.abs(
+          recovered.hullHealth - conditionBeforeRecovery.hullHealth,
+        ) < 1 &&
+        Math.abs(
+          recovered.engineHealth - conditionBeforeRecovery.engineHealth,
+        ) < 1 &&
+        Math.abs(
+          recovered.rudderHealth - conditionBeforeRecovery.rudderHealth,
+        ) < 1 &&
+        recovered.fieldRepairPenaltyPoints >=
+          conditionBeforeRecovery.fieldRepairPenaltyPoints &&
+        recovered.fieldRepairPenaltyPoints >=
+          freeRepaired.fieldRepairPenaltyPoints;
+    },
+    '/?repairTest=1',
+  )) && allPassed;
+
+allPassed =
+  (await runFlow(
+    'assisted-environment-flow',
+    {
+      viewport: { width: 1280, height: 820 },
+      deviceScaleFactor: 1,
+      isMobile: false,
+      hasTouch: false,
+    },
+    async ({ page, checks }) => {
+      await page.getByRole('button', { name: /Begin passage/i }).click();
+      await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForCollisionRuntimeReady(page);
+      await waitForNavigationReady(page);
+
+      const standard = await readExperienceState(page);
+      checks.standardStartsLocked =
+        standard.scenarioRunMode === 'standard' &&
+        standard.scenarioEnvironmentLocked === '1' &&
+        (await page.getByLabel('Wind speed').isDisabled());
+
+      await page
+        .getByRole('button', { name: 'Use custom conditions' })
+        .first()
+        .click();
+      await waitForDataset(page, 'simScenarioRunMode', 'assisted');
+      await waitForDataset(page, 'simScenarioEnvironmentLocked', '0');
+      const windControl = page.getByLabel('Wind speed');
+      await windControl.fill('12.5');
+      await waitForDataset(page, 'simWindSpeed', '12.5');
+
+      const assisted = await readExperienceState(page);
+      checks.assistedUnlock =
+        assisted.scenarioRunMode === 'assisted' &&
+        assisted.scenarioEnvironmentLocked === '0' &&
+        assisted.scenarioAssistanceReason.length > 0 &&
+        !(await windControl.isDisabled()) &&
+        Math.abs(assisted.windSpeed - 12.5) < 0.001;
+      checks.assistedDisclosure =
+        (await page.getByText('Assisted conditions', { exact: true }).count()) > 0;
+
+      await page
+        .getByRole('button', { name: 'Restore scenario preset' })
+        .first()
+        .click();
+      await waitForDataset(page, 'simWindSpeed', '8');
+      const restored = await readExperienceState(page);
+      checks.restorePresetKeepsAssisted =
+        restored.scenarioRunMode === 'assisted' &&
+        restored.scenarioEnvironmentLocked === '0' &&
+        Math.abs(restored.windSpeed - 8) < 0.001;
+    },
+  )) && allPassed;
+
+allPassed =
+  (await runFlow(
     'mission-completion-flow',
     {
       viewport: { width: 1180, height: 780 },
@@ -406,6 +736,7 @@ allPassed =
     async ({ page, checks }) => {
       await page.getByRole('button', { name: /Begin passage/i }).click();
       await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForCollisionRuntimeReady(page);
       await waitForNavigationReady(page);
       await waitForDataset(page, 'simScenarioResult', 'completed');
       await page.getByText('Passage complete', { exact: true }).waitFor();
@@ -413,7 +744,8 @@ allPassed =
       checks.completionState =
         resultState.sessionPhase === 'paused' &&
         resultState.scenarioRunStatus === 'completed' &&
-        resultState.scenarioResult === 'completed';
+        resultState.scenarioResult === 'completed' &&
+        resultState.scenarioResultRunMode === 'standard';
       checks.completionActions =
         (await page.getByRole('button', { name: /Retry passage/i }).count()) === 1 &&
         (await page.getByRole('button', { name: /Briefing/i }).count()) === 1 &&
@@ -437,6 +769,7 @@ allPassed =
     async ({ page, checks }) => {
       await page.getByRole('button', { name: /Begin passage/i }).click();
       await waitForDataset(page, 'simSessionPhase', 'running');
+      await waitForCollisionRuntimeReady(page);
       await waitForNavigationReady(page);
       await waitForDataset(page, 'simScenarioResult', 'failed');
       await page.getByText('Passage failed', { exact: true }).waitFor();

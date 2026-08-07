@@ -23,13 +23,21 @@ import {
   sharedPhysics,
   useSimStore,
 } from '@/store/useSimStore';
-import { getTerrainHeight } from '@/lib/terrain';
+import {
+  getSharedTerrainHeightfield,
+  sampleTerrainHeightfield,
+} from '@/sim/terrain/TerrainHeightfield';
 import { sharedWakeField } from './WakeField';
 import {
   sampleGerstnerSurface,
   type GerstnerWaveDefinition,
 } from '@/sim/water/GerstnerWater';
 import type { WaterSurfaceSample } from '@/sim/water/WaterSurface';
+import {
+  normalizeHeadingDegrees,
+  normalizeSignedHeadingDeltaDegrees,
+  rotateWorldDirection,
+} from '@/sim/world/WorldDirection';
 
 interface OceanQualityConfig {
   innerSegments: number;
@@ -48,13 +56,18 @@ const QUALITY_CONFIG: Record<RenderQuality, OceanQualityConfig> = {
   ultra: { innerSegments: 256, radialSegments: 18, detail: 1 },
 };
 
-const CACHED_WAVES: GerstnerWaveDefinition[] = [
+const REFERENCE_WAVE_WIND_HEADING_DEG = 90;
+const BASE_WAVES: readonly GerstnerWaveDefinition[] = [
   { x: 0.894427, y: 0.447214, z: 0.12, w: 30 },
   { x: 0.707107, y: 0.707107, z: 0.1, w: 12 },
   { x: -0.196116, y: 0.980581, z: 0.08, w: 7 },
   { x: 0.707107, y: -0.707107, z: 0.05, w: 3 },
 ];
+const CACHED_WAVES: GerstnerWaveDefinition[] = BASE_WAVES.map(
+  (wave) => ({ ...wave }),
+);
 let cachedWindSpeed = Number.NaN;
+let cachedWindDir = Number.NaN;
 
 const vertexShader = `
 #define PI 3.14159265359
@@ -403,15 +416,16 @@ function createOceanGeometry(config: OceanQualityConfig) {
   };
 }
 
+
 function createDampeningMap() {
-  const size = 128;
+  const terrain = getSharedTerrainHeightfield();
+  const size = terrain.pointsPerAxis;
   const data = new Uint8Array(size * size * 4);
 
   for (let row = 0; row < size; row += 1) {
     for (let column = 0; column < size; column += 1) {
-      const x = (column / (size - 1) - 0.5) * 3000;
-      const z = (row / (size - 1) - 0.5) * 3000;
-      const terrainHeight = getTerrainHeight(x, z);
+      const terrainHeight =
+        terrain.heights[row * size + column];
       const dampening =
         terrainHeight > -10
           ? Math.max(0, Math.min(1, -terrainHeight / 10))
@@ -452,13 +466,25 @@ function createWakeFallback() {
 }
 
 export const getWaveData = () => {
-  const windSpeed = useSimStore.getState().windSpeed;
+  const { windSpeed, windDir } = useSimStore.getState();
+  const normalizedWindDir = normalizeHeadingDegrees(windDir);
+  const windHeadingChanged =
+    !Number.isFinite(cachedWindDir) ||
+    Math.abs(
+      normalizeSignedHeadingDeltaDegrees(
+        normalizedWindDir - cachedWindDir,
+      ),
+    ) >= 0.001;
 
-  if (Math.abs(windSpeed - cachedWindSpeed) < 0.001) {
+  if (
+    Math.abs(windSpeed - cachedWindSpeed) < 0.001 &&
+    !windHeadingChanged
+  ) {
     return CACHED_WAVES;
   }
 
   cachedWindSpeed = windSpeed;
+  cachedWindDir = normalizedWindDir;
   let stormFactor = Math.max(0.1, windSpeed / 8);
   let rogueWaveBoost = 0;
 
@@ -469,15 +495,32 @@ export const getWaveData = () => {
 
   const steepness = Math.min(stormFactor, 1.8);
   const waveScale = 1 + stormFactor * 1.2 + rogueWaveBoost * 1.5;
+  const directionRotationDeg = normalizeSignedHeadingDeltaDegrees(
+    normalizedWindDir - REFERENCE_WAVE_WIND_HEADING_DEG,
+  );
 
-  CACHED_WAVES[0].z = 0.12 * steepness;
-  CACHED_WAVES[0].w = 30 * waveScale;
-  CACHED_WAVES[1].z = 0.1 * steepness;
-  CACHED_WAVES[1].w = 12 * waveScale;
-  CACHED_WAVES[2].z = 0.08 * steepness;
-  CACHED_WAVES[2].w = 7 + stormFactor * 2 + rogueWaveBoost;
-  CACHED_WAVES[3].z = 0.05 * steepness;
-  CACHED_WAVES[3].w = 3 + stormFactor + rogueWaveBoost;
+  for (let index = 0; index < BASE_WAVES.length; index += 1) {
+    const baseWave = BASE_WAVES[index];
+    const wave = CACHED_WAVES[index];
+    const direction = rotateWorldDirection(
+      baseWave.x,
+      baseWave.y,
+      directionRotationDeg,
+    );
+    wave.x = direction.x;
+    wave.y = direction.z;
+  }
+
+  CACHED_WAVES[0].z = BASE_WAVES[0].z * steepness;
+  CACHED_WAVES[0].w = BASE_WAVES[0].w * waveScale;
+  CACHED_WAVES[1].z = BASE_WAVES[1].z * steepness;
+  CACHED_WAVES[1].w = BASE_WAVES[1].w * waveScale;
+  CACHED_WAVES[2].z = BASE_WAVES[2].z * steepness;
+  CACHED_WAVES[2].w =
+    BASE_WAVES[2].w + stormFactor * 2 + rogueWaveBoost;
+  CACHED_WAVES[3].z = BASE_WAVES[3].z * steepness;
+  CACHED_WAVES[3].w =
+    BASE_WAVES[3].w + stormFactor + rogueWaveBoost;
 
   return CACHED_WAVES;
 };
@@ -488,7 +531,7 @@ export const sampleOceanSurface = (
   time: number,
   target: WaterSurfaceSample,
 ): WaterSurfaceSample => {
-  const terrainHeight = getTerrainHeight(x, z);
+  const terrainHeight = sampleTerrainHeightfield(x, z);
   let dampening =
     terrainHeight > -10
       ? Math.max(0, Math.min(1, -terrainHeight / 10))

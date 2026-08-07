@@ -1,14 +1,14 @@
 import { MathUtils, Quaternion, Vector3 } from 'three';
-import type { SixDofBody } from '@/sim/core/SixDofBody';
+import type { SixDofBody } from '../core/SixDofBody.ts';
 import type {
   HydrostaticHullCell,
   VesselConfig,
-} from '@/sim/vessels/VesselConfig';
+} from './VesselConfig.ts';
 import type {
   WaterSurfaceSample,
   WaterSurfaceSampler,
-} from '@/sim/water/WaterSurface';
-import { createWaterSurfaceSample } from '@/sim/water/WaterSurface';
+} from '../water/WaterSurface.ts';
+import { createWaterSurfaceSample } from '../water/WaterSurface.ts';
 import {
   displacedColumnCentroidDepthM,
   displacedColumnVolumeM3,
@@ -16,7 +16,7 @@ import {
   hydrostaticForceN,
   immersionFraction,
   slamForceN,
-} from '@/sim/vessels/HydrostaticsMath';
+} from './HydrostaticsMath.ts';
 
 const EPSILON = 1e-8;
 const WORLD_UP = new Vector3(0, 1, 0);

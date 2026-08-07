@@ -1,6 +1,7 @@
 'use client';
 
 import { useFrame, useThree } from '@react-three/fiber';
+import { canAdvanceAuthoritativeSimulation } from '@/sim/core/SimulationRuntimeAuthority';
 import { useEffect, useMemo, useRef } from 'react';
 import {
   ClampToEdgeWrapping,
@@ -287,7 +288,17 @@ export default function WakeField() {
     };
   }, [config, resources]);
 
-  useFrame((state, delta) => {
+  useFrame((_, delta) => {
+    const sessionPhase = useSimStore.getState().sessionPhase;
+    if (!canAdvanceAuthoritativeSimulation(sessionPhase)) {
+      updateAccumulatorRef.current = 0;
+      if (sessionPhase === 'menu') {
+        initializedRef.current = false;
+        sharedWakeField.texture = null;
+      }
+      return;
+    }
+
     const safeDelta = Math.min(delta, 0.1);
     updateAccumulatorRef.current += safeDelta;
     const updateInterval = 1 / config.updateHz;
@@ -321,7 +332,7 @@ export default function WakeField() {
     const uniforms = resources.material.uniforms;
     uniforms.tPrevious.value = targets.read.texture;
     uniforms.uDelta.value = simulationDelta;
-    uniforms.uTime.value = state.clock.elapsedTime;
+    uniforms.uTime.value = sharedPhysics.renderTime;
     uniforms.uWorldSize.value = config.worldSize;
     uniforms.uTexelSize.value = 1 / config.resolution;
     uniforms.uLifetime.value = config.lifetime;

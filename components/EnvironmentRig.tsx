@@ -13,6 +13,12 @@ import {
   Mesh,
   ShaderMaterial,
 } from 'three';
+import { canAdvanceAuthoritativeSimulation } from '@/sim/core/SimulationRuntimeAuthority';
+import {
+  WHIRLPOOL_BASIN_CENTER_X_M,
+  WHIRLPOOL_BASIN_CENTER_Z_M,
+  WHIRLPOOL_ORBIT_RADIUS_M,
+} from '@/sim/world/WorldEnvironment';
 import {
   type RenderQuality,
   sharedPhysics,
@@ -78,6 +84,7 @@ export default function EnvironmentRig() {
   const skyMaterialRef = useRef<ShaderMaterial | null>(null);
   const starsMaterialRef = useRef<TransparentMaterial | null>(null);
   const shadowAccumulatorRef = useRef(1);
+  const hazardTimeRef = useRef(0);
   const shadowWasEnabledRef = useRef(false);
   const configuredShadowRef = useRef<DirectionalLight | null>(null);
   const renderQuality = useSimStore((state) => state.renderQuality);
@@ -109,20 +116,31 @@ export default function EnvironmentRig() {
   );
 
   useFrame((state, delta) => {
-    const safeDelta = Math.min(delta, 0.1);
+    const authoritativeDelta = canAdvanceAuthoritativeSimulation(
+      useSimStore.getState().sessionPhase,
+    )
+      ? Math.min(delta, 0.1)
+      : 0;
     const { camera } = state;
     const store = useSimStore.getState();
+    const simulationRunning = canAdvanceAuthoritativeSimulation(
+      store.sessionPhase,
+    );
 
-    let timeDifference = store.targetTime - sharedPhysics.worldTime;
+    if (!simulationRunning) {
+      sharedPhysics.worldTime = store.targetTime;
+      sharedPhysics.season = store.targetSeason;
+    } else {
+      let timeDifference = store.targetTime - sharedPhysics.worldTime;
     if (timeDifference > 12) timeDifference -= 24;
     if (timeDifference < -12) timeDifference += 24;
 
     const timeSpeed = 2;
-    if (Math.abs(timeDifference) < timeSpeed * safeDelta) {
+    if (Math.abs(timeDifference) < timeSpeed * authoritativeDelta) {
       sharedPhysics.worldTime = store.targetTime;
     } else {
       sharedPhysics.worldTime +=
-        Math.sign(timeDifference) * timeSpeed * safeDelta;
+        Math.sign(timeDifference) * timeSpeed * authoritativeDelta;
     }
 
     if (sharedPhysics.worldTime < 0) sharedPhysics.worldTime += 24;
@@ -133,17 +151,24 @@ export default function EnvironmentRig() {
     if (seasonDifference < -0.5) seasonDifference += 1;
 
     const seasonSpeed = 0.15;
-    if (Math.abs(seasonDifference) < seasonSpeed * safeDelta) {
+    if (Math.abs(seasonDifference) < seasonSpeed * authoritativeDelta) {
       sharedPhysics.season = store.targetSeason;
     } else {
       sharedPhysics.season +=
-        Math.sign(seasonDifference) * seasonSpeed * safeDelta;
+        Math.sign(seasonDifference) * seasonSpeed * authoritativeDelta;
     }
 
-    if (sharedPhysics.season < 0) sharedPhysics.season += 1;
-    if (sharedPhysics.season >= 1) sharedPhysics.season -= 1;
+      if (sharedPhysics.season < 0) sharedPhysics.season += 1;
+      if (sharedPhysics.season >= 1) sharedPhysics.season -= 1;
+    }
 
-    const elapsed = state.clock.elapsedTime;
+    // The world clock advances only during a running session. Menu demand
+    // frames can update a static scenario preview without moving hazards.
+    // Paused sessions use frameloop="never", so a long pause cannot teleport
+    // the tornado or whirlpool when rendering resumes. The clock belongs to the
+    // world rig and therefore survives vessel recovery/remount generations.
+    hazardTimeRef.current += authoritativeDelta;
+    const elapsed = hazardTimeRef.current;
     const tornadoStrength = clamp((store.windSpeed - 24) / 18, 0, 1);
 
     if (tornadoStrength > 0.001) {
@@ -157,9 +182,11 @@ export default function EnvironmentRig() {
     }
 
     sharedPhysics.whirlpoolPos.set(
-      -400 + Math.sin(elapsed * 0.01) * 20,
+      WHIRLPOOL_BASIN_CENTER_X_M +
+        Math.sin(elapsed * 0.01) * WHIRLPOOL_ORBIT_RADIUS_M,
       0,
-      -400 + Math.cos(elapsed * 0.01) * 20,
+      WHIRLPOOL_BASIN_CENTER_Z_M +
+        Math.cos(elapsed * 0.01) * WHIRLPOOL_ORBIT_RADIUS_M,
     );
 
     const summer = clamp(
@@ -344,7 +371,7 @@ export default function EnvironmentRig() {
       directionalLight.castShadow = shadowEnabled;
 
       if (shadowEnabled) {
-        shadowAccumulatorRef.current += safeDelta;
+        shadowAccumulatorRef.current += authoritativeDelta;
         const updateInterval = 1 / shadowConfig.updateHz;
         const shouldUpdate =
           !shadowWasEnabledRef.current ||

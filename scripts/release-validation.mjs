@@ -158,6 +158,10 @@ async function waitForDataset(page, key, expected) {
   );
 }
 
+async function waitForCollisionRuntimeReady(page) {
+  await waitForDataset(page, 'simCollisionRuntimeStatus', 'ready');
+}
+
 async function waitForCanvasReady(page) {
   await page.waitForFunction(
     () => {
@@ -494,6 +498,7 @@ async function runProductFlow(browser, engineName) {
     await waitForCanvasReady(page);
     await waitForDataset(page, 'simSessionPhase', 'menu');
     await page.getByRole('heading', { name: 'Choose your passage.' }).waitFor();
+    await waitForCollisionRuntimeReady(page);
 
     menuAccessibility = await auditAccessibility(page);
     checks.menuAccessibility = menuAccessibility.passed;
@@ -502,6 +507,7 @@ async function runProductFlow(browser, engineName) {
     await page.getByRole('button', { name: /Begin passage/i }).click();
     await waitForDataset(page, 'simSessionPhase', 'running');
     await waitForDataset(page, 'simScenarioRunStatus', 'active');
+    await waitForCollisionRuntimeReady(page);
     await page.locator('[aria-label="Marine navigation chart"]').waitFor();
     checks.scenarioLaunch = true;
 
@@ -522,6 +528,7 @@ async function runProductFlow(browser, engineName) {
       beforeReset,
       { timeout: 60_000 },
     );
+    await waitForCollisionRuntimeReady(page);
     checks.safeRecovery = true;
 
     await page.keyboard.press('Escape');
@@ -625,6 +632,7 @@ async function runPhysicsFlow(browser, engineName) {
       undefined,
       { timeout: 60_000 },
     );
+    await waitForCollisionRuntimeReady(page);
 
     const qualitySelector = page.locator(
       'select[aria-label="Rendering quality"]',
@@ -864,8 +872,10 @@ async function runMobileFlow() {
     responseStatus = response?.status() ?? null;
     await page.waitForSelector('canvas', { timeout: 60_000 });
     await waitForCanvasReady(page);
+    await waitForCollisionRuntimeReady(page);
     await page.getByRole('button', { name: /Begin passage/i }).click();
     await waitForDataset(page, 'simSessionPhase', 'running');
+    await waitForCollisionRuntimeReady(page);
     await page.locator('[aria-label="Marine navigation chart"]').waitFor();
 
     const touchButtons = [
@@ -1015,6 +1025,7 @@ async function runRecoveryFlows() {
       });
       await page.waitForSelector('canvas', { timeout: 60_000 });
       await waitForCanvasReady(page);
+      await waitForDataset(page, 'simWebglContextMonitorReady', '1');
       await page.evaluate(() => {
         const canvas = document.querySelector('canvas');
         canvas?.dispatchEvent(

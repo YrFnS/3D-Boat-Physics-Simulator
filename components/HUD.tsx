@@ -11,9 +11,11 @@ import {
   Compass,
   Gauge,
   Leaf,
+  LockKeyhole,
   Moon,
   Navigation,
   Navigation2,
+  RefreshCcw,
   Settings2,
   ShieldAlert,
   Ship,
@@ -28,7 +30,16 @@ import {
   X,
 } from 'lucide-react';
 import { useDebugMode } from '@/hooks/useDebugMode';
-import { type BoatType, useSimStore } from '@/store/useSimStore';
+import {
+  FIELD_REPAIR_LIMITS,
+  isFieldRepairEligible,
+} from '@/sim/vessels/FieldRepairPolicy';
+import type { ScenarioRunMode } from '@/sim/scenarios/ScoredScenarioAuthority';
+import {
+  type BoatType,
+  type ScenarioRunStatus,
+  useSimStore,
+} from '@/store/useSimStore';
 
 type MobilePanel = 'environment' | 'forces' | null;
 type HeldKey = 'arrowup' | 'arrowdown' | 'arrowleft' | 'arrowright' | 'r';
@@ -90,6 +101,7 @@ interface RangeControlProps {
   max: number;
   step: number;
   accentClass: string;
+  disabled?: boolean;
   onChange: (value: number) => void;
 }
 
@@ -101,6 +113,7 @@ function RangeControl({
   max,
   step,
   accentClass,
+  disabled = false,
   onChange,
 }: RangeControlProps) {
   return (
@@ -115,8 +128,11 @@ function RangeControl({
         max={max}
         step={step}
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(Number(event.target.value))}
-        className={`h-5 w-full cursor-pointer ${accentClass}`}
+        className={`h-5 w-full ${
+          disabled ? 'cursor-not-allowed opacity-45' : 'cursor-pointer'
+        } ${accentClass}`}
       />
     </label>
   );
@@ -125,6 +141,7 @@ function RangeControl({
 interface EnvironmentControlsProps {
   targetTime: number;
   targetSeason: number;
+  disabled?: boolean;
   setTargetTime: (value: number) => void;
   setTargetSeason: (value: number) => void;
 }
@@ -132,6 +149,7 @@ interface EnvironmentControlsProps {
 function EnvironmentControls({
   targetTime,
   targetSeason,
+  disabled = false,
   setTargetTime,
   setTargetSeason,
 }: EnvironmentControlsProps) {
@@ -157,8 +175,11 @@ function EnvironmentControls({
             type="button"
             title={label}
             aria-label={label}
+            disabled={disabled}
             onClick={() => setTargetTime(value)}
             className={`flex min-h-10 items-center justify-center rounded-lg transition ${
+              disabled ? 'cursor-not-allowed opacity-45' : ''
+            } ${
               targetTime === value
                 ? 'bg-amber-500 text-white shadow-lg'
                 : 'text-slate-400 hover:bg-white/10 hover:text-white'
@@ -175,8 +196,11 @@ function EnvironmentControls({
             type="button"
             title={label}
             aria-label={label}
+            disabled={disabled}
             onClick={() => setTargetSeason(value)}
             className={`flex min-h-10 items-center justify-center rounded-lg transition ${
+              disabled ? 'cursor-not-allowed opacity-45' : ''
+            } ${
               targetSeason === value
                 ? 'bg-sky-500 text-white shadow-lg'
                 : 'text-slate-400 hover:bg-white/10 hover:text-white'
@@ -195,6 +219,7 @@ interface ForceControlsProps {
   windDir: number;
   currentSpeed: number;
   currentDir: number;
+  disabled?: boolean;
   setWindSpeed: (value: number) => void;
   setWindDir: (value: number) => void;
   setCurrentSpeed: (value: number) => void;
@@ -212,16 +237,18 @@ function ForceControls(props: ForceControlsProps) {
         max={60}
         step={0.1}
         accentClass="accent-sky-400"
+        disabled={props.disabled}
         onChange={props.setWindSpeed}
       />
       <RangeControl
-        label="Wind direction"
+        label="Wind heading (toward)"
         valueLabel={`${props.windDir.toFixed(0)}°`}
         value={props.windDir}
         min={0}
         max={359}
         step={1}
         accentClass="accent-indigo-400"
+        disabled={props.disabled}
         onChange={props.setWindDir}
       />
       <div className="h-px bg-white/10" />
@@ -233,18 +260,79 @@ function ForceControls(props: ForceControlsProps) {
         max={10}
         step={0.1}
         accentClass="accent-teal-400"
+        disabled={props.disabled}
         onChange={props.setCurrentSpeed}
       />
       <RangeControl
-        label="Current direction"
+        label="Current heading (toward)"
         valueLabel={`${props.currentDir.toFixed(0)}°`}
         value={props.currentDir}
         min={0}
         max={359}
         step={1}
         accentClass="accent-teal-500"
+        disabled={props.disabled}
         onChange={props.setCurrentDir}
       />
+    </div>
+  );
+}
+
+interface EnvironmentAuthorityNoticeProps {
+  scenarioRunStatus: ScenarioRunStatus;
+  scenarioRunMode: ScenarioRunMode;
+  assistanceReason: string;
+  enableAssistedConditions: () => void;
+  restoreScenarioEnvironment: () => void;
+}
+
+function EnvironmentAuthorityNotice({
+  scenarioRunStatus,
+  scenarioRunMode,
+  assistanceReason,
+  enableAssistedConditions,
+  restoreScenarioEnvironment,
+}: EnvironmentAuthorityNoticeProps) {
+  if (scenarioRunStatus !== 'active') return null;
+
+  if (scenarioRunMode === 'standard') {
+    return (
+      <div className="mb-3 rounded-xl border border-emerald-300/20 bg-emerald-300/[0.07] p-3">
+        <div className="flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.16em] text-emerald-200">
+          <LockKeyhole className="h-3.5 w-3.5" /> Scored preset locked
+        </div>
+        <p className="mt-1 text-[10px] leading-4 text-slate-400">
+          Wind, current, time, and season stay fixed for standard records.
+        </p>
+        <button
+          type="button"
+          aria-label="Use custom conditions"
+          onClick={enableAssistedConditions}
+          className="mt-2 w-full rounded-lg border border-amber-300/25 bg-amber-300/10 px-2 py-2 text-[9px] font-bold uppercase tracking-wider text-amber-200 transition hover:bg-amber-300/15"
+        >
+          Use custom conditions
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-3 rounded-xl border border-amber-300/25 bg-amber-300/[0.08] p-3">
+      <div className="flex items-center gap-2 text-[9px] font-black uppercase tracking-[0.16em] text-amber-200">
+        <Settings2 className="h-3.5 w-3.5" /> Assisted conditions
+      </div>
+      <p className="mt-1 text-[10px] leading-4 text-slate-400">
+        {assistanceReason ||
+          'This attempt is excluded from standard records.'}
+      </p>
+      <button
+        type="button"
+        aria-label="Restore scenario preset"
+        onClick={restoreScenarioEnvironment}
+        className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2 py-2 text-[9px] font-bold uppercase tracking-wider text-slate-300 transition hover:bg-white/10"
+      >
+        <RefreshCcw className="h-3 w-3" /> Restore scenario preset
+      </button>
     </div>
   );
 }
@@ -295,6 +383,14 @@ export default function HUD() {
       floodedVolumeM3: store.floodedVolumeM3,
       targetTime: store.targetTime,
       targetSeason: store.targetSeason,
+      scenarioRunStatus: store.scenarioRunStatus,
+      scenarioRunMode: store.scenarioRunMode,
+      scenarioAssistanceReason: store.scenarioAssistanceReason,
+      fieldRepairSeconds: store.fieldRepairSeconds,
+      fieldRepairActivationCount: store.fieldRepairActivationCount,
+      fieldRepairEngineRestored: store.fieldRepairEngineRestored,
+      fieldRepairRudderRestored: store.fieldRepairRudderRestored,
+      fieldRepairPenaltyPoints: store.fieldRepairPenaltyPoints,
       keys: store.keys,
       setTargetTime: store.setTargetTime,
       setTargetSeason: store.setTargetSeason,
@@ -302,25 +398,51 @@ export default function HUD() {
       setWindDir: store.setWindDir,
       setCurrentSpeed: store.setCurrentSpeed,
       setCurrentDir: store.setCurrentDir,
+      enableAssistedConditions: store.enableAssistedConditions,
+      restoreScenarioEnvironment: store.restoreScenarioEnvironment,
       setEngineThrust: store.setEngineThrust,
       setActiveBoat: store.setActiveBoat,
     })),
   );
 
-  const isRepairing =
-    state.keys.r &&
-    Math.abs(state.speedKnots) < 2 &&
-    state.engineThrust < 0.1 &&
-    !state.keys.w &&
-    !state.keys.s &&
-    !state.keys.arrowup &&
-    !state.keys.arrowdown;
+  const isRepairing = isFieldRepairEligible({
+    requested: state.keys.r,
+    speedKnots: state.speedKnots,
+    throttle: state.engineThrust,
+    propulsionInputActive:
+      state.keys.w ||
+      state.keys.s ||
+      state.keys.arrowup ||
+      state.keys.arrowdown,
+  });
+  const remainingEngineRepair = Math.max(
+    0,
+    FIELD_REPAIR_LIMITS.maximumEngineRestorePerRun -
+      state.fieldRepairEngineRestored,
+  );
+  const remainingRudderRepair = Math.max(
+    0,
+    FIELD_REPAIR_LIMITS.maximumRudderRestorePerRun -
+      state.fieldRepairRudderRestored,
+  );
+
+  const environmentLocked =
+    state.scenarioRunStatus === 'active' &&
+    state.scenarioRunMode === 'standard';
+  const authorityNoticeProps: EnvironmentAuthorityNoticeProps = {
+    scenarioRunStatus: state.scenarioRunStatus,
+    scenarioRunMode: state.scenarioRunMode,
+    assistanceReason: state.scenarioAssistanceReason,
+    enableAssistedConditions: state.enableAssistedConditions,
+    restoreScenarioEnvironment: state.restoreScenarioEnvironment,
+  };
 
   const forceProps: ForceControlsProps = {
     windSpeed: state.windSpeed,
     windDir: state.windDir,
     currentSpeed: state.currentSpeed,
     currentDir: state.currentDir,
+    disabled: environmentLocked,
     setWindSpeed: state.setWindSpeed,
     setWindDir: state.setWindDir,
     setCurrentSpeed: state.setCurrentSpeed,
@@ -371,7 +493,7 @@ export default function HUD() {
                     : 'transition hover:text-emerald-300'
                 }
               >
-                Hold [R] to repair
+                Hold [R] bilge / field repair
               </button>
             </div>
           </div>
@@ -380,8 +502,10 @@ export default function HUD() {
             <h2 className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
               Environment
             </h2>
+            <EnvironmentAuthorityNotice {...authorityNoticeProps} />
             <EnvironmentControls
               targetTime={state.targetTime}
+              disabled={environmentLocked}
               targetSeason={state.targetSeason}
               setTargetTime={state.setTargetTime}
               setTargetSeason={state.setTargetSeason}
@@ -446,14 +570,21 @@ export default function HUD() {
               </button>
             </div>
             {mobilePanel === 'environment' ? (
-              <EnvironmentControls
+              <>
+                <EnvironmentAuthorityNotice {...authorityNoticeProps} />
+                <EnvironmentControls
                 targetTime={state.targetTime}
+                disabled={environmentLocked}
                 targetSeason={state.targetSeason}
                 setTargetTime={state.setTargetTime}
                 setTargetSeason={state.setTargetSeason}
-              />
+                />
+              </>
             ) : (
-              <ForceControls {...forceProps} />
+              <>
+                <EnvironmentAuthorityNotice {...authorityNoticeProps} />
+                <ForceControls {...forceProps} />
+              </>
             )}
           </section>
         )}
@@ -468,8 +599,8 @@ export default function HUD() {
               }`}
             >
               {isRepairing
-                ? 'Active field repair'
-                : 'Slow down and cut throttle to repair'}
+                ? 'Bilge pump active · emergency repair logged'
+                : 'Slow below 2 kt and set neutral to repair'}
             </div>
           </div>
         )}
@@ -568,6 +699,28 @@ export default function HUD() {
               />
             </div>
 
+            {(
+              state.fieldRepairSeconds > 0 ||
+              state.hullHealth < 100 ||
+              state.engineHealth < 100 ||
+              state.rudderHealth < 100 ||
+              state.floodingRatio > 0
+            ) && (
+              <div className="mt-3 rounded-xl border border-cyan-300/15 bg-cyan-300/[0.05] p-3 text-[9px] leading-4 text-slate-400">
+                <div className="flex items-center gap-1.5 font-black uppercase tracking-wider text-cyan-200">
+                  <Wrench className="h-3 w-3" /> Field repair limits
+                </div>
+                <p className="mt-1">
+                  Bilge pumping and breach stabilization remain available. Hull structural condition cannot be restored underway. Engine recovery is capped at {FIELD_REPAIR_LIMITS.engineConditionCeiling}% with {remainingEngineRepair.toFixed(1)} points remaining; rudder recovery is capped at {FIELD_REPAIR_LIMITS.rudderConditionCeiling}% with {remainingRudderRepair.toFixed(1)} remaining.
+                </p>
+                {state.fieldRepairPenaltyPoints > 0 && (
+                  <div className="mt-1 font-mono text-cyan-200">
+                    {state.fieldRepairActivationCount} stop{state.fieldRepairActivationCount === 1 ? '' : 's'} · {state.fieldRepairSeconds.toFixed(1)}s · -{state.fieldRepairPenaltyPoints} score
+                  </div>
+                )}
+              </div>
+            )}
+
             {debugEnabled && (
               <button
                 type="button"
@@ -583,6 +736,7 @@ export default function HUD() {
             <h2 className="mb-5 flex items-center gap-2 text-sm font-bold uppercase tracking-[0.18em] text-slate-400">
               <Gauge className="h-4 w-4" /> Physics engine
             </h2>
+            <EnvironmentAuthorityNotice {...authorityNoticeProps} />
             <ForceControls {...forceProps} />
           </section>
 
@@ -613,7 +767,7 @@ export default function HUD() {
             </button>
             <button
               type="button"
-              aria-label="Repair vessel"
+              aria-label="Activate bilge pump and emergency field repair"
               onPointerDown={(event) => holdKey(event, 'r', true)}
               onPointerUp={(event) => holdKey(event, 'r', false)}
               onPointerCancel={(event) => holdKey(event, 'r', false)}

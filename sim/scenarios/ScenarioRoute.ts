@@ -1,5 +1,9 @@
-import { getTerrainHeight } from '@/lib/terrain';
-import { sharedPhysics } from '@/store/useSimStore';
+import { sampleTerrainHeightfield } from '@/sim/terrain/TerrainHeightfield';
+import { worldDirectionToHeadingDegrees } from '@/sim/world/WorldDirection';
+import {
+  distanceToWhirlpoolBasinCenterM,
+  WHIRLPOOL_ROUTE_CLEARANCE_RADIUS_M,
+} from '@/sim/world/WorldEnvironment';
 import {
   getScenarioDefinition,
   type ScenarioCheckpointDefinition,
@@ -22,7 +26,9 @@ export interface ResolvedScenarioWaypoint
 
 export interface ResolvedScenarioEntity
   extends ScenarioEntityDefinition,
-    ResolvedNavigablePosition {}
+    ResolvedNavigablePosition {
+  headingDeg: number;
+}
 
 export interface ResolvedScenarioCheckpoint
   extends ScenarioCheckpointDefinition {
@@ -36,7 +42,6 @@ const WATER_DEPTH_THRESHOLD_M = -1.4;
 const SEARCH_STEP_M = 18;
 const SEARCH_RINGS = 14;
 const SEARCH_SAMPLES_PER_RING = 20;
-const MIN_WHIRLPOOL_DISTANCE_M = 230;
 const routeCache = new Map<ScenarioId, readonly ResolvedScenarioWaypoint[]>();
 const entityCache = new Map<ScenarioId, readonly ResolvedScenarioEntity[]>();
 const checkpointCache = new Map<
@@ -45,16 +50,13 @@ const checkpointCache = new Map<
 >();
 
 export function isNavigableWater(x: number, z: number) {
-  const terrainHeight = getTerrainHeight(x, z);
-  const whirlpoolDistance = Math.hypot(
-    x - sharedPhysics.whirlpoolPos.x,
-    z - sharedPhysics.whirlpoolPos.z,
-  );
+  const terrainHeight = sampleTerrainHeightfield(x, z);
+  const whirlpoolBasinDistance = distanceToWhirlpoolBasinCenterM(x, z);
 
   return (
     Number.isFinite(terrainHeight) &&
     terrainHeight <= WATER_DEPTH_THRESHOLD_M &&
-    whirlpoolDistance >= MIN_WHIRLPOOL_DISTANCE_M
+    whirlpoolBasinDistance >= WHIRLPOOL_ROUTE_CLEARANCE_RADIUS_M
   );
 }
 
@@ -118,10 +120,6 @@ function resolveWaypoint(
   };
 }
 
-function normalizeBearing(degrees: number) {
-  return ((degrees % 360) + 360) % 360;
-}
-
 export function getResolvedScenarioRoute(
   scenarioId: ScenarioId,
 ): readonly ResolvedScenarioWaypoint[] {
@@ -132,6 +130,26 @@ export function getResolvedScenarioRoute(
   const route = scenario.mission.waypoints.map(resolveWaypoint);
   routeCache.set(scenarioId, route);
   return route;
+}
+
+function resolveInboundRouteHeading(
+  route: readonly ResolvedScenarioWaypoint[],
+  waypointId: string,
+) {
+  const waypointIndex = route.findIndex(
+    (waypoint) => waypoint.id === waypointId,
+  );
+  if (waypointIndex < 0) return 0;
+
+  const target = route[waypointIndex];
+  const source =
+    waypointIndex === 0
+      ? { x: 0, z: 0 }
+      : route[waypointIndex - 1];
+  return worldDirectionToHeadingDegrees(
+    target.x - source.x,
+    target.z - source.z,
+  );
 }
 
 export function getResolvedScenarioEntities(
@@ -152,6 +170,7 @@ export function getResolvedScenarioEntities(
     return {
       ...entity,
       ...resolveNavigablePosition(sourceX, sourceZ, 100 + index),
+      headingDeg: resolveInboundRouteHeading(route, entity.waypointId),
     };
   });
 
@@ -180,13 +199,9 @@ export function getResolvedScenarioCheckpoints(
       headingTarget === waypoint
         ? route[Math.max(0, waypointIndex - 1)] ?? { x: 0, z: 0 }
         : waypoint;
-    const headingDeg = normalizeBearing(
-      (Math.atan2(
-        headingTarget.x - headingSource.x,
-        -(headingTarget.z - headingSource.z),
-      ) *
-        180) /
-        Math.PI,
+    const headingDeg = worldDirectionToHeadingDegrees(
+      headingTarget.x - headingSource.x,
+      headingTarget.z - headingSource.z,
     );
 
     return [

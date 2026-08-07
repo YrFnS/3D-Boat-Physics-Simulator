@@ -3,6 +3,8 @@
 import { Float } from '@react-three/drei';
 import { useMemo } from 'react';
 import type { ScenarioEntityType } from '@/sim/scenarios/ScenarioCatalog';
+import { resolveNavigationGateHalfWidthM } from '@/sim/scenarios/ScenarioInteractionRuntime';
+import { headingDegreesToYawRadians } from '@/sim/world/WorldDirection';
 import {
   getResolvedScenarioEntities,
   getResolvedScenarioRoute,
@@ -23,15 +25,15 @@ const STATE_COLORS = {
 } as const;
 
 function NavigationGate({
-  radiusM,
+  halfWidthM,
   color,
   opacity,
 }: {
-  radiusM: number;
+  halfWidthM: number;
   color: string;
   opacity: number;
 }) {
-  const halfWidth = Math.max(4, Math.min(9, radiusM * 0.42));
+  const halfWidth = halfWidthM;
 
   return (
     <group>
@@ -212,7 +214,11 @@ function EntityModel({
 
   if (type === 'navigation-gate') {
     return (
-      <NavigationGate radiusM={radiusM} color={color} opacity={opacity} />
+      <NavigationGate
+        halfWidthM={resolveNavigationGateHalfWidthM({ radiusM })}
+        color={color}
+        opacity={opacity}
+      />
     );
   }
   if (type === 'cargo-pickup' || type === 'cargo-delivery') {
@@ -280,7 +286,16 @@ export default function ScenarioEntities({
             ? 'active'
             : 'future';
         const model = (
-          <group position={[entity.x, 0.3, entity.z]}>
+          <group
+            position={[entity.x, 0.3, entity.z]}
+            rotation={[
+              0,
+              entity.type === 'navigation-gate'
+                ? headingDegreesToYawRadians(entity.headingDeg)
+                : 0,
+              0,
+            ]}
+          >
             <EntityModel
               type={entity.type}
               radiusM={entity.radiusM}
@@ -289,7 +304,9 @@ export default function ScenarioEntities({
           </group>
         );
 
-        return active ? (
+        // Gates are fixed navigation structures. Floating them would make the
+        // visible posts diverge from the authoritative crossing plane.
+        return active && entity.type !== 'navigation-gate' ? (
           <Float
             key={entity.id}
             speed={1.7}

@@ -55,6 +55,12 @@ function writeHistoryDataset() {
   const dataset = document.documentElement.dataset;
   dataset.simScenarioHistoryAttempts = String(record.attempts);
   dataset.simScenarioHistoryCompletions = String(record.completions);
+  dataset.simScenarioHistoryAssistedAttempts = String(
+    record.assistedAttempts,
+  );
+  dataset.simScenarioHistoryAssistedCompletions = String(
+    record.assistedCompletions,
+  );
   dataset.simScenarioBestScore = String(record.bestScore);
   dataset.simScenarioBestTimeSeconds =
     record.bestTimeSeconds === null ? '' : String(record.bestTimeSeconds);

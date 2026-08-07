@@ -4,6 +4,17 @@ import { useFrame } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import { MathUtils } from 'three';
 import {
+  normalizeSignedHeadingDeltaDegrees,
+  worldDirectionToHeadingDegrees,
+} from '@/sim/world/WorldDirection';
+import { sharedMissionRuntimeStatistics } from '@/sim/scenarios/MissionRuntimeStatistics';
+import { calculateFieldRepairPenalty } from '@/sim/vessels/FieldRepairPolicy';
+import {
+  createIdleScenarioInteractionTelemetry,
+  ScenarioInteractionRuntime,
+  type ScenarioInteractionEvaluation,
+} from '@/sim/scenarios/ScenarioInteractionRuntime';
+import {
   getScenarioDefinition,
   type ScenarioDefinition,
 } from '@/sim/scenarios/ScenarioCatalog';
@@ -25,11 +36,7 @@ interface ScenarioDirectorProps {
 }
 
 interface RuntimeStatistics {
-  elapsedSeconds: number;
-  maximumSpeedKnots: number;
-  distanceTravelledM: number;
-  previousBoatX: number;
-  previousBoatZ: number;
+  lastProcessedElapsedSeconds: number;
   collisionSequenceAtStart: number;
 }
 
@@ -37,15 +44,6 @@ type MissionTestMode = 'complete' | 'fail' | 'checkpoint' | null;
 
 const NAVIGATION_UPDATE_INTERVAL_SECONDS = 0.1;
 const MAX_OPERATIONAL_RADIUS_M = 1_500;
-const MAX_VALID_SAMPLE_DISTANCE_M = 60;
-
-function normalizeBearing(degrees: number) {
-  return ((degrees % 360) + 360) % 360;
-}
-
-function normalizeSignedBearing(degrees: number) {
-  return ((degrees + 540) % 360) - 180;
-}
 
 function readMissionTestMode(): MissionTestMode {
   if (typeof window === 'undefined') return null;
@@ -77,7 +75,12 @@ function calculateScore(
 
   return Math.round(
     MathUtils.clamp(
-      1_000 - timePenalty - damagePenalty - contactPenalty - resetPenalty,
+      1_000 -
+        timePenalty -
+        damagePenalty -
+        contactPenalty -
+        resetPenalty -
+        result.repairPenaltyPoints,
       0,
       1_000,
     ),
@@ -106,28 +109,25 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
   const missionTestMode = useRef<MissionTestMode>(readMissionTestMode());
   const missionTestRunId = useRef(-1);
   const updateAccumulator = useRef(0);
+  const interactionRuntime = useRef(new ScenarioInteractionRuntime());
   const runtime = useRef<RuntimeStatistics>({
-    elapsedSeconds: 0,
-    maximumSpeedKnots: 0,
-    distanceTravelledM: 0,
-    previousBoatX: 0,
-    previousBoatZ: 0,
+    lastProcessedElapsedSeconds: 0,
     collisionSequenceAtStart: 0,
   });
 
   useEffect(() => {
     runtime.current = {
-      elapsedSeconds: 0,
-      maximumSpeedKnots: 0,
-      distanceTravelledM: 0,
-      previousBoatX: sharedPhysics.boatPos.x,
-      previousBoatZ: sharedPhysics.boatPos.z,
+      lastProcessedElapsedSeconds: 0,
       collisionSequenceAtStart: sharedPhysics.collisionSequence,
     };
     updateAccumulator.current = 0;
+    interactionRuntime.current.reset(
+      scenarioRunId,
+      useSimStore.getState().resetVesselTrigger,
+    );
   }, [scenarioRunId]);
 
-  useFrame((_, delta) => {
+  useFrame(() => {
     if (!enabled || route.length === 0) return;
 
     const store = useSimStore.getState();
@@ -139,36 +139,30 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
       return;
     }
 
-    const frameDelta = Math.min(Math.max(delta, 0), 0.1);
+    const missionStatistics =
+      sharedMissionRuntimeStatistics.snapshot;
+    if (missionStatistics.runId !== scenarioRunId) return;
+
     const statistics = runtime.current;
-    statistics.elapsedSeconds += frameDelta;
-    statistics.maximumSpeedKnots = Math.max(
-      statistics.maximumSpeedKnots,
-      Math.abs(store.speedKnots),
+    const fixedStepAdvance = Math.max(
+      0,
+      missionStatistics.elapsedSeconds -
+        statistics.lastProcessedElapsedSeconds,
     );
+    statistics.lastProcessedElapsedSeconds =
+      missionStatistics.elapsedSeconds;
 
     const boatX = sharedPhysics.boatPos.x;
     const boatZ = sharedPhysics.boatPos.z;
-    const sampleDistance = Math.hypot(
-      boatX - statistics.previousBoatX,
-      boatZ - statistics.previousBoatZ,
-    );
-    if (
-      Number.isFinite(sampleDistance) &&
-      sampleDistance <= MAX_VALID_SAMPLE_DISTANCE_M
-    ) {
-      statistics.distanceTravelledM += sampleDistance;
-    }
-    statistics.previousBoatX = boatX;
-    statistics.previousBoatZ = boatZ;
 
-    updateAccumulator.current += frameDelta;
+    updateAccumulator.current += fixedStepAdvance;
     if (
       updateAccumulator.current < NAVIGATION_UPDATE_INTERVAL_SECONDS
     ) {
       return;
     }
-    updateAccumulator.current %= NAVIGATION_UPDATE_INTERVAL_SECONDS;
+    const interactionDeltaSeconds = updateAccumulator.current;
+    updateAccumulator.current = 0;
 
     const waypointIndex = MathUtils.clamp(
       store.activeWaypointIndex,
@@ -179,10 +173,8 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
     const deltaX = waypoint.x - boatX;
     const deltaZ = waypoint.z - boatZ;
     const distanceM = Math.hypot(deltaX, deltaZ);
-    const bearingDeg = normalizeBearing(
-      MathUtils.radToDeg(Math.atan2(deltaX, -deltaZ)),
-    );
-    const relativeBearingDeg = normalizeSignedBearing(
+    const bearingDeg = worldDirectionToHeadingDegrees(deltaX, deltaZ);
+    const relativeBearingDeg = normalizeSignedHeadingDeltaDegrees(
       bearingDeg - store.heading,
     );
     const previousWaypoint =
@@ -208,7 +200,7 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
     );
 
     store.setScenarioNavigation({
-      elapsedSeconds: statistics.elapsedSeconds,
+      elapsedSeconds: missionStatistics.elapsedSeconds,
       progress,
       distanceM,
       bearingDeg,
@@ -233,8 +225,13 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
       const entitiesCompleted = requiredEntities.filter((entity) =>
         latestStore.completedScenarioEntityIds.includes(entity.id),
       ).length;
+      const repairPenaltyPoints =
+        calculateFieldRepairPenalty(missionStatistics);
       const baseResult = {
-        elapsedSeconds: statistics.elapsedSeconds,
+        runMode: latestStore.scenarioRunMode,
+        assistanceReason:
+          latestStore.scenarioAssistanceReason || null,
+        elapsedSeconds: missionStatistics.elapsedSeconds,
         waypointsCompleted,
         totalWaypoints: route.length,
         entitiesCompleted,
@@ -244,8 +241,15 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
         rudderHealth: latestStore.rudderHealth,
         collisionCount,
         resetCount: latestStore.scenarioResetCount,
-        maximumSpeedKnots: statistics.maximumSpeedKnots,
-        distanceTravelledM: statistics.distanceTravelledM,
+        repairActiveSeconds: missionStatistics.repairActiveSeconds,
+        repairActivationCount: missionStatistics.repairActivationCount,
+        engineConditionRestored:
+          missionStatistics.engineConditionRestored,
+        rudderConditionRestored:
+          missionStatistics.rudderConditionRestored,
+        repairPenaltyPoints,
+        maximumSpeedKnots: missionStatistics.maximumSpeedKnots,
+        distanceTravelledM: missionStatistics.distanceTravelledM,
         checkpointLabel: latestStore.scenarioCheckpointLabel,
       };
       const result: ScenarioResult = {
@@ -261,13 +265,16 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
       useScenarioHistory
         .getState()
         .recordResult(activeScenario, latestStore.activeBoat, result);
+      latestStore.setScenarioInteraction(
+        createIdleScenarioInteractionTelemetry(),
+      );
       latestStore.finishScenario(result);
     };
 
     if (
       missionTestMode.current &&
       missionTestRunId.current !== scenarioRunId &&
-      statistics.elapsedSeconds >= 0.75
+      missionStatistics.elapsedSeconds >= 0.75
     ) {
       missionTestRunId.current = scenarioRunId;
 
@@ -308,7 +315,8 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
       return;
     }
 
-    if (statistics.elapsedSeconds > scenario.mission.timeLimitSeconds) {
+    if (missionStatistics.elapsedSeconds >
+      scenario.mission.timeLimitSeconds) {
       finish(
         'failed',
         `The ${Math.round(scenario.mission.timeLimitSeconds / 60)} minute operational window expired before the route was complete.`,
@@ -330,29 +338,52 @@ export default function ScenarioDirector({ enabled }: ScenarioDirectorProps) {
       (entity) => entity.waypointId === waypoint.id,
     );
     const completedBefore = new Set(store.completedScenarioEntityIds);
-    const newlyCompleted = entitiesAtWaypoint.filter((entity) => {
-      if (completedBefore.has(entity.id)) return false;
-      if (
-        entity.requiresEntityId &&
-        !completedBefore.has(entity.requiresEntityId)
-      ) {
-        return false;
+    const newlyCompleted = [];
+    const interactionEvaluations = new Map<
+      string,
+      ScenarioInteractionEvaluation
+    >();
+
+    for (const entity of entitiesAtWaypoint) {
+      if (completedBefore.has(entity.id)) continue;
+      const prerequisiteMet =
+        !entity.requiresEntityId ||
+        completedBefore.has(entity.requiresEntityId);
+      const evaluation = interactionRuntime.current.evaluate(entity, {
+        runId: scenarioRunId,
+        vesselGeneration: store.resetVesselTrigger,
+        boatX,
+        boatZ,
+        speedKnots: store.speedKnots,
+        deltaSeconds: interactionDeltaSeconds,
+        prerequisiteMet,
+        alreadyCompleted: false,
+      });
+      interactionEvaluations.set(entity.id, evaluation);
+      if (evaluation.completed) {
+        newlyCompleted.push(entity);
+        completedBefore.add(entity.id);
       }
-      return Math.hypot(entity.x - boatX, entity.z - boatZ) <= entity.radiusM;
-    });
+    }
 
     if (newlyCompleted.length > 0) {
       store.completeScenarioEntities(
         newlyCompleted.map((entity) => entity.id),
         newlyCompleted.map((entity) => entity.completionMessage).join(' '),
       );
-      for (const entity of newlyCompleted) completedBefore.add(entity.id);
     }
 
     const pendingRequiredEntity = entitiesAtWaypoint.find(
       (entity) => entity.required && !completedBefore.has(entity.id),
     );
-    if (pendingRequiredEntity) return;
+    if (pendingRequiredEntity) {
+      store.setScenarioInteraction(
+        interactionEvaluations.get(pendingRequiredEntity.id) ??
+          createIdleScenarioInteractionTelemetry(),
+      );
+      return;
+    }
+    store.setScenarioInteraction(createIdleScenarioInteractionTelemetry());
 
     if (distanceM > waypoint.radiusM) return;
 

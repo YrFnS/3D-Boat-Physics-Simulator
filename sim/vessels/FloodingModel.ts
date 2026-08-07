@@ -2,6 +2,7 @@ import type {
   FloodCompartmentConfig,
   VesselConfig,
 } from '@/sim/vessels/VesselConfig';
+import { FIELD_REPAIR_LIMITS } from './FieldRepairPolicy.ts';
 const GRAVITY_MPS2 = 9.81;
 const DISCHARGE_COEFFICIENT = 0.62;
 const EPSILON = 1e-8;
@@ -157,7 +158,8 @@ export class FloodingModel {
       if (activePump && dt > 0) {
         state.breachSeverity = Math.max(
           0,
-          state.breachSeverity - 0.055 * dt,
+          state.breachSeverity -
+            FIELD_REPAIR_LIMITS.breachStabilizationPerSecond * dt,
         );
       }
     }
