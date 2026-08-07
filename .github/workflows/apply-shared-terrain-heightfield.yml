@@ -44,61 +44,48 @@ jobs:
           source = Path('/tmp/original-terrain-migration.yml').read_text(
               encoding='utf-8'
           )
-
-          old_import = (
-              "\"import { getSharedTerrainHeightfield } from "
-              "'@/sim/terrain/TerrainHeightfield';\\n\","
-          )
-          new_import = (
-              "\"import {\\n  getSharedTerrainHeightfield,"
-              "\\n  sampleTerrainHeightfield,\\n} from "
-              "'@/sim/terrain/TerrainHeightfield';\\n\","
-          )
-          if source.count(old_import) != 1:
-              raise SystemExit(
-                  f'Expected one Ocean import target, found '
-                  f'{source.count(old_import)}.'
-              )
-          source = source.replace(old_import, new_import, 1)
-
-          old_tail = (
-              "              'Ocean dampening map',\n"
-              "          )\n\n"
-              "          replace_once(\n"
-              "              'components/Buoys.tsx',\n"
-          )
-          new_tail = (
-              "              'Ocean dampening map',\n"
-              "          )\n"
-              "          ocean_path = Path('components/Ocean.tsx')\n"
-              "          ocean_source = ocean_path.read_text("
-              "encoding='utf-8').replace(\n"
-              "              'getTerrainHeight(',\n"
-              "              'sampleTerrainHeightfield(',\n"
-              "          )\n"
-              "          ocean_path.write_text("
-              "ocean_source, encoding='utf-8')\n\n"
-              "          replace_once(\n"
-              "              'components/Buoys.tsx',\n"
-          )
-          if source.count(old_tail) != 1:
-              raise SystemExit(
-                  f'Expected one Ocean sampler insertion target, found '
-                  f'{source.count(old_tail)}.'
-              )
-          source = source.replace(old_tail, new_tail, 1)
-
           start_marker = "          python - <<'PY'\n"
           end_marker = "\n          PY\n"
           start = source.index(start_marker) + len(start_marker)
           end = source.index(end_marker, start)
-          migration_script = dedent(source[start:end])
           Path('/tmp/apply_shared_terrain.py').write_text(
-              migration_script,
+              dedent(source[start:end]),
               encoding='utf-8',
           )
           PY
           python /tmp/apply_shared_terrain.py
+
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('components/Ocean.tsx')
+          source = path.read_text(encoding='utf-8')
+          old_import = (
+              "import { getSharedTerrainHeightfield } "
+              "from '@/sim/terrain/TerrainHeightfield';\n"
+          )
+          new_import = (
+              "import {\n"
+              "  getSharedTerrainHeightfield,\n"
+              "  sampleTerrainHeightfield,\n"
+              "} from '@/sim/terrain/TerrainHeightfield';\n"
+          )
+          if source.count(old_import) != 1:
+              raise SystemExit(
+                  f'Expected one migrated Ocean terrain import, found '
+                  f'{source.count(old_import)}.'
+              )
+          source = source.replace(old_import, new_import, 1)
+          source = source.replace(
+              'getTerrainHeight(',
+              'sampleTerrainHeightfield(',
+          )
+          if 'getTerrainHeight' in source:
+              raise SystemExit(
+                  'Ocean.tsx still contains direct procedural terrain reads.'
+              )
+          path.write_text(source, encoding='utf-8')
+          PY
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
