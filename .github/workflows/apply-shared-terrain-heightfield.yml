@@ -32,7 +32,11 @@ jobs:
       - name: Apply canonical terrain authority
         shell: bash
         run: |
-          git show de1d7a9e970f82f112b6a68c5919908f3e5ca030:.github/workflows/apply-shared-terrain-heightfield.yml > /tmp/original-terrain-migration.yml
+          curl --fail --silent --show-error --location \
+            -H "Accept: application/vnd.github.raw+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/YrFnS/3D-Boat-Physics-Simulator/contents/.github/workflows/apply-shared-terrain-heightfield.yml?ref=fc61d0d801d57b5d320d0593450e4cf71a44852e" \
+            --output /tmp/original-terrain-migration.yml
           python - <<'PY'
           from pathlib import Path
           from textwrap import dedent
