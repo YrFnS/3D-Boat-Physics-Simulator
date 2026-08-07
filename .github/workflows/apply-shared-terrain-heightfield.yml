@@ -41,37 +41,46 @@ jobs:
               encoding='utf-8'
           )
 
-          old_import = '''              "import { getSharedTerrainHeightfield } from '@/sim/terrain/TerrainHeightfield';\\n",
-'''
-          new_import = '''              "import {\\n  getSharedTerrainHeightfield,\\n  sampleTerrainHeightfield,\\n} from '@/sim/terrain/TerrainHeightfield';\\n",
-'''
+          old_import = (
+              "              \"import { getSharedTerrainHeightfield } from "
+              "'@/sim/terrain/TerrainHeightfield';\\\\n\",\n"
+          )
+          new_import = (
+              "              \"import {\\\\n  getSharedTerrainHeightfield,"
+              "\\\\n  sampleTerrainHeightfield,\\\\n} from "
+              "'@/sim/terrain/TerrainHeightfield';\\\\n\",\n"
+          )
           if source.count(old_import) != 1:
               raise SystemExit(
-                  f'Expected one Ocean import target, found {source.count(old_import)}.'
+                  f'Expected one Ocean import target, found '
+                  f'{source.count(old_import)}.'
               )
           source = source.replace(old_import, new_import, 1)
 
-          old_tail = '''              'Ocean dampening map',
+          old_tail = (
+              "              'Ocean dampening map',\n"
+              "          )\n\n"
+              "          replace_once(\n"
+              "              'components/Buoys.tsx',\n"
           )
-
-          replace_once(
-              'components/Buoys.tsx',
-'''
-          new_tail = '''              'Ocean dampening map',
+          new_tail = (
+              "              'Ocean dampening map',\n"
+              "          )\n"
+              "          ocean_path = Path('components/Ocean.tsx')\n"
+              "          ocean_source = ocean_path.read_text("
+              "encoding='utf-8').replace(\n"
+              "              'getTerrainHeight(',\n"
+              "              'sampleTerrainHeightfield(',\n"
+              "          )\n"
+              "          ocean_path.write_text("
+              "ocean_source, encoding='utf-8')\n\n"
+              "          replace_once(\n"
+              "              'components/Buoys.tsx',\n"
           )
-          ocean_path = Path('components/Ocean.tsx')
-          ocean_source = ocean_path.read_text(encoding='utf-8').replace(
-              'getTerrainHeight(',
-              'sampleTerrainHeightfield(',
-          )
-          ocean_path.write_text(ocean_source, encoding='utf-8')
-
-          replace_once(
-              'components/Buoys.tsx',
-'''
           if source.count(old_tail) != 1:
               raise SystemExit(
-                  f'Expected one Ocean sampler insertion target, found {source.count(old_tail)}.'
+                  f'Expected one Ocean sampler insertion target, found '
+                  f'{source.count(old_tail)}.'
               )
           source = source.replace(old_tail, new_tail, 1)
 
