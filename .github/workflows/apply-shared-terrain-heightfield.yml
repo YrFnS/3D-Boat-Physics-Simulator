@@ -1,0 +1,114 @@
+name: Apply shared terrain heightfield
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/apply-shared-terrain-heightfield.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: shared-terrain-heightfield
+  cancel-in-progress: false
+
+env:
+  CI: 1
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  apply-and-validate:
+    if: github.head_ref == 'agent/simulator-stabilization' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out stabilization branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/simulator-stabilization
+          fetch-depth: 0
+
+      - name: Apply canonical terrain authority
+        shell: bash
+        run: |
+          git show de1d7a9e970f82f112b6a68c5919908f3e5ca030:.github/workflows/apply-shared-terrain-heightfield.yml > /tmp/original-terrain-migration.yml
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          source = Path('/tmp/original-terrain-migration.yml').read_text(
+              encoding='utf-8'
+          )
+
+          old_import = '''              "import { getSharedTerrainHeightfield } from '@/sim/terrain/TerrainHeightfield';\\n",
+'''
+          new_import = '''              "import {\\n  getSharedTerrainHeightfield,\\n  sampleTerrainHeightfield,\\n} from '@/sim/terrain/TerrainHeightfield';\\n",
+'''
+          if source.count(old_import) != 1:
+              raise SystemExit(
+                  f'Expected one Ocean import target, found {source.count(old_import)}.'
+              )
+          source = source.replace(old_import, new_import, 1)
+
+          old_tail = '''              'Ocean dampening map',
+          )
+
+          replace_once(
+              'components/Buoys.tsx',
+'''
+          new_tail = '''              'Ocean dampening map',
+          )
+          ocean_path = Path('components/Ocean.tsx')
+          ocean_source = ocean_path.read_text(encoding='utf-8').replace(
+              'getTerrainHeight(',
+              'sampleTerrainHeightfield(',
+          )
+          ocean_path.write_text(ocean_source, encoding='utf-8')
+
+          replace_once(
+              'components/Buoys.tsx',
+'''
+          if source.count(old_tail) != 1:
+              raise SystemExit(
+                  f'Expected one Ocean sampler insertion target, found {source.count(old_tail)}.'
+              )
+          source = source.replace(old_tail, new_tail, 1)
+
+          start_marker = "          python - <<'PY'\n"
+          end_marker = "\n          PY\n"
+          start = source.index(start_marker) + len(start_marker)
+          end = source.index(end_marker, start)
+          migration_script = dedent(source[start:end])
+          Path('/tmp/apply_shared_terrain.py').write_text(
+              migration_script,
+              encoding='utf-8',
+          )
+          PY
+          python /tmp/apply_shared_terrain.py
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate shared terrain contract
+        run: npm run test:terrain-heightfield
+
+      - name: Validate complete repository
+        run: npm run validate
+
+      - name: Commit validated terrain authority
+        shell: bash
+        run: |
+          rm .github/workflows/apply-shared-terrain-heightfield.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: unify terrain rendering and collision"
+          git push origin HEAD:agent/simulator-stabilization
