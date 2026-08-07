@@ -46,13 +46,13 @@ jobs:
           )
 
           old_import = (
-              "              \"import { getSharedTerrainHeightfield } from "
-              "'@/sim/terrain/TerrainHeightfield';\\\\n\",\n"
+              "\"import { getSharedTerrainHeightfield } from "
+              "'@/sim/terrain/TerrainHeightfield';\\n\","
           )
           new_import = (
-              "              \"import {\\\\n  getSharedTerrainHeightfield,"
-              "\\\\n  sampleTerrainHeightfield,\\\\n} from "
-              "'@/sim/terrain/TerrainHeightfield';\\\\n\",\n"
+              "\"import {\\n  getSharedTerrainHeightfield,"
+              "\\n  sampleTerrainHeightfield,\\n} from "
+              "'@/sim/terrain/TerrainHeightfield';\\n\","
           )
           if source.count(old_import) != 1:
               raise SystemExit(
