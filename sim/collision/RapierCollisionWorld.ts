@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { MathUtils, Quaternion, Vector3 } from 'three';
-import { getTerrainHeight } from '@/lib/terrain';
+import { getSharedTerrainHeightfield } from '@/sim/terrain/TerrainHeightfield';
 import { MAX_OBSTACLES } from '@/store/useSimStore';
 import type { SixDofBody } from '@/sim/core/SixDofBody';
 import type { VersionedObstacleField } from './VersionedObstacleField';
@@ -10,8 +10,6 @@ import {
   type CollisionContactPairObservation,
 } from './CollisionContactLifecycle';
 
-const TERRAIN_SIZE_M = 3_000;
-const TERRAIN_SEGMENTS = 96;
 const CONTACT_PREDICTION_M = 0.12;
 const COLLIDER_BORDER_M = 0.08;
 const DEBUG_PROBE_HALF_WIDTH_M = 3.5;
@@ -91,51 +89,6 @@ function createEmptySummary(): RapierContactSummary {
   };
 }
 
-function createTerrainMesh() {
-  const pointsPerAxis = TERRAIN_SEGMENTS + 1;
-  const vertices = new Float32Array(pointsPerAxis * pointsPerAxis * 3);
-  const indices = new Uint32Array(TERRAIN_SEGMENTS * TERRAIN_SEGMENTS * 6);
-  const halfSize = TERRAIN_SIZE_M * 0.5;
-
-  let vertexOffset = 0;
-  for (let zIndex = 0; zIndex < pointsPerAxis; zIndex += 1) {
-    const z =
-      -halfSize + (zIndex / TERRAIN_SEGMENTS) * TERRAIN_SIZE_M;
-    for (let xIndex = 0; xIndex < pointsPerAxis; xIndex += 1) {
-      const x =
-        -halfSize + (xIndex / TERRAIN_SEGMENTS) * TERRAIN_SIZE_M;
-      vertices[vertexOffset] = x;
-      vertices[vertexOffset + 1] = MathUtils.clamp(
-        getTerrainHeight(x, z),
-        -140,
-        120,
-      );
-      vertices[vertexOffset + 2] = z;
-      vertexOffset += 3;
-    }
-  }
-
-  let indexOffset = 0;
-  for (let zIndex = 0; zIndex < TERRAIN_SEGMENTS; zIndex += 1) {
-    for (let xIndex = 0; xIndex < TERRAIN_SEGMENTS; xIndex += 1) {
-      const a = zIndex * pointsPerAxis + xIndex;
-      const b = a + 1;
-      const c = a + pointsPerAxis;
-      const d = c + 1;
-
-      indices[indexOffset] = a;
-      indices[indexOffset + 1] = c;
-      indices[indexOffset + 2] = b;
-      indices[indexOffset + 3] = b;
-      indices[indexOffset + 4] = c;
-      indices[indexOffset + 5] = d;
-      indexOffset += 6;
-    }
-  }
-
-  return { vertices, indices };
-}
-
 /**
  * Dynamic Rapier collision authority for the custom marine-force body.
  *
@@ -187,7 +140,7 @@ export class RapierCollisionWorld {
     this.world.numSolverIterations = 6;
     this.world.numInternalPgsIterations = 2;
 
-    const terrain = createTerrainMesh();
+    const terrain = getSharedTerrainHeightfield();
     this.terrainCollider = this.world.createCollider(
       rapier.ColliderDesc.trimesh(
         terrain.vertices,

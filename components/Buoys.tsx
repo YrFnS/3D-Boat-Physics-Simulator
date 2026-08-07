@@ -11,7 +11,7 @@ import {
   Quaternion,
   Vector3,
 } from 'three';
-import { getTerrainHeight } from '@/lib/terrain';
+import { sampleTerrainHeightfield } from '@/sim/terrain/TerrainHeightfield';
 import { sampleOceanSurface } from './Ocean';
 import { createWaterSurfaceSample } from '@/sim/water/WaterSurface';
 import {
@@ -214,7 +214,7 @@ export default function Buoys() {
       const x = (random() - 0.5) * 1500;
       const z = (random() - 0.5) * 1500;
 
-      if (getTerrainHeight(x, z) < -5) {
+      if (sampleTerrainHeightfield(x, z) < -5) {
         points.push({ x, z });
       }
     }

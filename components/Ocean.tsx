@@ -23,7 +23,10 @@ import {
   sharedPhysics,
   useSimStore,
 } from '@/store/useSimStore';
-import { getTerrainHeight } from '@/lib/terrain';
+import {
+  getSharedTerrainHeightfield,
+  sampleTerrainHeightfield,
+} from '@/sim/terrain/TerrainHeightfield';
 import { sharedWakeField } from './WakeField';
 import {
   sampleGerstnerSurface,
@@ -413,15 +416,16 @@ function createOceanGeometry(config: OceanQualityConfig) {
   };
 }
 
+
 function createDampeningMap() {
-  const size = 128;
+  const terrain = getSharedTerrainHeightfield();
+  const size = terrain.pointsPerAxis;
   const data = new Uint8Array(size * size * 4);
 
   for (let row = 0; row < size; row += 1) {
     for (let column = 0; column < size; column += 1) {
-      const x = (column / (size - 1) - 0.5) * 3000;
-      const z = (row / (size - 1) - 0.5) * 3000;
-      const terrainHeight = getTerrainHeight(x, z);
+      const terrainHeight =
+        terrain.heights[row * size + column];
       const dampening =
         terrainHeight > -10
           ? Math.max(0, Math.min(1, -terrainHeight / 10))
@@ -527,7 +531,7 @@ export const sampleOceanSurface = (
   time: number,
   target: WaterSurfaceSample,
 ): WaterSurfaceSample => {
-  const terrainHeight = getTerrainHeight(x, z);
+  const terrainHeight = sampleTerrainHeightfield(x, z);
   let dampening =
     terrainHeight > -10
       ? Math.max(0, Math.min(1, -terrainHeight / 10))

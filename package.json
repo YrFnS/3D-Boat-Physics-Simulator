@@ -16,6 +16,7 @@
     "calibrate:physics": "node --experimental-strip-types --no-warnings scripts/physics-calibration.mjs",
     "test:runtime-authority": "node --experimental-strip-types --no-warnings scripts/runtime-authority-contract.mjs",
     "test:world-environment": "node --experimental-strip-types --no-warnings scripts/world-environment-contract.mjs",
+    "test:terrain-heightfield": "node --experimental-strip-types --no-warnings scripts/terrain-heightfield-contract.mjs",
     "test:world-direction": "node --experimental-strip-types --no-warnings scripts/world-direction-contract.mjs",
     "test:obstacle-sync": "node --experimental-strip-types --no-warnings scripts/versioned-obstacle-field-contract.mjs",
     "test:collision-lifecycle": "node --experimental-strip-types --no-warnings scripts/collision-contact-lifecycle-contract.mjs",
@@ -37,7 +38,7 @@
     "test:product-settings": "node scripts/onboarding-settings-smoke.mjs",
     "test:product-suite": "npm run test:product-experience && npm run test:product-gameplay && npm run test:product-settings",
     "test:physical-calibration": "node --experimental-strip-types --no-warnings scripts/physical-calibration-contract.mjs && node --experimental-strip-types --no-warnings scripts/external-reference-contract.mjs && node --experimental-strip-types --no-warnings scripts/reference-configuration-contract.mjs && node --experimental-strip-types --no-warnings scripts/reference-loading-case-contract.mjs",
-    "test:physics": "npm run test:runtime-authority && npm run test:world-environment && npm run test:world-direction && npm run test:mission-runtime && npm run test:scored-environment && npm run test:scenario-interactions && npm run test:damage-policy && npm run test:vessel-architecture && npm run test:field-repair && node --experimental-strip-types --no-warnings scripts/physics-correctness.mjs && node --no-warnings scripts/collision-authority.mjs && npm run test:physical-calibration && node --experimental-strip-types --no-warnings scripts/reference-vessel-validation.mjs && node --experimental-strip-types --no-warnings scripts/hydrostatic-stability-validation.mjs",
+    "test:physics": "npm run test:runtime-authority && npm run test:world-environment && npm run test:terrain-heightfield && npm run test:world-direction && npm run test:mission-runtime && npm run test:scored-environment && npm run test:scenario-interactions && npm run test:damage-policy && npm run test:vessel-architecture && npm run test:field-repair && node --experimental-strip-types --no-warnings scripts/physics-correctness.mjs && node --no-warnings scripts/collision-authority.mjs && npm run test:physical-calibration && node --experimental-strip-types --no-warnings scripts/reference-vessel-validation.mjs && node --experimental-strip-types --no-warnings scripts/hydrostatic-stability-validation.mjs",
     "report:references": "node --experimental-strip-types --no-warnings scripts/reference-vessel-validation.mjs",
     "report:hydrostatics": "node --experimental-strip-types --no-warnings scripts/hydrostatic-stability-validation.mjs"
   },

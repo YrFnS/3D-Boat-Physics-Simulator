@@ -60,7 +60,11 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
   - [x] Deduplicate repeated changes to the same obstacle before each Rapier synchronization.
   - [x] Ignore sub-threshold buoy motion and retain a bounded revision history with safe full-sync recovery for new or stale collision worlds.
   - [x] Remove direct raw-array obstacle mutation and protect the authority boundary with `test:obstacle-sync`.
-- [ ] Align visible terrain detail and collision detail near the vessel.
+- [x] Align visible terrain, Rapier collision, route safety, buoy placement, and shoreline dampening through one canonical indexed heightfield.
+  - [x] Remove quality-dependent terrain topology so Low through Ultra render the same shoreline triangles used by collision.
+  - [x] Raise the shared collision/visual grid to 128 segments and sample its exact triangle interpolation for CPU navigation decisions.
+  - [x] Keep winter snow visual-only through material shading rather than displacing the physical terrain surface.
+  - [x] Protect the authority boundary with `test:terrain-heightfield` in every physics validation run.
 - [ ] Complete the physical desktop, integrated-GPU, and touch-device benchmark matrix.
 
 ## Exact-head evidence

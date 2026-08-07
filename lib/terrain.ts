@@ -3,7 +3,7 @@ import { MathUtils } from 'three';
 import {
   distanceToWhirlpoolBasinCenterM,
   WHIRLPOOL_TERRAIN_CLEARANCE_RADIUS_M,
-} from '@/sim/world/WorldEnvironment';
+} from '../sim/world/WorldEnvironment.ts';
 
 // Create a deterministic pseudo-random number generator
 function seededRandom(seed = 1337) {

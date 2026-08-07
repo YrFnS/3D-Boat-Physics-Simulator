@@ -1,4 +1,4 @@
-import { getTerrainHeight } from '@/lib/terrain';
+import { sampleTerrainHeightfield } from '@/sim/terrain/TerrainHeightfield';
 import { worldDirectionToHeadingDegrees } from '@/sim/world/WorldDirection';
 import {
   distanceToWhirlpoolBasinCenterM,
@@ -50,7 +50,7 @@ const checkpointCache = new Map<
 >();
 
 export function isNavigableWater(x: number, z: number) {
-  const terrainHeight = getTerrainHeight(x, z);
+  const terrainHeight = sampleTerrainHeightfield(x, z);
   const whirlpoolBasinDistance = distanceToWhirlpoolBasinCenterM(x, z);
 
   return (
