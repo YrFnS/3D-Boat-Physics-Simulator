@@ -62,7 +62,9 @@ This branch stabilizes the cumulative simulator from `integration/all-branches-2
   - [x] Remove direct raw-array obstacle mutation and protect the authority boundary with `test:obstacle-sync`.
 - [x] Align visible terrain, Rapier collision, route safety, buoy placement, and shoreline dampening through one canonical indexed heightfield.
   - [x] Remove quality-dependent terrain topology so Low through Ultra render the same shoreline triangles used by collision.
-  - [x] Raise the shared collision/visual grid to 128 segments and sample its exact triangle interpolation for CPU navigation decisions.
+  - [x] Cache one immutable 129 × 129 point grid—128 segments with 23.4375-metre cells—and share its vertex and index arrays between Three.js and Rapier.
+  - [x] Sample the exact indexed-triangle interpolation for CPU water, route-safety, buoy-placement, and shoreline decisions.
+  - [x] Generate shoreline dampening from the same canonical height array and prohibit direct procedural terrain reads outside the terrain authority.
   - [x] Keep winter snow visual-only through material shading rather than displacing the physical terrain surface.
   - [x] Protect the authority boundary with `test:terrain-heightfield` in every physics validation run.
 - [ ] Complete the physical desktop, integrated-GPU, and touch-device benchmark matrix.
