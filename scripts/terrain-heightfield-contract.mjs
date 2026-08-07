@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   getSharedTerrainHeightfield,
   sampleTerrainHeightfield,
@@ -190,8 +191,8 @@ async function collectSourceFiles(directory) {
   return files;
 }
 
-const repositoryRoot = path.resolve(
-  new URL('..', import.meta.url).pathname,
+const repositoryRoot = fileURLToPath(
+  new URL('..', import.meta.url),
 );
 const allowedDirectProceduralConsumers = new Set([
   path.join(repositoryRoot, 'lib/terrain.ts'),

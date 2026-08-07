@@ -75,11 +75,11 @@ export default function TrawlerModel({
               <boxGeometry args={[2.0, 1.6, 2.2]} />
               <meshStandardMaterial color="#f1f5f9" roughness={0.4} />
             </mesh>
-            
+
             {/* Extended Roof (Sunshade) */}
             <mesh position={[0, 0.85, -0.4]} rotation={[0.05, 0, 0]} castShadow receiveShadow>
               <boxGeometry args={[2.6, 0.15, 3.4]} />
-              <meshStandardMaterial color="#b91c1c" roughness={0.6} /> 
+              <meshStandardMaterial color="#b91c1c" roughness={0.6} />
             </mesh>
 
             {/* Aft Deck Cover Support Poles */}

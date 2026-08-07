@@ -16,7 +16,7 @@ export default function SpeedboatHull() {
                <boxGeometry args={[0.99, 0.8, 0.99]} />
                <MeshDistortMaterial name="speedboatHullLowerMat" color="#881337" roughness={0.3} metalness={0.2} distort={0} speed={0} />
             </mesh>
-            
+
             {/* Upper Hull Body (Sleek Red) */}
             <mesh position={[0, 0.1, 0.5]} castShadow receiveShadow>
               <boxGeometry args={[1.5, 0.4, 3.4]} />
