@@ -1,0 +1,74 @@
+name: Apply pause-clock smoke fix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/maintenance-pause-clock-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Harden paused-clock assertion
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/product-experience-smoke.mjs')
+          source = path.read_text(encoding='utf-8')
+          old = """      const beforePause = await readExperienceState(page);
+                await page.keyboard.press('Escape');
+                await waitForDataset(page, 'simSessionPhase', 'paused');
+                await page.getByRole('heading', { name: 'Storm Passage' }).waitFor();
+                await page.waitForTimeout(500);
+                const duringPause = await readExperienceState(page);
+                checks.pause = true;
+                checks.pauseFreezesMissionClock =
+                  Math.abs(
+                    duringPause.scenarioElapsedSeconds -
+                      beforePause.scenarioElapsedSeconds,
+                  ) <= 0.12;
+          """
+          new = """      await page.keyboard.press('Escape');
+                await waitForDataset(page, 'simSessionPhase', 'paused');
+                await page.getByRole('heading', { name: 'Storm Passage' }).waitFor();
+                const pauseBaseline = await readExperienceState(page);
+                await page.waitForTimeout(500);
+                const duringPause = await readExperienceState(page);
+                checks.pause = true;
+                checks.pauseFreezesMissionClock =
+                  Math.abs(
+                    duringPause.scenarioElapsedSeconds -
+                      pauseBaseline.scenarioElapsedSeconds,
+                  ) <= 0.001;
+          """
+
+          if source.count(old) != 1:
+              raise SystemExit('Expected exactly one pause-clock assertion block.')
+
+          path.write_text(source.replace(old, new), encoding='utf-8')
+          PY
+
+      - name: Remove one-shot workflow
+        run: rm .github/workflows/maintenance-pause-clock-fix.yml
+
+      - name: Commit fix
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/product-experience-smoke.mjs .github/workflows/maintenance-pause-clock-fix.yml
+          git commit -m 'test: harden pause clock smoke assertion'
+          git push origin HEAD:main
