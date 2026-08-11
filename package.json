@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "audit": "npm audit --audit-level=low",
     "validate": "npm run test:physics && npm run lint && npm run typecheck && npm run build && npm run audit",
+    "validate:consolidated": "npm run validate && npm run test:product-suite",
     "clean": "node -e \"require('node:fs').rmSync('.next',{recursive:true,force:true})\"",
     "calibrate:physics": "node --experimental-strip-types --no-warnings scripts/physics-calibration.mjs",
     "test:runtime-authority": "node --experimental-strip-types --no-warnings scripts/runtime-authority-contract.mjs",
