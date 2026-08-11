@@ -358,18 +358,18 @@ allPassed =
         afterReset.scenarioElapsedSeconds >=
         launched.scenarioElapsedSeconds - 0.12;
 
-      const beforePause = await readExperienceState(page);
       await page.keyboard.press('Escape');
       await waitForDataset(page, 'simSessionPhase', 'paused');
       await page.getByRole('heading', { name: 'Storm Passage' }).waitFor();
+      const pauseBaseline = await readExperienceState(page);
       await page.waitForTimeout(500);
       const duringPause = await readExperienceState(page);
       checks.pause = true;
       checks.pauseFreezesMissionClock =
         Math.abs(
           duringPause.scenarioElapsedSeconds -
-            beforePause.scenarioElapsedSeconds,
-        ) <= 0.12;
+            pauseBaseline.scenarioElapsedSeconds,
+        ) <= 0.001;
 
       await page.getByRole('button', { name: /Resume passage/i }).click();
       await waitForDataset(page, 'simSessionPhase', 'running');
