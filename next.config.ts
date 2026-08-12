@@ -6,7 +6,7 @@ const releaseCandidateSha =
   'local-or-unknown';
 
 const nextConfig: NextConfig = {
-  output: 'standalone',
+  ...(process.env.VERCEL ? {} : { output: 'standalone' as const }),
   reactStrictMode: true,
   env: {
     NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA: releaseCandidateSha,
