@@ -121,6 +121,32 @@ assert.ok(
   'Sectional exposure must remain available to the next flooding step.',
 );
 
+const scenarioBody = new SixDofBody();
+const scenarioRuntime = new VesselDynamicsRuntime();
+scenarioRuntime.reset(vessel);
+let minimumUprightY = 1;
+for (let frame = 1; frame <= 600; frame += 1) {
+  scenarioRuntime.step({
+    ...commonInput,
+    body: scenarioBody,
+    throttle: 0,
+    steering: 0,
+    calibration: false,
+    currentHeadingDegrees: 15,
+    timeSeconds: frame / 60,
+  });
+  scenarioBody.integrate(1 / 60);
+  minimumUprightY = Math.min(
+    minimumUprightY,
+    new Vector3(0, 1, 0)
+      .applyQuaternion(scenarioBody.quaternion).y,
+  );
+}
+assert.ok(
+  minimumUprightY > 0.85,
+  `The trawler must remain upright after launch; minimum up-axis was ${minimumUprightY.toFixed(3)}.`,
+);
+
 const boatSource = await fs.readFile(
   new URL('../components/Boat.tsx', import.meta.url),
   'utf8',
