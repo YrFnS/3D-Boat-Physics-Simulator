@@ -1,8 +1,9 @@
 'use client';
 
-import type { RefObject } from 'react';
-import { MeshDistortMaterial } from '@react-three/drei';
-import type { Group } from 'three';
+import { RoundedBox } from '@react-three/drei';
+import { useEffect, useMemo, type RefObject } from 'react';
+import { Vector3, type Group } from 'three';
+import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js';
 
 interface TrawlerModelProps {
   flagRef: RefObject<Group | null>;
@@ -13,38 +14,75 @@ export default function TrawlerModel({
   flagRef,
   trawlerEngineRef,
 }: TrawlerModelProps) {
+  const hullGeometry = useMemo(
+    () =>
+      new ConvexGeometry([
+        new Vector3(-0.12, 0.45, -2.8),
+        new Vector3(0.12, 0.45, -2.8),
+        new Vector3(-1.25, 0.45, -1.25),
+        new Vector3(1.25, 0.45, -1.25),
+        new Vector3(-1.25, 0.45, 2.7),
+        new Vector3(1.25, 0.45, 2.7),
+        new Vector3(-1.05, -0.3, -1.1),
+        new Vector3(1.05, -0.3, -1.1),
+        new Vector3(-1.08, -0.35, 2.55),
+        new Vector3(1.08, -0.35, 2.55),
+        new Vector3(0, -1, -1.8),
+        new Vector3(0, -0.85, 2.45),
+      ]),
+    [],
+  );
+  const deckGeometry = useMemo(
+    () =>
+      new ConvexGeometry(
+        [0.38, 0.48].flatMap((y) => [
+          new Vector3(-0.1, y, -2.65),
+          new Vector3(0.1, y, -2.65),
+          new Vector3(-1.12, y, -1.15),
+          new Vector3(1.12, y, -1.15),
+          new Vector3(-1.14, y, 2.55),
+          new Vector3(1.14, y, 2.55),
+        ]),
+      ),
+    [],
+  );
+
+  useEffect(
+    () => () => {
+      hullGeometry.dispose();
+      deckGeometry.dispose();
+    },
+    [deckGeometry, hullGeometry],
+  );
+
   return (
         <group>
-          {/* Main Hull Body */}
-          <group>
-            {/* Deep V-Hull base */}
-            <mesh position={[0, -0.4, 0.8]} castShadow receiveShadow>
-              <boxGeometry args={[2.4, 1.0, 4.4]} />
-              <MeshDistortMaterial name="trawlerHullLowerMat" color="#0f766e" roughness={0.8} distort={0} speed={0} />
-            </mesh>
-            <mesh position={[0, -0.4, -1.9]} rotation={[0, Math.PI / 4, 0]} castShadow receiveShadow>
-              <boxGeometry args={[1.7, 1.0, 1.7]} />
-              <MeshDistortMaterial name="trawlerHullLowerMat" color="#0f766e" roughness={0.8} distort={0} speed={0} />
-            </mesh>
-            {/* Upper Hull */}
-            <mesh position={[0, 0.3, 0.8]} castShadow receiveShadow>
-              <boxGeometry args={[2.6, 0.4, 4.4]} />
-              <MeshDistortMaterial name="trawlerHullUpperMat" color="#0b5c56" roughness={0.7} distort={0} speed={0} />
-            </mesh>
-            <mesh position={[0, 0.3, -1.9]} rotation={[0, Math.PI / 4, 0]} castShadow receiveShadow>
-              <boxGeometry args={[1.84, 0.4, 1.84]} />
-              <MeshDistortMaterial name="trawlerHullUpperMat" color="#0b5c56" roughness={0.7} distort={0} speed={0} />
-            </mesh>
-          </group>
-
-          {/* Wooden Trim (Gunwale) */}
-          <mesh position={[0, 0.55, 0.8]} castShadow receiveShadow>
-            <boxGeometry args={[2.8, 0.15, 4.6]} />
-            <meshStandardMaterial color="#8B4513" roughness={0.9} />
+          <mesh geometry={hullGeometry} castShadow receiveShadow>
+            <meshPhysicalMaterial
+              name="trawlerHullLowerMat"
+              color="#0f766e"
+              roughness={0.32}
+              clearcoat={0.55}
+              clearcoatRoughness={0.25}
+            />
           </mesh>
-          <mesh position={[0, 0.55, -2.0]} rotation={[0, Math.PI / 4, 0]} castShadow receiveShadow>
-            <boxGeometry args={[1.98, 0.15, 1.98]} />
-            <meshStandardMaterial color="#8B4513" roughness={0.9} />
+
+          <mesh geometry={deckGeometry} castShadow receiveShadow>
+            <meshStandardMaterial name="trawlerHullUpperMat" color="#0b5c56" roughness={0.58} />
+          </mesh>
+          <mesh geometry={deckGeometry} position={[0, 0.39, 0]} scale={[0.92, 0.18, 0.92]} castShadow receiveShadow>
+            <meshStandardMaterial color="#b7793b" roughness={0.72} />
+          </mesh>
+
+          {[-1.18, 1.18].map((x) => (
+            <mesh key={`gunwale-${x}`} position={[x, 0.56, 0.65]} castShadow>
+              <boxGeometry args={[0.09, 0.12, 3.9]} />
+              <meshStandardMaterial color="#7c3f18" roughness={0.72} />
+            </mesh>
+          ))}
+          <mesh position={[0, 0.56, 2.58]} castShadow>
+            <boxGeometry args={[2.4, 0.12, 0.09]} />
+            <meshStandardMaterial color="#7c3f18" roughness={0.72} />
           </mesh>
 
           {/* Forward Deck Fences/Railings */}
@@ -62,25 +100,17 @@ export default function TrawlerModel({
             </mesh>
           </group>
 
-          {/* Internal Deck Floor (Teak Wood Planks) */}
-          <mesh position={[0, 0.45, 0]} castShadow receiveShadow>
-            <boxGeometry args={[2.4, 0.1, 5.0]} />
-            <meshStandardMaterial color="#d97706" roughness={0.8} />
-          </mesh>
-
           {/* --- WHEELHOUSE (CABIN) --- */}
           <group position={[0, 1.5, 1.6]}>
             {/* Exterior Walls */}
-            <mesh castShadow receiveShadow>
-              <boxGeometry args={[2.0, 1.6, 2.2]} />
+            <RoundedBox args={[2, 1.6, 2.2]} radius={0.12} smoothness={4} castShadow receiveShadow>
               <meshStandardMaterial color="#f1f5f9" roughness={0.4} />
-            </mesh>
+            </RoundedBox>
 
             {/* Extended Roof (Sunshade) */}
-            <mesh position={[0, 0.85, -0.4]} rotation={[0.05, 0, 0]} castShadow receiveShadow>
-              <boxGeometry args={[2.6, 0.15, 3.4]} />
+            <RoundedBox args={[2.6, 0.15, 3.4]} radius={0.07} smoothness={3} position={[0, 0.85, -0.4]} rotation={[0.05, 0, 0]} castShadow receiveShadow>
               <meshStandardMaterial color="#b91c1c" roughness={0.6} />
-            </mesh>
+            </RoundedBox>
 
             {/* Aft Deck Cover Support Poles */}
             <mesh position={[-1.2, -0.3, 1.1]} castShadow>

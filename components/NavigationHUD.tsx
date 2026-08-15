@@ -267,7 +267,7 @@ export default function NavigationHUD() {
   return (
     <section
       aria-label="Marine navigation chart"
-      className="pointer-events-auto absolute left-3 top-[5.25rem] z-[62] w-44 rounded-2xl border border-white/10 bg-slate-950/82 p-2.5 text-white shadow-2xl backdrop-blur-xl md:left-auto md:right-[13.5rem] md:top-28 md:w-72 md:p-4"
+      className="pointer-events-auto absolute left-3 top-[5.25rem] z-[62] w-44 rounded-2xl border border-white/10 bg-slate-950/82 p-2.5 text-white shadow-2xl backdrop-blur-xl md:left-auto md:right-80 md:top-28 md:w-72 md:p-4"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
